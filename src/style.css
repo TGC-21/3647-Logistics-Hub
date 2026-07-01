@@ -11,9 +11,9 @@
   --color-border-primary:       #d6d3d1;
   --color-border-secondary:     #e7e5e4;
   --color-border-tertiary:      #f5f5f4;
-  --color-accent:               #185FA5;
+  --color-accent:               #be2727;
   --color-accent-light:         #E6F1FB;
-  --color-accent-mid:           #B5D4F4;
+  --color-accent-mid:           #f4b5b5;
   --color-danger:               #A32D2D;
   --color-danger-light:         #FCEBEB;
   --color-success:              #1a6b3a;
@@ -37,8 +37,8 @@
     --color-border-primary:       #3c3c38;
     --color-border-secondary:     #2e2e2b;
     --color-border-tertiary:      #252523;
-    --color-accent-light:         #1a3a5c;
-    --color-accent-mid:           #1e4d7d;
+    --color-accent-light:         #5c1a1a;
+    --color-accent-mid:           #7d1e1e;
     --color-success-light:        #0d2e1a;
     --color-warning-light:        #2e1f00;
   }
@@ -145,7 +145,7 @@ body {
 }
 .btn:hover       { background: var(--color-background-secondary); }
 .btn-primary     { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
-.btn-primary:hover { background: #0C447C; border-color: #0C447C; }
+.btn-primary:hover { background: #7c0c0c; border-color: #7c0c0c; }
 .btn-danger      { color: var(--color-danger); border-color: #F0959580; }
 .btn-danger:hover { background: var(--color-danger-light); }
 .btn-sm          { padding: 4px 10px; font-size: 12px; }
@@ -498,153 +498,12 @@ body {
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 
 /* ── Responsive ───────────────────────────────────────────── */
-/* ═══════════════════════════════════════════════════════════
-   MOBILE  (≤ 640 px)
-   ═══════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
-
-  /* ── Topbar ─────────────────────────────────────────────── */
-  .topbar {
-    padding: 0 10px;
-    gap: 8px;
-    height: 50px;
-  }
-
-  /* Show the hamburger, hide logo text */
-  .btn-sidebar-toggle { display: flex !important; }
-  .topbar-logo span   { display: none; }
-
-  /* Search takes remaining space, no max-width cap */
-  .topbar-search { max-width: none; flex: 1; }
-
-  /* Mode toggle: icons only, smaller */
-  .mode-btn       { padding: 5px 8px; }
-  .mode-btn span  { display: none; }
-
-  /* Action buttons: icons only */
-  .topbar-actions { gap: 5px; }
-  .topbar-actions .btn span { display: none; }
-  .topbar-actions .btn { padding: 6px 8px; }
-
-  /* ── Sidebar: slide-in drawer ───────────────────────────── */
-  /* The sidebar is fixed off-screen left. A backdrop dims the page. */
-  .sidebar {
-    position: fixed;
-    top: 50px;   /* clear the topbar */
-    left: 0;
-    bottom: 0;
-    z-index: 300;
-    transform: translateX(-100%);
-    transition: transform 0.22s ease;
-    width: 260px;
-    min-width: 0;
-    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
-    /* Override the "display:none" from the old rule */
-    display: flex !important;
-  }
-  .sidebar.open {
-    transform: translateX(0);
-  }
-
-  /* Semi-transparent backdrop behind the open drawer */
-  .sidebar-backdrop {
-    display: none;
-    position: fixed;
-    inset: 50px 0 0 0;
-    background: rgba(0,0,0,0.4);
-    z-index: 299;
-  }
-  .sidebar-backdrop.visible { display: block; }
-
-  /* ── Content area ───────────────────────────────────────── */
-  .content  { padding: 12px 12px 80px; }   /* bottom padding clears iOS home bar */
-  .main     { min-height: 0; }
-
-  .content-title { font-size: 15px; }
-  .content-meta  { font-size: 12px; }
-
-  /* ── Component card grid: single column ─────────────────── */
-  .grid {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-
-  /* Cards: horizontal layout (image left, text right) */
-  .card { display: flex; flex-direction: row; }
-  .card-img {
-    width: 80px;
-    min-width: 80px;
-    height: auto;
-    min-height: 80px;
-    border-radius: var(--border-radius-lg) 0 0 var(--border-radius-lg);
-  }
-  .card-img img { height: 100%; width: 80px; min-height: 80px; object-fit: cover; }
-  .card-body { padding: 9px 11px; flex: 1; min-width: 0; }
-
-  /* ── Form fields ────────────────────────────────────────── */
+  .sidebar { display: none; }
+  .topbar-logo span { display: none; }
   .field-row { grid-template-columns: 1fr; }
-  .modal {
-    max-width: 100% !important;
-    max-height: 96vh;
-    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
-    align-self: flex-end;
-    margin: 0 !important;
-  }
-  .overlay { align-items: flex-end; padding: 0; }
-  .modal-body   { padding: 14px; gap: 11px; }
-  .modal-header { padding: 12px 14px 10px; }
-  .modal-footer { padding: 10px 14px; gap: 6px; }
-  /* Footer buttons stack on very narrow screens */
-  .modal-footer { flex-wrap: wrap; }
-  .modal-footer .btn { flex: 1; min-width: 0; justify-content: center; }
-
-  /* ── Assembly card grid: single column ──────────────────── */
-  .asm-grid { grid-template-columns: 1fr; gap: 8px; }
-  .asm-card-thumb { height: 80px; }
-
-  /* ── Assembly detail toolbar: wrap onto two lines ────────── */
-  .asm-detail-toolbar {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .asm-detail-toolbar > * { flex-shrink: 0; }
-  /* Push Onshape + Edit + Delete to the right of the second line */
-  .asm-detail-toolbar > div[style*="flex:1"] { width: 100%; order: 99; }
-
-  /* ── Parts toolbar: wrap ────────────────────────────────── */
-  .asm-parts-toolbar { flex-wrap: wrap; gap: 6px; }
-  .asm-parts-toolbar > div[style*="flex:1"] { flex: 1; min-width: 60px; }
-  /* Parts toolbar: icon-only import buttons on phone */
-  .asm-parts-toolbar .btn span { display: none; }
-  .asm-parts-toolbar .btn      { padding: 4px 8px; }
-
-  /* ── Parts table: hide low-priority columns ─────────────── */
-  /* Keep: Part name, Collected (stepper), row actions        */
-  /* Hide: Part #, Needed, Status badge                       */
-  .parts-table th:nth-child(2),
-  .parts-table td:nth-child(2),
-  .parts-table th:nth-child(3),
-  .parts-table td:nth-child(3),
-  .parts-table th:nth-child(5),
-  .parts-table td:nth-child(5) { display: none; }
-
-  .parts-table th, .parts-table td { padding: 8px 8px; }
-
-  /* Larger tap targets for qty stepper buttons */
-  .qty-btn { width: 32px; height: 32px; font-size: 18px; }
-  .qty-val  { font-size: 14px; min-width: 28px; }
-
-  /* ── Progress row: stack label below bar ────────────────── */
-  .asm-progress-row  { flex-direction: column; align-items: stretch; gap: 6px; }
-  .asm-progress-label { min-width: 0; text-align: left; }
-
-  /* ── Onshape picker list: more room ─────────────────────── */
-  .onshape-list { max-height: 45vh; }
-
-  /* ── BOM CSV drop zone: shorter ─────────────────────────── */
-  .bom-drop-zone { padding: 16px; }
-
-} /* end @media 640px */
+  .mode-btn span { display: none; }
+}
 
 
 /* ════════════════════════════════════════════════════════════
@@ -998,93 +857,3 @@ body {
   gap: 6px;
 }
 .onshape-preview-warning i { flex-shrink: 0; margin-top: 1px; }
-
-/* Sidebar backdrop — hidden on desktop, shown by JS on mobile */
-.sidebar-backdrop { display: none; }
-
-/* ── Subassembly children list (assembly detail view) ──────── */
-.asm-section-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  padding-bottom: 6px;
-  border-bottom: 0.5px solid var(--color-border-secondary);
-  margin-top: 4px;
-}
-
-.asm-children-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.asm-child-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 0.5px solid var(--color-border-secondary);
-  border-radius: var(--border-radius-md);
-  cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
-}
-.asm-child-row:hover {
-  background: var(--color-background-secondary);
-  border-color: var(--color-border-primary);
-}
-.asm-child-icon {
-  width: 28px; height: 28px;
-  border-radius: 6px;
-  background: var(--color-accent-light);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.asm-child-icon i { font-size: 14px; color: var(--color-accent); }
-.asm-child-text  { flex: 1; min-width: 0; }
-.asm-child-name  { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.asm-child-meta  { margin-top: 2px; }
-.asm-child-qty   {
-  font-size: 12px; font-weight: 600;
-  color: var(--color-text-secondary);
-  background: var(--color-background-secondary);
-  padding: 2px 7px; border-radius: 8px; flex-shrink: 0;
-}
-
-/* ── Onshape picker: subassembly preview rows ──────────────── */
-.onshape-preview-subassemblies {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-.onshape-preview-sub-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  background: var(--color-accent-light);
-  border: 0.5px solid var(--color-accent-mid);
-  border-radius: var(--border-radius-md);
-}
-.onshape-preview-sub-name {
-  font-size: 13px; font-weight: 500;
-  display: block;
-}
-.onshape-preview-sub-meta {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  margin-left: 8px;
-}
-
-/* ── Mobile: hide subassembly child-qty on very narrow screens  */
-@media (max-width: 640px) {
-  .asm-child-meta  { display: none; }
-  .asm-child-row   { padding: 7px 8px; }
-  .onshape-preview-sub-meta { display: none; }
-}
