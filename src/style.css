@@ -11,9 +11,9 @@
   --color-border-primary:       #d6d3d1;
   --color-border-secondary:     #e7e5e4;
   --color-border-tertiary:      #f5f5f4;
-  --color-accent:               #a51818;
-  --color-accent-light:         #fbe6e6;
-  --color-accent-mid:           #f4b5b5;
+  --color-accent:               #185FA5;
+  --color-accent-light:         #E6F1FB;
+  --color-accent-mid:           #B5D4F4;
   --color-danger:               #A32D2D;
   --color-danger-light:         #FCEBEB;
   --color-success:              #1a6b3a;
@@ -37,8 +37,8 @@
     --color-border-primary:       #3c3c38;
     --color-border-secondary:     #2e2e2b;
     --color-border-tertiary:      #252523;
-    --color-accent-light:         #5c1a1a;
-    --color-accent-mid:           #7d1e1e;
+    --color-accent-light:         #1a3a5c;
+    --color-accent-mid:           #1e4d7d;
     --color-success-light:        #0d2e1a;
     --color-warning-light:        #2e1f00;
   }
@@ -145,7 +145,7 @@ body {
 }
 .btn:hover       { background: var(--color-background-secondary); }
 .btn-primary     { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
-.btn-primary:hover { background: #7c0c0c; border-color: #7c0c0c; }
+.btn-primary:hover { background: #0C447C; border-color: #0C447C; }
 .btn-danger      { color: var(--color-danger); border-color: #F0959580; }
 .btn-danger:hover { background: var(--color-danger-light); }
 .btn-sm          { padding: 4px 10px; font-size: 12px; }

@@ -1,27 +1,33 @@
 // api/onshape-bom.js — Vercel serverless function
 //
-// Two modes, controlled by the request body:
+// Two modes (controlled by request body):
 //
-//   NEW IMPORT  { documentId, workspaceId, elementId, assemblyName, parentAssemblyId? }
-//     Creates a new Partshelf assembly from an Onshape BOM, recursively
-//     creating child assemblies for any subassemblies found (up to MAX_CHILD_DEPTH).
+// NEW IMPORT  { documentId, workspaceId, elementId, assemblyName, thumbnailUrl? }
+//   Creates a new Partshelf assembly record, then seeds it with parts and
+//   child assemblies (recursively, up to MAX_CHILD_DEPTH).
 //
-//   RE-IMPORT   { assemblyId, reimport: true }
-//     Rebuilds an existing linked assembly from Onshape from scratch.
-//     Saves quantity_collected by part_number before wiping, restores after rebuild.
-//     All previously-created child assemblies are also deleted and rebuilt.
+// RE-IMPORT   { assemblyId, reimport: true }
+//   Rebuilds an existing linked assembly in-place:
+//   1. Saves quantity_collected keyed by part_number
+//   2. Deletes all descendant assemblies + their parts
+//   3. Deletes direct parts and child-links on the root assembly
+//   4. Re-seeds the existing assembly record from Onshape (no new record created)
+//   5. Restores saved progress on matching part_numbers
+//
+// The split between buildAssembly (creates a record) and seedAssemblyContents
+// (populates an existing record) is intentional: reimport reuses the original
+// assembly ID so nothing in the UI breaks after the rebuild.
 
 import { createClient }           from '@supabase/supabase-js'
 import {
-  onshapeGet,
+  fetchBom,
   fetchBomHierarchical,
+  parseBomRows,
   parseBomHierarchy,
   applyCors,
   genId,
   MAX_CHILD_DEPTH,
 } from './_lib/onshape.js'
-
-// ── Supabase client ───────────────────────────────────────────
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL
@@ -47,17 +53,16 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, ...result })
     }
 
-    const { documentId, workspaceId, elementId, assemblyName, parentAssemblyId } = body
+    const { documentId, workspaceId, elementId, assemblyName, thumbnailUrl } = body
     if (!documentId || !workspaceId || !elementId) {
       return res.status(400).json({ error: 'documentId, workspaceId, and elementId are required.' })
     }
 
     const result = await buildAssembly(supabase, {
       documentId, workspaceId, elementId,
-      name:             assemblyName || null,
-      parentAssemblyId: parentAssemblyId || null,
-      depth:            0,
-      thumbnailUrl:     body.thumbnailUrl || null,
+      name:         assemblyName || null,
+      thumbnailUrl: thumbnailUrl || null,
+      depth:        0,
     })
 
     return res.status(200).json({ success: true, ...result })
@@ -68,30 +73,21 @@ export default async function handler(req, res) {
   }
 }
 
-// ── Core: build one assembly (and its children recursively) ───
+// ── buildAssembly ─────────────────────────────────────────────
+// Creates a new assembly record in Supabase, then populates it.
+// Used for: initial new-import, and for each child assembly during recursion.
 
-async function buildAssembly(supabase, {
-  documentId, workspaceId, elementId,
-  name, parentAssemblyId, depth, thumbnailUrl,
-  progressByPartNumber = {},   // restored progress, only used at depth 0 during reimport
-}) {
-  // Fetch hierarchical BOM from Onshape
-  const bomData  = await fetchBomHierarchical(documentId, workspaceId, elementId)
-  const { parts: directParts, subassemblies } = parseBomHierarchy(bomData)
-
+async function buildAssembly(supabase, { documentId, workspaceId, elementId, name, depth, thumbnailUrl }) {
   const assemblyId = genId()
   const onshapeUrl = `https://cad.onshape.com/documents/${documentId}/w/${workspaceId}/e/${elementId}`
+  const assemblyName = name || `Onshape assembly — ${new Date().toLocaleDateString()}`
 
-  // Derive a default name from the BOM metadata if not supplied
-  const assemblyName = name || bomData.name || `Onshape assembly — ${new Date().toLocaleDateString()}`
-
-  // ── Create the assembly record ─────────────────────────────
   const { error: asmErr } = await supabase.from('assemblies').insert({
     id:                   assemblyId,
     name:                 assemblyName,
     description:          depth === 0
                             ? `Linked from Onshape on ${new Date().toLocaleString()}`
-                            : `Subassembly — linked from Onshape`,
+                            : 'Subassembly — linked from Onshape',
     onshape_url:          onshapeUrl,
     onshape_document_id:  documentId,
     onshape_workspace_id: workspaceId,
@@ -101,28 +97,73 @@ async function buildAssembly(supabase, {
   })
   if (asmErr) throw new Error(`Assembly insert failed: ${asmErr.message}`)
 
+  const { partCount, childCount } = await seedAssemblyContents(supabase, assemblyId, {
+    documentId, workspaceId, elementId, depth,
+    progressByPartNumber: {},
+  })
+
+  return {
+    assemblyId,
+    partCount,
+    childCount,
+    onshapeUrl,
+    message: `Assembly "${assemblyName}" created with ${partCount} part(s) and ${childCount} subassembly link(s).`,
+  }
+}
+
+// ── seedAssemblyContents ──────────────────────────────────────
+// Fetches the BOM from Onshape and writes parts + child-assembly links
+// into an EXISTING assembly record (identified by assemblyId).
+//
+// Used by: buildAssembly (fresh record) and reimportAssembly (existing record).
+//
+// Depth cap: at depth >= MAX_CHILD_DEPTH, uses a flat BOM so no further
+// child assemblies are created regardless of nesting in Onshape.
+
+async function seedAssemblyContents(supabase, assemblyId, {
+  documentId, workspaceId, elementId, depth, progressByPartNumber = {},
+}) {
+  let directParts  = []
+  let subassemblies = []
+
+  if (depth < MAX_CHILD_DEPTH) {
+    // Hierarchical fetch — subassemblies will be separated out
+    const bomData = await fetchBomHierarchical(documentId, workspaceId, elementId)
+    const tree = parseBomHierarchy(bomData)
+    directParts   = tree.parts
+    subassemblies = tree.subassemblies
+  } else {
+    // At max depth: flat fetch only, everything becomes a direct part
+    const bomData = await fetchBom(documentId, workspaceId, elementId)
+    const flat = parseBomRows(bomData)
+    directParts = flat.parts
+  }
+
   // ── Insert direct parts ────────────────────────────────────
   if (directParts.length) {
-    const rows = directParts.map(p => ({
-      id:                 genId(),
-      assembly_id:        assemblyId,
-      part_name:          p.partName,
-      part_number:        p.partNumber,
-      quantity_needed:    p.quantity,
-      // Restore collected progress if reimporting (matched by part_number)
-      quantity_collected: progressByPartNumber[p.partNumber] ?? 0,
-      status:             progressByPartNumber[p.partNumber] > 0
-                            ? (progressByPartNumber[p.partNumber] >= p.quantity ? 'complete' : 'partial')
-                            : 'pending',
-      source:             'onshape',
-      notes:              '',
-      onshape_reference:  p.raw,
-    }))
+    const rows = directParts.map(p => {
+      const collected = progressByPartNumber[p.partNumber] ?? 0
+      const status    = collected >= p.quantity ? 'complete'
+                      : collected > 0           ? 'partial'
+                      :                           'pending'
+      return {
+        id:                 genId(),
+        assembly_id:        assemblyId,
+        part_name:          p.partName,
+        part_number:        p.partNumber,
+        quantity_needed:    p.quantity,
+        quantity_collected: collected,
+        status,
+        source:             'onshape',
+        notes:              '',
+        onshape_reference:  p.raw,
+      }
+    })
     const { error: partsErr } = await supabase.from('assembly_parts').insert(rows)
     if (partsErr) throw new Error(`Parts insert failed: ${partsErr.message}`)
   }
 
-  // ── Recursively build subassemblies (up to MAX_CHILD_DEPTH) ──
+  // ── Recursively build child assemblies ─────────────────────
   const childLinks = []
 
   for (const sub of subassemblies) {
@@ -132,9 +173,9 @@ async function buildAssembly(supabase, {
     const childElemId = sub.elementId
 
     if (!childElemId) {
-      // No element reference — treat as a flat part instead
+      // No element reference — demote to a flat part with a note
       console.warn(`[onshape-bom] Subassembly "${sub.partName}" has no elementId — adding as part`)
-      await supabase.from('assembly_parts').insert({
+      const { error } = await supabase.from('assembly_parts').insert({
         id:                 genId(),
         assembly_id:        assemblyId,
         part_name:          sub.partName,
@@ -143,58 +184,58 @@ async function buildAssembly(supabase, {
         quantity_collected: 0,
         status:             'pending',
         source:             'onshape',
-        notes:              '(subassembly — no element reference)',
+        notes:              '(subassembly — no element reference found)',
         onshape_reference:  sub.raw,
       })
+      if (error) console.error('Demoted-part insert error:', error)
       continue
     }
 
-    // Build the child assembly recursively (its own parts + its own children)
+    // Build child assembly (creates record + seeds its own contents)
     const childResult = await buildAssembly(supabase, {
       documentId:  childDocId,
       workspaceId: childWsId,
       elementId:   childElemId,
       name:        sub.partName,
-      parentAssemblyId: assemblyId,
       depth:       depth + 1,
+      thumbnailUrl: null,
     })
 
     childLinks.push({
-      id:                genId(),
+      id:                 genId(),
       parent_assembly_id: assemblyId,
       child_assembly_id:  childResult.assemblyId,
       quantity:           sub.quantity,
     })
   }
 
-  // ── Insert assembly_children rows ──────────────────────────
   if (childLinks.length) {
     const { error: linkErr } = await supabase.from('assembly_children').insert(childLinks)
     if (linkErr) throw new Error(`assembly_children insert failed: ${linkErr.message}`)
   }
 
-  return {
-    assemblyId,
-    partCount:      directParts.length,
-    childCount:     childLinks.length,
-    onshapeUrl,
-    message: `Assembly "${assemblyName}" created with ${directParts.length} part(s) and ${childLinks.length} subassembly link(s).`,
-  }
+  return { partCount: directParts.length, childCount: childLinks.length }
 }
 
-// ── Re-import: discard and rebuild, restoring progress ────────
+// ── reimportAssembly ──────────────────────────────────────────
+// Rebuilds an existing linked assembly in-place.
+// The original assembly record is NOT deleted or recreated — only its
+// parts and child links are wiped and rebuilt, so the assembly ID stays
+// the same and nothing in the UI references a stale ID.
 
 async function reimportAssembly(supabase, assemblyId) {
-  // 1. Load current assembly to get its Onshape coordinates
+  // 1. Load existing record to get Onshape coordinates
   const { data: asm, error: fetchErr } = await supabase
     .from('assemblies')
     .select('*')
     .eq('id', assemblyId)
     .single()
   if (fetchErr || !asm) throw new Error('Assembly not found.')
-  if (!asm.onshape_element_id) throw new Error('This assembly is not linked to Onshape — nothing to re-import.')
+  if (!asm.onshape_element_id) {
+    throw new Error('This assembly is not linked to Onshape — nothing to re-import.')
+  }
 
-  // 2. Save quantity_collected from current direct parts, keyed by part_number
+  // 2. Save quantity_collected from direct parts, keyed by part_number
   const { data: oldParts } = await supabase
     .from('assembly_parts')
     .select('part_number, quantity_collected')
@@ -207,54 +248,54 @@ async function reimportAssembly(supabase, assemblyId) {
     }
   }
 
-  // 3. Find all previously-generated child assemblies to delete
-  //    (traverse the tree to collect all descendant IDs)
+  // 3. Collect all descendant assembly IDs so we can delete them after
+  //    unlinking (cascade handles their own parts and child-links)
   const descendantIds = await collectDescendantIds(supabase, assemblyId)
 
-  // 4. Delete direct parts and child links for this assembly
+  // 4. Delete direct parts and child-links on the root assembly
   await supabase.from('assembly_parts').delete().eq('assembly_id', assemblyId)
   await supabase.from('assembly_children').delete().eq('parent_assembly_id', assemblyId)
 
-  // 5. Delete descendant assemblies (cascades their own parts + child links)
+  // 5. Delete descendant assembly records
+  //    (cascade in schema drops their assembly_parts + assembly_children rows)
   if (descendantIds.length) {
-    await supabase.from('assemblies').delete().in('id', descendantIds)
+    const { error: delErr } = await supabase
+      .from('assemblies')
+      .delete()
+      .in('id', descendantIds)
+    if (delErr) console.error('Descendant delete error:', delErr)
   }
 
-  // 6. Rebuild from Onshape, restoring collected progress
-  const { data: doc } = await supabase
-    .from('assemblies')
-    .select('name, thumbnail_url')
-    .eq('id', assemblyId)
-    .single()
-
-  // We rebuild children under the EXISTING assemblyId by calling buildAssembly
-  // then rerouting their parent links back to the original ID.
-  // Simpler: call buildAssembly to get a fresh tree, then swap the root ID.
-  const freshResult = await buildAssembly(supabase, {
-    documentId:  asm.onshape_document_id,
-    workspaceId: asm.onshape_workspace_id,
-    elementId:   asm.onshape_element_id,
-    name:        asm.name,
-    depth:       0,
-    thumbnailUrl: asm.thumbnail_url,
+  // 6. Re-seed the EXISTING assembly record from Onshape
+  //    No new assembly record is created — seedAssemblyContents writes
+  //    directly under the original assemblyId
+  const { partCount, childCount } = await seedAssemblyContents(supabase, assemblyId, {
+    documentId:          asm.onshape_document_id,
+    workspaceId:         asm.onshape_workspace_id,
+    elementId:           asm.onshape_element_id,
+    depth:               0,
     progressByPartNumber,
   })
 
-  // buildAssembly creates a brand new assembly row. We want to keep the
-  // original assemblyId so all existing UI references, bookmarks etc. remain
-  // valid. Swap the new root ID → original ID.
-  await swapAssemblyId(supabase, freshResult.assemblyId, assemblyId, asm)
+  // 7. Reset the assembly's status to 'draft' so it reflects the new state
+  await supabase
+    .from('assemblies')
+    .update({ status: 'draft' })
+    .eq('id', assemblyId)
 
+  const restoredCount = Object.keys(progressByPartNumber).length
   return {
     assemblyId,
-    partCount:  freshResult.partCount,
-    childCount: freshResult.childCount,
-    restoredProgress: Object.keys(progressByPartNumber).length,
-    message: `Re-imported. ${freshResult.partCount} part(s), ${freshResult.childCount} subassembly link(s). Progress restored for ${Object.keys(progressByPartNumber).length} part(s).`,
+    partCount,
+    childCount,
+    restoredProgress: restoredCount,
+    message: `Re-imported: ${partCount} direct part(s), ${childCount} subassembly link(s). Progress restored for ${restoredCount} part number(s).`,
   }
 }
 
-/** Collect all descendant assembly IDs (children, grandchildren…) */
+// ── Helpers ───────────────────────────────────────────────────
+
+/** Recursively collect all descendant assembly IDs (children, grandchildren…) */
 async function collectDescendantIds(supabase, assemblyId, visited = new Set()) {
   if (visited.has(assemblyId)) return []
   visited.add(assemblyId)
@@ -272,27 +313,4 @@ async function collectDescendantIds(supabase, assemblyId, visited = new Set()) {
     ids.push(...deeper)
   }
   return ids
-}
-
-/**
- * After buildAssembly creates a fresh root with a new UUID, swap it back
- * to the original assemblyId so existing references stay valid.
- */
-async function swapAssemblyId(supabase, freshId, originalId, originalAsm) {
-  // Update the fresh assembly row to carry the original ID and metadata
-  // (name may have been edited by the user since the last import)
-  await supabase.from('assemblies').update({
-    id:          originalId,
-    name:        originalAsm.name,
-    description: originalAsm.description,
-  }).eq('id', freshId)
-
-  // Point all parts + child links that reference freshId → originalId
-  await supabase.from('assembly_parts')
-    .update({ assembly_id: originalId })
-    .eq('assembly_id', freshId)
-
-  await supabase.from('assembly_children')
-    .update({ parent_assembly_id: originalId })
-    .eq('parent_assembly_id', freshId)
 }

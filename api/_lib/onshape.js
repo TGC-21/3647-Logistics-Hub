@@ -1,4 +1,4 @@
-// api/_lib/onshape.js — shared helper for all Onshape API calls
+// api/_lib/onshape.js — shared Onshape API helper
 
 export const ONSHAPE_BASE = 'https://cad.onshape.com/api/v8'
 
@@ -46,13 +46,19 @@ export async function fetchBom(documentId, workspaceId, elementId) {
 }
 
 /**
- * Hierarchical BOM — multiLevel=true returns nested rows where ASSEMBLY rows
- * carry a `rows` array of their own children.
+ * Hierarchical BOM.
+ *
+ * IMPORTANT: only multiLevel=true here — do NOT add indented=true.
+ * When both flags are set together Onshape returns the nested structure
+ * AND a flat list of every row, causing every subassembly's parts to appear
+ * twice: once inside row.rows (correct) and again as top-level flat rows
+ * (incorrect — they show up as direct parts of the parent assembly).
+ * multiLevel=true alone gives only the clean nested tree.
  */
 export async function fetchBomHierarchical(documentId, workspaceId, elementId) {
   return onshapeGet(
     `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
-    `?indented=true&multiLevel=true&generateIfAbsent=true`
+    `?multiLevel=true&generateIfAbsent=true`
   )
 }
 
@@ -71,7 +77,7 @@ function resolveRow(row, headerById) {
   return { partName: String(partName), partNumber: String(partNumber), quantity, raw: row }
 }
 
-/** Flat parser — existing preview + legacy paths use this. */
+/** Flat parser — used by the preview endpoint. */
 export function parseBomRows(bomData) {
   const headers    = bomData.headers ?? []
   const headerById = {}
@@ -83,15 +89,21 @@ export function parseBomRows(bomData) {
 }
 
 /**
- * Hierarchical parser.
- * MAX_CHILD_DEPTH = 2 means we expand subassemblies up to 2 levels below
- * the root (root → children → grandchildren). Anything deeper is a leaf part.
+ * Hierarchical parser — walks the nested rows from fetchBomHierarchical.
  *
- * Returns a node: { parts, subassemblies }
- *   parts          — direct part rows at this level
- *   subassemblies  — [{ partName, partNumber, quantity,
+ * A row is treated as a subassembly node if:
+ *   - row.rows exists as an array (primary — always present on nested rows), OR
+ *   - row.itemSource === 'ASSEMBLY' (secondary — catches empty assemblies)
+ *
+ * Returns { headers, parts, subassemblies } where:
+ *   parts         — direct leaf parts at this level
+ *   subassemblies — [{ partName, partNumber, quantity,
  *                       elementId, documentId, workspaceId,
  *                       children: { parts, subassemblies } }]
+ *
+ * The depth parameter is used internally to cap the tree walk at
+ * MAX_CHILD_DEPTH. The import path (onshape-bom.js) also caps recursion
+ * at the API-call level via seedAssemblyContents, so both guards apply.
  */
 export const MAX_CHILD_DEPTH = 2
 
@@ -105,20 +117,24 @@ export function parseBomHierarchy(bomData) {
     const subassemblies = []
 
     for (const row of rows) {
-      const parsed     = resolveRow(row, headerById)
-      const isAssembly = row.itemSource === 'ASSEMBLY' && Array.isArray(row.rows)
+      const parsed = resolveRow(row, headerById)
 
-      if (isAssembly && depth < MAX_CHILD_DEPTH) {
-        const elementId   = row.elementId  || row.assemblyElementId  || null
-        const documentId  = row.documentId || null
-        const workspaceId = row.workspaceId || row.workspaceOrVersionId || null
+      // Treat as a subassembly node if it has nested rows OR is typed ASSEMBLY
+      const isAssemblyNode = Array.isArray(row.rows) ||
+                             row.itemSource === 'ASSEMBLY' ||
+                             row.itemSource === 'ASSEMBLY_REFERENCE'
+
+      if (isAssemblyNode && depth < MAX_CHILD_DEPTH) {
         subassemblies.push({
           ...parsed,
-          elementId,
-          documentId,
-          workspaceId,
-          children: parseLevel(row.rows, depth + 1),
+          elementId:   row.elementId   || row.assemblyElementId  || null,
+          documentId:  row.documentId  || null,
+          workspaceId: row.workspaceId || row.workspaceOrVersionId || null,
+          children:    parseLevel(row.rows ?? [], depth + 1),
         })
+      } else if (isAssemblyNode) {
+        // Assembly at or beyond max depth — add as a flat part
+        if (parsed.partName !== 'Unknown part') parts.push(parsed)
       } else {
         if (parsed.partName !== 'Unknown part') parts.push(parsed)
       }
