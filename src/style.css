@@ -526,7 +526,29 @@ body {
   .mode-btn span  { display: none; }
 
   /* Primary actions move to the bottom tab bar + FAB; hide the cramped topbar row */
-  .topbar-actions { display: none !important; }
+  /* Inventory's "Add component" moves to the FAB, so this row can go. */
+  #inventory-actions { display: none !important; }
+
+  /* Designer mode has two actions (New assembly / New from Onshape) and no
+     single obvious FAB action, so keep both reachable as a full-width bar
+     pinned just above the tab bar. Visibility (shown only in designer mode)
+     is still driven by the existing JS toggle in setMode() — this only
+     repositions it for mobile. */
+  #designer-actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(58px + env(safe-area-inset-bottom));
+    z-index: 240;
+    margin-left: 0;
+    background: var(--color-background-primary);
+    border-top: 0.5px solid var(--color-border-secondary);
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  #designer-actions .btn { flex: 1; justify-content: center; }
+  #designer-actions .btn span { display: inline; }
+  body.designer-mode .content { padding-bottom: 128px; }
 
   /* ── Fullscreen mobile search overlay ───────────────────── */
   .mobile-search-bar {

@@ -76,6 +76,10 @@ function setMode(mode) {
   const fab = document.getElementById('mobile-fab')
   if (fab) fab.classList.toggle('fab-hidden', designerMode)
 
+  // Lets mobile CSS reserve extra bottom padding when the designer action
+  // bar (pinned above the tab bar) is visible, so content isn't hidden behind it.
+  document.body.classList.toggle('designer-mode', designerMode)
+
   render()
 }
 
