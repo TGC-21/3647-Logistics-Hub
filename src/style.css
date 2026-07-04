@@ -634,8 +634,69 @@ body {
   .content  { padding: 12px 12px 80px; }   /* bottom padding clears iOS home bar */
   .main     { min-height: 0; }
 
-  .content-title { font-size: 15px; }
-  .content-meta  { font-size: 12px; }
+  /* ── Bigger type scale on mobile ──────────────────────────
+     Every text-bearing element below is bumped ~1-2px above its
+     desktop size. This is separate from (and in addition to) the
+     16px input rule further down, which exists specifically to
+     stop iOS/Android from auto-zooming the page on focus. */
+  body { font-size: 15px; }
+
+  .topbar-logo     { font-size: 16px; }
+  .mode-btn        { font-size: 13px; }
+  .nav-item        { font-size: 14px; }
+  .sidebar-label   { font-size: 12px; }
+  .nav-count       { font-size: 12px; }
+  .cat-header      { font-size: 14px; }
+  .section-count   { font-size: 12px; }
+
+  .content-title   { font-size: 17px; }
+  .content-meta    { font-size: 13px; }
+
+  .card-name       { font-size: 14px; }
+  .card-cat        { font-size: 12px; }
+  .card-meta-item  { font-size: 12px; }
+  .card-desc       { font-size: 12px; }
+  .tag             { font-size: 12px; }
+  .empty-title     { font-size: 15px; }
+  .empty-sub       { font-size: 13px; }
+
+  .btn             { font-size: 14px; }
+  .btn-sm          { font-size: 13px; }
+
+  .modal-title     { font-size: 16px; }
+  .field label     { font-size: 13px; }
+  .required-star   { font-size: 14px; }
+  .tag-chip        { font-size: 12px; }
+  .cat-badge       { font-size: 12px; }
+  .detail-meta-item{ font-size: 14px; }
+  .attrs-table td  { font-size: 14px; }
+  .cat-manage-name { font-size: 14px; }
+  .cat-manage-reqs { font-size: 12px; }
+  .req-chip        { font-size: 12px; }
+
+  .asm-card-name   { font-size: 15px; }
+  .asm-card-desc   { font-size: 13px; }
+  .asm-card-link   { font-size: 12px; }
+  .part-name       { font-size: 14px; }
+  .part-notes      { font-size: 12px; }
+  .part-number     { font-size: 12px; }
+  .asm-child-name  { font-size: 14px; }
+
+  .onshape-list-item-name { font-size: 14px; }
+  .onshape-list-item-meta { font-size: 12px; }
+  .onshape-state-title    { font-size: 14px; }
+  .onshape-state-sub      { font-size: 13px; }
+  .bom-preview-info       { font-size: 13px; }
+
+  /* ── Prevent iOS/Android auto-zoom on input focus ─────────
+     Mobile browsers zoom the viewport in when a focused text
+     input's computed font-size is under 16px. Forcing every
+     text input, textarea, and select to 16px (never smaller)
+     removes the trigger entirely, so tapping a field no longer
+     yanks the page in and out of a zoomed state.
+     !important is needed for #req-key-input, which carries an
+     inline font-size in the HTML that would otherwise win. */
+  input, textarea, select { font-size: 16px !important; }
 
   /* ── Component card grid: single column ─────────────────── */
   .grid {
