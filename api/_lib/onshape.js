@@ -29,22 +29,55 @@ export async function onshapeGet(path) {
 
 // ── BOM fetching ──────────────────────────────────────────────
 
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
 /**
- * Flat BOM — multiLevel=false + indented=false.
- * Used only at MAX_CHILD_DEPTH (leaf level) where we treat every row
- * as a direct part regardless of type.
+ * Fetches a BOM at `path`, with a fallback for elements that have never had
+ * ANY BOM materialized: `generateIfAbsent=true` is supposed to generate one
+ * synchronously, but in practice it can 404 on the very first request for a
+ * shape (indented/multiLevel combo) an element has never been asked for —
+ * especially elements buried deep in a tree (nested subassemblies, mirrored
+ * branches, etc.) that a person has never actually opened the BOM tab for
+ * in the Onshape UI. Forcing the plain/default BOM shape first reliably
+ * triggers generation; once generated, the originally-requested shape works.
  */
-export async function fetchBom(documentId, workspaceId, elementId) {
-  const path = `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
-               `?indented=false&multiLevel=false&generateIfAbsent=true`
+async function fetchBomWithFallback(documentId, workspaceId, elementId, queryString) {
+  const base = `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom`
+  const path = `${base}?${queryString}`
+
   try {
     return await onshapeGet(path)
   } catch (e) {
     if (!/Onshape API 404/.test(e.message)) throw e
-    console.warn(`[onshape] flat BOM 404 for element ${elementId} — retrying once…`)
-    await sleep(800)
-    return onshapeGet(path)
   }
+
+  console.warn(`[onshape] BOM 404 for element ${elementId} — forcing default BOM generation, then retrying…`)
+  try {
+    await onshapeGet(`${base}?generateIfAbsent=true`)
+  } catch (e) {
+    // If even the plain default BOM 404s, this element has no BOM to give —
+    // no point retrying the shaped request, fall through to the final error.
+  }
+
+  await sleep(800)
+  try {
+    return await onshapeGet(path)
+  } catch (e2) {
+    throw new Error(
+      `Could not load the BOM for element ${elementId} (document ${documentId}, workspace ${workspaceId}). ` +
+      `Onshape returned 404 even after forcing BOM generation — check that this element is an Assembly ` +
+      `(not a Part Studio/other tab), that the workspace id is current, and that you have access to it.`
+    )
+  }
+}
+
+/**
+ * Flat BOM — multiLevel=false + indented=false.
+ * Used only at/past MAX_CHILD_DEPTH (leaf level) where we treat every row
+ * as a direct part regardless of type.
+ */
+export async function fetchBom(documentId, workspaceId, elementId) {
+  return fetchBomWithFallback(documentId, workspaceId, elementId, 'indented=false&multiLevel=false&generateIfAbsent=true')
 }
 
 // ── Row value resolver ────────────────────────────────────────
@@ -112,7 +145,11 @@ export async function fetchDocumentOwnerId(documentId) {
   return promise
 }
 
-export const MAX_CHILD_DEPTH = 2
+// How many generations of subassemblies to recurse into as real
+// assembly_children nodes before flattening the rest into direct parts.
+// Increased from 2 → 5 after finding real trees (e.g. a mirrored branch)
+// nested 3+ generations deep that were being flattened prematurely.
+export const MAX_CHILD_DEPTH = 5
 
 /**
  * resolveBomWithSubassemblies
@@ -138,54 +175,8 @@ export const MAX_CHILD_DEPTH = 2
  *
  * Returns { headers, directParts, subassemblies }
  */
-const sleep = ms => new Promise(r => setTimeout(r, ms))
-
-/**
- * Fetches the indented, single-level BOM for an element.
- *
- * `generateIfAbsent=true` is supposed to generate the BOM synchronously if
- * it doesn't exist yet, but in practice Onshape sometimes returns a 404 on
- * the very first request for a given param combination (indented=true +
- * multiLevel=false may never have been requested for this element before)
- * while generation catches up. One short retry clears that up; if it 404s
- * again, it's a real problem (wrong ids, no access, or a Part Studio/other
- * non-assembly element was selected) and we surface a clear message.
- */
 async function fetchIndentedBom(documentId, workspaceId, elementId) {
-  const path = `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
-               `?indented=true&multiLevel=false&generateIfAbsent=true`
-
-  try {
-    return await onshapeGet(path)
-  } catch (e) {
-    if (!/Onshape API 404/.test(e.message)) throw e
-  }
-
-  // First 404: the element may never have had ANY BOM materialized, and
-  // generateIfAbsent doesn't reliably trigger generation for a non-default
-  // shape on a completely fresh element. Force-generate the plain/default
-  // BOM first (the shape generateIfAbsent is most reliable for), then
-  // retry our actual shaped request.
-  console.warn(`[onshape] BOM 404 for element ${elementId} — forcing default BOM generation, then retrying…`)
-  try {
-    await onshapeGet(
-      `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom?generateIfAbsent=true`
-    )
-  } catch (e) {
-    // If even the plain default BOM 404s, this element has no BOM to give —
-    // no point retrying the shaped request, fall through to the final error.
-  }
-
-  await sleep(800)
-  try {
-    return await onshapeGet(path)
-  } catch (e2) {
-    throw new Error(
-      `Could not load the BOM for element ${elementId} (document ${documentId}, workspace ${workspaceId}). ` +
-      `Onshape returned 404 even after forcing BOM generation — check that this element is an Assembly ` +
-      `(not a Part Studio/other tab), that the workspace id is current, and that you have access to it.`
-    )
-  }
+  return fetchBomWithFallback(documentId, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true')
 }
 
 export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, rootOwnerId = null) {
