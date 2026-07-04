@@ -130,11 +130,42 @@ export const MAX_CHILD_DEPTH = 2
  *
  * Returns { headers, directParts, subassemblies }
  */
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+/**
+ * Fetches the indented, single-level BOM for an element.
+ *
+ * `generateIfAbsent=true` is supposed to generate the BOM synchronously if
+ * it doesn't exist yet, but in practice Onshape sometimes returns a 404 on
+ * the very first request for a given param combination (indented=true +
+ * multiLevel=false may never have been requested for this element before)
+ * while generation catches up. One short retry clears that up; if it 404s
+ * again, it's a real problem (wrong ids, no access, or a Part Studio/other
+ * non-assembly element was selected) and we surface a clear message.
+ */
+async function fetchIndentedBom(documentId, workspaceId, elementId) {
+  const path = `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
+               `?indented=true&multiLevel=false&generateIfAbsent=true`
+  try {
+    return await onshapeGet(path)
+  } catch (e) {
+    if (!/Onshape API 404/.test(e.message)) throw e
+    console.warn(`[onshape] BOM 404 for element ${elementId} — retrying once after a short delay…`)
+    await sleep(1200)
+    try {
+      return await onshapeGet(path)
+    } catch (e2) {
+      throw new Error(
+        `Could not load the BOM for element ${elementId} (document ${documentId}, workspace ${workspaceId}). ` +
+        `Onshape returned 404 twice — check that this element is an Assembly (not a Part Studio/other tab) ` +
+        `and that the workspace id is current, then try again.`
+      )
+    }
+  }
+}
+
 export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, rootOwnerId = null) {
-  const bomData = await onshapeGet(
-    `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
-    `?indented=true&multiLevel=false&generateIfAbsent=true`
-  )
+  const bomData = await fetchIndentedBom(documentId, workspaceId, elementId)
 
   const headers    = bomData.headers ?? []
   const headerById = {}

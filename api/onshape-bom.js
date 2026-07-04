@@ -51,6 +51,11 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('[onshape-bom]', err)
+    if (/Onshape API 404/.test(err.message)) {
+      return res.status(404).json({
+        error: 'Onshape couldn\'t find or generate a BOM for this assembly. Open its BOM tab in Onshape once to initialize it, confirm you picked an Assembly (not a Part Studio), then try again.',
+      })
+    }
     return res.status(500).json({ error: err.message ?? 'Internal server error' })
   }
 }
@@ -78,10 +83,17 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
   })
   if (asmErr) throw new Error(`Assembly insert: ${asmErr.message}`)
 
-  const { partCount, childCount } = await seedAssemblyContents(supabase, assemblyId, {
-    documentId, workspaceId, elementId, depth, rootOwnerId,
-    progressByPartNumber: {},
-  })
+  let partCount, childCount
+  try {
+    ;({ partCount, childCount } = await seedAssemblyContents(supabase, assemblyId, {
+      documentId, workspaceId, elementId, depth, rootOwnerId,
+      progressByPartNumber: {},
+    }))
+  } catch (e) {
+    // Don't leave an empty orphan assembly behind if the BOM fetch failed.
+    await supabase.from('assemblies').delete().eq('id', assemblyId)
+    throw e
+  }
 
   return {
     assemblyId,
