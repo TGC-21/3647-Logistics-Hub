@@ -91,7 +91,9 @@ function getCategoryInfo(row) {
   if (!val) return null
   const obj = Array.isArray(val) ? val[0] : val
   if (!obj || !obj.name) return null
-  return { name: String(obj.name).toLowerCase(), ownerId: obj.ownerId ?? null }
+
+  const ownerIdContainer = row.itemSource.documentId
+  return { name: String(obj.name).toLowerCase(), ownerId: ownerIdContainer ?? null }
 }
 
 // Cache document → ownerId lookups so a deep BOM tree doesn't repeat
