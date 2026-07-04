@@ -1221,7 +1221,7 @@ async function confirmLinkAssembly() {
     }),
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Import failed')
+  if (!res.ok) throw new Error(data.error + "and assemblyName = " + assemblyName || 'Import failed')
 
   assemblies = await fetchAssemblies()
   closeOnshapeModal()
