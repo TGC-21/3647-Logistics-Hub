@@ -98,9 +98,26 @@ export async function bootIsolatedChild(childId) {
 }
 
 /** Opens a subassembly node in a fresh, isolated browser window/tab. */
-function openSubassemblyWindow(childId) {
-  const url = `${location.pathname}?child=${encodeURIComponent(childId)}`
-  window.open(url, '_blank', 'noopener')
+/** Navigate INTO a subassembly node in place (no new window/tab).
+ *  Remembers what to return to (the root assembly, or a parent
+ *  subassembly if we're already nested) so the back button works. */
+let currentChildName = null   // name of the subassembly node currently shown (embedded mode)
+
+function enterChildAssembly(childId) {
+  const fromLabel = viewingChildId
+    ? (currentChildName || 'Subassembly')
+    : (assemblyById(currentAssemblyId)?.name || 'Assembly')
+  childNavStack.push({ id: viewingChildId, name: fromLabel })
+  viewingChildId  = childId
+  childDetailTab  = 'parts'
+  renderDesignerContent()
+}
+
+function exitChildAssembly() {
+  const parent = childNavStack.pop()
+  viewingChildId = parent ? parent.id : null
+  childDetailTab = 'parts'
+  renderDesignerContent()
 }
 
 // ── Sidebar ───────────────────────────────────────────────────
@@ -137,7 +154,9 @@ export function renderDesignerSidebar() {
 
 // ── Content ───────────────────────────────────────────────────
 export async function renderDesignerContent() {
-  if (currentAssemblyId) {
+  if (viewingChildId) {
+    await renderChildDetail()
+  } else if (currentAssemblyId) {
     await renderAssemblyDetail()
   } else {
     await renderAssemblyGrid()
@@ -393,12 +412,13 @@ async function renderAssemblyDetail() {
     })
   })
 
-  // Subassembly cards open the child assembly in its own isolated window
+  /// Subassembly cards navigate in place, not a new window
   area.querySelectorAll('[data-open-child]').forEach(el =>
-    el.addEventListener('click', () => openSubassemblyWindow(el.dataset.openChild))
+    el.addEventListener('click', () => enterChildAssembly(el.dataset.openChild))
   )
 
   bindPartRowEvents()
+
 }
 
 // ── Subassembly node detail (isolated window only) ─────────────
@@ -430,9 +450,11 @@ async function renderChildDetail() {
     return
   }
 
-  title.textContent = child.name
-  meta.innerHTML    = `<span class="asm-badge asm-badge--draft"><i class="ti ti-git-branch" aria-hidden="true"></i> Subassembly</span>`
+  currentChildName = child.name
+  const parentLabel = childNavStack.length ? childNavStack[childNavStack.length - 1].name : ''
 
+  title.textContent = child.name
+  meta.innerHTML    = `<span class="asm-badge asm-badge--draft"><i class="ti ti-git-branch" aria-hidden="true"></i> Subassembly${parentLabel ? ' of ' + parentLabel : ''}</span>`
   const prog = partsProgress(currentChildParts)
 
   const onshapeBtn = child.onshapeUrl
@@ -498,10 +520,14 @@ async function renderChildDetail() {
             <div class="empty-title">No direct parts</div>
           </div>`}`
 
+  const backLabel = isolatedMode
+    ? `<i class="ti ti-x" aria-hidden="true"></i> Close`
+    : `<i class="ti ti-arrow-left" aria-hidden="true"></i> Return to ${parentLabel || 'parent assembly'}`
+
   area.innerHTML = `
     <div class="asm-detail">
       <div class="asm-detail-toolbar">
-        <button class="btn btn-sm" id="btn-back-asm"><i class="ti ti-x" aria-hidden="true"></i> Close</button>
+        <button class="btn btn-sm" id="btn-back-asm">${backLabel}</button>
         <span class="asm-linked-badge asm-linked-badge--detail"><i class="ti ti-link" aria-hidden="true"></i> From Onshape</span>
         <div style="flex:1"></div>
         ${onshapeBtn}
@@ -517,12 +543,16 @@ async function renderChildDetail() {
       ${partsSectionHTML}
     </div>`
 
-  document.getElementById('btn-back-asm').addEventListener('click', () => window.close())
+  document.getElementById('btn-back-asm').addEventListener('click', () => {
+    if (isolatedMode) { window.close(); return }
+    exitChildAssembly()
+  })
+
   document.getElementById('tab-btn-parts')?.addEventListener('click', () => { childDetailTab = 'parts'; renderChildDetail() })
   document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
 
   area.querySelectorAll('[data-open-child]').forEach(el =>
-    el.addEventListener('click', () => openSubassemblyWindow(el.dataset.openChild))
+    el.addEventListener('click', () => enterChildAssembly(el.dataset.openChild))
   )
 
   const tbody = document.getElementById('child-parts-tbody')
@@ -675,6 +705,8 @@ export function selectAssembly(id) {
   currentParts      = []
   currentChildren   = []
   navigationStack   = []
+  viewingChildId    = null
+  childNavStack     = []
   detailTab         = 'parts'
   renderDesignerSidebar()
   renderDesignerContent()
