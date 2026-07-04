@@ -92,8 +92,8 @@ function getCategoryInfo(row) {
   const obj = Array.isArray(val) ? val[0] : val
   if (!obj || !obj.name) return null
 
-  const ownerIdContainer = row.itemSource.documentId
-  return { name: String(obj.name).toLowerCase(), ownerId: ownerIdContainer ?? null }
+  const documentIdContainer = row.itemSource.documentId
+  return { name: String(obj.name).toLowerCase(), documentId: documentIdContainer ?? null }
 }
 
 // Cache document → ownerId lookups so a deep BOM tree doesn't repeat
@@ -203,7 +203,7 @@ export async function resolveBomWithSubassemblies(documentId, workspaceId, eleme
   const allRows = bomData.rows ?? []
   console.log(
     `[onshape] BOM for element ${elementId}: ${allRows.length} row(s). ` +
-    `Root document owner: ${ownerId}`
+    `Root document owner: ${ownerId} and root doc id: ${documentId}`
   )
 
   const directParts   = []
@@ -239,7 +239,7 @@ export async function resolveBomWithSubassemblies(documentId, workspaceId, eleme
     }
 
     // ── It's an assembly row — is it ours, or a vendor/COTS assembly? ──
-    const isOurs = ownerId !== null && category.ownerId !== null && category.ownerId === ownerId
+    const isOurs = documentId !== null && category.documentId !== null && category.documentId === documentId
 
     if (!isOurs) {
       // Vendor/outside assembly — treat as a purchased (COTS) part rather
