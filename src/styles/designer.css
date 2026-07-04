@@ -1,0 +1,484 @@
+/* ════════════════════════════════════════════════════════════
+   DESIGNER WORKFLOW
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Assembly sidebar nav items ───────────────────────────── */
+.asm-nav-item {
+  position: relative;
+  justify-content: flex-start;
+}
+.asm-nav-item .asm-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── Assembly status badges ───────────────────────────────── */
+.asm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.asm-badge i { font-size: 10px; }
+.asm-badge--complete { background: var(--color-success-light); color: var(--color-success); }
+.asm-badge--active   { background: var(--color-accent-light);   color: var(--color-accent); }
+.asm-badge--draft    { background: var(--color-background-secondary); color: var(--color-text-tertiary); }
+
+/* ── Assembly card grid ───────────────────────────────────── */
+.asm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.asm-card {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-lg);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.asm-card:hover { border-color: var(--color-border-primary); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.asm-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.asm-card-name   { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.asm-card-desc   { font-size: 12px; color: var(--color-text-secondary); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.asm-card-link   { font-size: 11px; color: var(--color-accent); display: inline-flex; align-items: center; gap: 3px; text-decoration: none; margin-top: 2px; }
+.asm-card-link:hover { text-decoration: underline; }
+
+/* ── Assembly card thumbnail ──────────────────────────────── */
+.asm-card-thumb {
+  width: 100%;
+  height: 110px;
+  overflow: hidden;
+  border-radius: var(--border-radius-md) var(--border-radius-md) 0 0;
+  background: var(--color-background-secondary);
+  margin: -14px -16px 10px;   /* bleed to card edges */
+  width: calc(100% + 32px);
+}
+.asm-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ── Onshape-linked badge ─────────────────────────────────── */
+.asm-linked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: #e8f4fd;
+  color: #0d6eaf;
+  border: 0.5px solid #b3d9f5;
+  flex-shrink: 0;
+}
+.asm-linked-badge i { font-size: 10px; }
+
+/* Slightly larger variant shown in the assembly detail toolbar */
+.asm-linked-badge--detail {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .asm-linked-badge { background: #0d2a3d; color: #5bb3f0; border-color: #1a4a6d; }
+}
+
+/* ── Assembly detail view ─────────────────────────────────── */
+.asm-detail { display: flex; flex-direction: column; gap: 14px; }
+
+.asm-detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 12px;
+  border-bottom: 0.5px solid var(--color-border-secondary);
+}
+.asm-detail-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+/* ── Progress bar ─────────────────────────────────────────── */
+.asm-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+}
+.asm-progress-bar {
+  flex: 1;
+  height: 7px;
+  background: var(--color-border-secondary);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.asm-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 9px;
+  transition: width 0.3s ease;
+}
+.asm-progress-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  font-weight: 500;
+  min-width: 140px;
+  text-align: right;
+}
+
+/* ── Parts table toolbar ──────────────────────────────────── */
+.asm-parts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.asm-parts-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Parts table ──────────────────────────────────────────── */
+.parts-table-wrap {
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+}
+.parts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.parts-table thead tr {
+  background: var(--color-background-secondary);
+}
+.parts-table th {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 0.5px solid var(--color-border-secondary);
+  text-align: left;
+  white-space: nowrap;
+}
+.parts-table td {
+  padding: 9px 12px;
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+  vertical-align: middle;
+}
+.parts-table tbody tr:last-child td { border-bottom: none; }
+.parts-table tbody tr:hover td { background: var(--color-background-secondary); }
+
+.part-name    { font-weight: 500; font-size: 13px; }
+.part-notes   { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
+.part-number  { font-size: 11px; color: var(--color-text-tertiary); font-family: 'SF Mono', 'Menlo', monospace; background: var(--color-background-secondary); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Quantity stepper ─────────────────────────────────────── */
+.qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  padding: 2px 4px;
+}
+.qty-btn {
+  background: none;
+  border: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  transition: background 0.1s, color 0.1s;
+}
+.qty-btn:hover:not(:disabled) { background: var(--color-background-primary); color: var(--color-accent); }
+.qty-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.qty-val { font-size: 13px; font-weight: 600; min-width: 22px; text-align: center; }
+
+/* ── Part status badges ───────────────────────────────────── */
+.part-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.part-badge--complete { background: var(--color-success-light); color: var(--color-success); }
+.part-badge--partial  { background: var(--color-warning-light); color: var(--color-warning); }
+.part-badge--pending  { background: var(--color-background-secondary); color: var(--color-text-tertiary); }
+
+/* ── BOM CSV import ───────────────────────────────────────── */
+.bom-drop-zone {
+  position: relative;
+  border: 1.5px dashed var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.bom-drop-zone:hover { border-color: var(--color-accent); }
+.bom-drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.bom-preview-info { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
+.bom-parse-error  { font-size: 12px; color: var(--color-danger); padding: 8px; background: var(--color-danger-light); border-radius: var(--border-radius-md); }
+
+/* ── Onshape import picker ───────────────────────────────── */
+.onshape-step-trail {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+.onshape-step-trail .step-current { color: var(--color-accent); font-weight: 500; }
+
+.onshape-search-row {
+  position: relative;
+  margin-bottom: 12px;
+}
+.onshape-search-row i {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 15px;
+  color: var(--color-text-tertiary);
+}
+.onshape-search-row input {
+  width: 100%;
+  padding: 7px 10px 7px 32px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  font-size: 13px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+.onshape-search-row input:focus { outline: none; border-color: var(--color-accent); }
+
+.onshape-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.onshape-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.onshape-list-item:hover { background: var(--color-background-secondary); border-color: var(--color-border-primary); }
+.onshape-list-item-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--color-background-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.onshape-list-item-icon img { width: 100%; height: 100%; object-fit: cover; }
+.onshape-list-item-icon i { font-size: 16px; color: var(--color-text-tertiary); }
+.onshape-list-item-text { flex: 1; min-width: 0; }
+.onshape-list-item-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onshape-list-item-meta { font-size: 11px; color: var(--color-text-tertiary); margin-top: 1px; }
+.onshape-list-item i.ti-chevron-right { font-size: 14px; color: var(--color-text-tertiary); flex-shrink: 0; }
+
+.onshape-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px;
+  color: var(--color-text-secondary);
+  gap: 8px;
+  text-align: center;
+}
+.onshape-state i { font-size: 28px; color: var(--color-text-tertiary); }
+.onshape-state-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+.onshape-state-sub { font-size: 12px; line-height: 1.6; max-width: 320px; }
+
+.onshape-preview-warning {
+  font-size: 12px;
+  color: var(--color-warning);
+  background: var(--color-warning-light);
+  padding: 8px 10px;
+  border-radius: var(--border-radius-md);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.onshape-preview-warning i { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Subassembly children list (assembly detail view) ──────── */
+.asm-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding-bottom: 6px;
+  border-bottom: 0.5px solid var(--color-border-secondary);
+  margin-top: 4px;
+}
+
+.asm-children-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.asm-child-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.asm-child-row:hover {
+  background: var(--color-background-secondary);
+  border-color: var(--color-border-primary);
+}
+.asm-child-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  background: var(--color-accent-light);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.asm-child-icon i { font-size: 14px; color: var(--color-accent); }
+.asm-child-text  { flex: 1; min-width: 0; }
+.asm-child-name  { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asm-child-meta  { margin-top: 2px; }
+.asm-child-qty   {
+  font-size: 12px; font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-background-secondary);
+  padding: 2px 7px; border-radius: 8px; flex-shrink: 0;
+}
+
+/* ── Onshape picker: subassembly preview rows ──────────────── */
+.onshape-preview-subassemblies {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.onshape-preview-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--color-accent-light);
+  border: 0.5px solid var(--color-accent-mid);
+  border-radius: var(--border-radius-md);
+}
+.onshape-preview-sub-name {
+  font-size: 13px; font-weight: 500;
+  display: block;
+}
+.onshape-preview-sub-meta {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-left: 8px;
+}
+
+/* ── Mobile: hide subassembly child-qty on very narrow screens  */
+@media (max-width: 640px) {
+  .asm-child-meta  { display: none; }
+  .asm-child-row   { padding: 7px 8px; }
+  .onshape-preview-sub-meta { display: none; }
+}
+
+/* ── Assembly breadcrumb ──────────────────────────────────── */
+.asm-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding-bottom: 10px;
+  border-bottom: 0.5px solid var(--color-border-secondary);
+  margin-bottom: 2px;
+}
+.asm-breadcrumb-root,
+.asm-breadcrumb-step {
+  cursor: pointer;
+  color: var(--color-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.asm-breadcrumb-root:hover,
+.asm-breadcrumb-step:hover { background: var(--color-accent-light); }
+.asm-breadcrumb-sep     { color: var(--color-text-tertiary); padding: 0 2px; }
+.asm-breadcrumb-current { color: var(--color-text-primary); font-weight: 500; }
+
+/* ── Subassembly section hint ─────────────────────────────── */
+.asm-subasm-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+  font-style: italic;
+  margin-left: 4px;
+}
+
+/* Make the open hint visible on hover only */
+.asm-child-open-hint {
+  display: none;
+  font-size: 11px;
+  color: var(--color-accent);
+  font-style: italic;
+}
+.asm-child-row:hover .asm-child-open-hint { display: inline; }

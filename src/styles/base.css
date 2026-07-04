@@ -1,0 +1,57 @@
+/* ── Reset & base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --color-background-primary:   #ffffff;
+  --color-background-secondary: #f5f5f4;
+  --color-background-tertiary:  #f0eeec;
+  --color-text-primary:         #1c1c1a;
+  --color-text-secondary:       #57534e;
+  --color-text-tertiary:        #a8a29e;
+  --color-border-primary:       #d6d3d1;
+  --color-border-secondary:     #e7e5e4;
+  --color-border-tertiary:      #f5f5f4;
+  --color-accent:               #185FA5;
+  --color-accent-light:         #E6F1FB;
+  --color-accent-mid:           #B5D4F4;
+  --color-danger:               #A32D2D;
+  --color-danger-light:         #FCEBEB;
+  --color-success:              #1a6b3a;
+  --color-success-light:        #e3f5ea;
+  --color-warning:              #7a4f00;
+  --color-warning-light:        #fdf3dc;
+  --border-radius-sm:           4px;
+  --border-radius-md:           7px;
+  --border-radius-lg:           10px;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background-primary:   #1c1c1a;
+    --color-background-secondary: #282724;
+    --color-background-tertiary:  #232320;
+    --color-text-primary:         #fafaf9;
+    --color-text-secondary:       #a8a29e;
+    --color-text-tertiary:        #78716c;
+    --color-border-primary:       #3c3c38;
+    --color-border-secondary:     #2e2e2b;
+    --color-border-tertiary:      #252523;
+    --color-accent-light:         #1a3a5c;
+    --color-accent-mid:           #1e4d7d;
+    --color-success-light:        #0d2e1a;
+    --color-warning-light:        #2e1f00;
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Loading spinner ──────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
