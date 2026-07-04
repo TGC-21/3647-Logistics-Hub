@@ -3,7 +3,7 @@
 //
 // GET /api/onshape-bom-preview?documentId=...&workspaceId=...&elementId=...
 
-import { resolveBomWithSubassemblies, applyCors } from './_lib/onshape.js'
+import { resolveBomWithSubassemblies, fetchDocumentOwnerId, applyCors } from './_lib/onshape.js'
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { applyCors(res); return res.status(204).end() }
@@ -16,8 +16,9 @@ export default async function handler(req, res) {
   }
 
   try {
+    const rootOwnerId = await fetchDocumentOwnerId(documentId)
     const { directParts, subassemblies } = await resolveBomWithSubassemblies(
-      documentId, workspaceId, elementId
+      documentId, workspaceId, elementId, rootOwnerId
     )
 
     const totalParts      = directParts.length

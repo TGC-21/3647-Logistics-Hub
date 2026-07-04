@@ -6,7 +6,7 @@
 import { createClient } from '@supabase/supabase-js'
 import {
   fetchBom, parseBomRows,
-  resolveBomWithSubassemblies,
+  resolveBomWithSubassemblies, fetchDocumentOwnerId,
   applyCors, genId, MAX_CHILD_DEPTH,
 } from './_lib/onshape.js'
 
@@ -38,11 +38,14 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'documentId, workspaceId, and elementId are required.' })
     }
 
+    const rootOwnerId = await fetchDocumentOwnerId(documentId)
+
     const result = await buildAssembly(supabase, {
       documentId, workspaceId, elementId,
       name: assemblyName || null,
       thumbnailUrl: thumbnailUrl || null,
       depth: 0,
+      rootOwnerId,
     })
     return res.status(200).json({ success: true, ...result })
 
@@ -55,7 +58,7 @@ export default async function handler(req, res) {
 // ── buildAssembly ─────────────────────────────────────────────
 // Creates a new Partshelf assembly record, then seeds it.
 
-async function buildAssembly(supabase, { documentId, workspaceId, elementId, name, depth, thumbnailUrl }) {
+async function buildAssembly(supabase, { documentId, workspaceId, elementId, name, depth, thumbnailUrl, rootOwnerId }) {
   const assemblyId   = genId()
   const onshapeUrl   = `https://cad.onshape.com/documents/${documentId}/w/${workspaceId}/e/${elementId}`
   const assemblyName = name || `Onshape assembly — ${new Date().toLocaleDateString()}`
@@ -76,7 +79,7 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
   if (asmErr) throw new Error(`Assembly insert: ${asmErr.message}`)
 
   const { partCount, childCount } = await seedAssemblyContents(supabase, assemblyId, {
-    documentId, workspaceId, elementId, depth,
+    documentId, workspaceId, elementId, depth, rootOwnerId,
     progressByPartNumber: {},
   })
 
@@ -94,15 +97,16 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
 // Used by buildAssembly (new) and reimportAssembly (existing record, same ID).
 
 async function seedAssemblyContents(supabase, assemblyId, {
-  documentId, workspaceId, elementId, depth, progressByPartNumber = {},
+  documentId, workspaceId, elementId, depth, rootOwnerId, progressByPartNumber = {},
 }) {
   let directParts   = []
   let subassemblies = []
 
   if (depth < MAX_CHILD_DEPTH) {
-    // Use the definition endpoint to reliably resolve subassembly elementIds.
-    // The flat BOM alone cannot do this — ASSEMBLY rows have no elementId.
-    const resolved = await resolveBomWithSubassemblies(documentId, workspaceId, elementId)
+    // Category-header based resolver: classifies each row as a part or an
+    // assembly, and — for assembly rows — as ours (recurse) vs. vendor/COTS
+    // (logged as a part) by comparing owner ids against the root document.
+    const resolved = await resolveBomWithSubassemblies(documentId, workspaceId, elementId, rootOwnerId)
     directParts   = resolved.directParts
     subassemblies = resolved.subassemblies
   } else {
@@ -146,6 +150,7 @@ async function seedAssemblyContents(supabase, assemblyId, {
       name:        sub.partName,
       depth:       depth + 1,
       thumbnailUrl: null,
+      rootOwnerId,
     })
 
     childLinks.push({
@@ -199,11 +204,13 @@ async function reimportAssembly(supabase, assemblyId) {
   }
 
   // Rebuild under the EXISTING assemblyId — no new assembly record
+  const rootOwnerId = await fetchDocumentOwnerId(asm.onshape_document_id)
   const { partCount, childCount } = await seedAssemblyContents(supabase, assemblyId, {
     documentId:  asm.onshape_document_id,
     workspaceId: asm.onshape_workspace_id,
     elementId:   asm.onshape_element_id,
     depth:       0,
+    rootOwnerId,
     progressByPartNumber,
   })
 

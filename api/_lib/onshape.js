@@ -1,3 +1,15 @@
+const ONSHAPE_BASE = 'https://cad.onshape.com/api/v6'
+
+export function applyCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+}
+
+export function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2)
+}
+
 export async function onshapeGet(path) {
   const accessKey = process.env.ONSHAPE_ACCESS_KEY
   const secretKey = process.env.ONSHAPE_SECRET_KEY
@@ -29,18 +41,6 @@ export async function fetchBom(documentId, workspaceId, elementId) {
   )
 }
 
-/**
- * Assembly Definition endpoint.
- * The ONLY reliable source of subassembly elementId values.
- * BOM rows of type ASSEMBLY do not carry an elementId; the definition does.
- */
-export async function fetchAssemblyDefinition(documentId, workspaceId, elementId) {
-  return onshapeGet(
-    `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/definition` +
-    `?includeMateFeatures=false&includeNonSolids=false`
-  )
-}
-
 // ── Row value resolver ────────────────────────────────────────
 
 export function resolveRow(row, headerById) {
@@ -68,164 +68,153 @@ export function parseBomRows(bomData) {
   return { headers, parts }
 }
 
-// ── Subassembly-aware resolver ────────────────────────────────
+// ── Category / owner resolution ─────────────────────────────────
+//
+// Every BOM row carries a "Category" column (header id below). Its value
+// is an array containing one object whose `name` is either "Onshape part"
+// or "Assembly", and whose `ownerId` identifies who owns that category
+// definition. We use `name` to tell parts from assemblies, and — for rows
+// that ARE assemblies — compare `ownerId` against the root assembly's
+// document owner to tell "our" subassemblies from vendor/COTS assemblies
+// (which get treated as plain parts).
+
+const CATEGORY_HEADER_ID = '57f3fb8efa3416c06701d625'
+
+function getCategoryInfo(row) {
+  const val = row.headerIdToValue?.[CATEGORY_HEADER_ID]
+  if (!val) return null
+  const obj = Array.isArray(val) ? val[0] : val
+  if (!obj || !obj.name) return null
+  return { name: String(obj.name).toLowerCase(), ownerId: obj.ownerId ?? null }
+}
+
+// Cache document → ownerId lookups so a deep BOM tree doesn't repeat
+// the same /documents/{id} call for every row that references it.
+const documentOwnerCache = new Map()
+
+export async function fetchDocumentOwnerId(documentId) {
+  if (documentOwnerCache.has(documentId)) return documentOwnerCache.get(documentId)
+  const promise = onshapeGet(`/documents/${documentId}`)
+    .then(doc => doc?.owner?.id ?? null)
+    .catch(e => {
+      console.warn(`[onshape] could not resolve owner for document ${documentId}:`, e.message)
+      return null
+    })
+  documentOwnerCache.set(documentId, promise)
+  return promise
+}
 
 export const MAX_CHILD_DEPTH = 2
 
 /**
  * resolveBomWithSubassemblies
  *
- * WHY indented=true + multiLevel=true:
- *   • multiLevel=false  → Onshape flattens everything. Sub-assembly rows
- *     are dissolved into their constituent parts. ASSEMBLY-type rows never
- *     appear, so subassemblies can never be detected.
- *   • multiLevel=true alone → ASSEMBLY rows appear, but their child parts
- *     are ALSO included as top-level rows, duplicating them.
- *   • indented=true + multiLevel=true → ASSEMBLY rows appear AND each row
- *     carries an `indent` integer (0 = direct child of this assembly,
- *     1 = inside a sub-assembly, …). Filtering to indent === 0 gives us
- *     exactly the direct parts + sub-assembly references without duplicates.
+ * WHY indented=true + multiLevel=false:
+ *   • multiLevel=false alone   → flat; assembly rows still appear as
+ *     themselves (not exploded) as long as indented=true is also set.
+ *   • indented=true            → each assembly row's `itemSource` carries
+ *     the referenced element's own documentId/elementId/workspaceId
+ *     directly, so we don't need a second "definition" call to find
+ *     subassembly elementIds — the BOM row already has everything we need.
+ *   • multiLevel=false crucially means Onshape does NOT recurse into
+ *     subassembly contents for us — we do that ourselves, one level at a
+ *     time, which is what lets us classify each assembly row (ours vs.
+ *     vendor/COTS) before deciding whether to descend into it at all.
  *
- * WHY definition endpoint:
- *   BOM rows of itemSource ASSEMBLY do not carry an elementId.
- *   The definition endpoint returns every placed instance with its
- *   documentId + elementId, which we need to fetch each sub-assembly's
- *   own BOM recursively.
+ * WHY the Category header instead of itemSource/type:
+ *   Row-level `itemSource` does not reliably distinguish parts from
+ *   assemblies across all Onshape BOM template configurations. The
+ *   "Category" column (header id 57f3fb8efa3416c06701d625), however,
+ *   always resolves to either "Onshape part" or "Assembly" and also
+ *   carries an `ownerId` we can use to detect vendor/COTS assemblies.
  *
  * Returns { headers, directParts, subassemblies }
  */
-export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId) {
-  const [bomData, defData] = await Promise.all([
-    onshapeGet(
-      `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
-      `?indented=true&multiLevel=true&generateIfAbsent=true`
-    ),
-    fetchAssemblyDefinition(documentId, workspaceId, elementId).catch(e => {
-      console.warn('[onshape] definition fetch failed (will attempt name-match only):', e.message)
-      return null
-    }),
-  ])
+export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, rootOwnerId = null) {
+  const bomData = await onshapeGet(
+    `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom` +
+    `?indented=true&multiLevel=false&generateIfAbsent=true`
+  )
 
   const headers    = bomData.headers ?? []
   const headerById = {}
   headers.forEach(h => { headerById[h.id] = h.name?.toLowerCase() })
 
-  // Build lookup maps from definition Assembly instances.
-  // Onshape may use 'Assembly' or 'ASSEMBLY' for the type field.
-  const defAssemblies = (defData?.instances ?? []).filter(
-    i => i.type === 'Assembly' || i.type === 'ASSEMBLY'
-  )
-  const byInstanceId = {}
-  const byElementId  = {}
-  const byName       = {}
-  defAssemblies.forEach(i => {
-    if (i.id)        byInstanceId[i.id]       = i
-    if (i.elementId) byElementId[i.elementId] = i
-    const k = (i.name || '').toLowerCase()
-    if (k && !byName[k]) byName[k] = i   // first match wins on duplicate names
-  })
+  // The "document owner" we compare against is always the root assembly's
+  // document owner — resolved once, then threaded through every recursive
+  // call so nested subassemblies are still judged against the same owner.
+  const ownerId = rootOwnerId ?? await fetchDocumentOwnerId(documentId)
 
-  // ── Diagnostic log (visible in Vercel function logs) ─────
   const allRows = bomData.rows ?? []
-  const indent0  = allRows.filter(r => (r.indent ?? r.indentLevel ?? 0) === 0)
-  const asmRows  = indent0.filter(r => {
-    const src = (r.itemSource || '').toUpperCase()
-    return src === 'ASSEMBLY' || src === 'ASSEMBLY_REFERENCE'
-  })
   console.log(
-    `[onshape] BOM: ${allRows.length} total rows, ${indent0.length} at indent=0, ` +
-    `${asmRows.length} ASSEMBLY-type at indent=0. ` +
-    `Definition: ${defAssemblies.length} Assembly instance(s): [${defAssemblies.map(i => i.name).join(', ')}]`
+    `[onshape] BOM for element ${elementId}: ${allRows.length} row(s). ` +
+    `Root document owner: ${ownerId}`
   )
-  if (allRows.length > 0) {
-    // Log a sample of the raw row structure so field names are visible in logs
-    const sample = allRows[0]
-    console.log('[onshape] Sample row fields:', JSON.stringify({
-      indent:     sample.indent,
-      indentLevel: sample.indentLevel,
-      itemSource: sample.itemSource,
-      partId:     sample.partId,
-      elementId:  sample.elementId,
-      documentId: sample.documentId,
-    }))
-  }
 
   const directParts   = []
   const subassemblies = []
 
   for (const row of allRows) {
-    // ── Skip rows that belong to sub-assemblies ────────────
-    // indented=true puts the depth in row.indent (or row.indentLevel on some
-    // versions). Any row with depth > 0 belongs to a sub-assembly and will be
-    // picked up when we recursively import that sub-assembly.
-    const rowIndent = row.indent ?? row.indentLevel ?? 0
-    if (rowIndent > 0) continue
-
     const parsed = resolveRow(row, headerById)
     if (parsed.partName === 'Unknown part') continue
 
-    // Normalise itemSource — Onshape uses ASSEMBLY, Assembly, ASSEMBLY_REFERENCE
-    const src           = (row.itemSource || '').toUpperCase()
-    const isAssemblyRow = src === 'ASSEMBLY' || src === 'ASSEMBLY_REFERENCE'
+    const category = getCategoryInfo(row)
 
-    if (!isAssemblyRow) {
+    if (!category) {
+      // No category info at all — fail safe as a direct part rather than
+      // silently dropping the row.
+      console.warn(`[onshape] Row "${parsed.partName}" has no Category value; treating as part.`)
       directParts.push(parsed)
       continue
     }
 
-    // ── Resolve the sub-assembly's elementId ───────────────
-    // Four strategies, ordered most → least reliable.
-    let resolvedElementId   = null
-    let resolvedDocumentId  = documentId
-    let resolvedWorkspaceId = workspaceId
+    const isPart     = category.name.includes('part')
+    const isAssembly = !isPart && category.name.includes('assembly')
 
-    if (row.elementId) {
-      // S1: elementId sits directly on the BOM row
-      resolvedElementId   = row.elementId
-      resolvedDocumentId  = row.documentId  || documentId
-      resolvedWorkspaceId = row.workspaceId || workspaceId
-
-    } else if (row.partId && byInstanceId[row.partId]) {
-      // S2: row.partId matches a definition instance id
-      const inst         = byInstanceId[row.partId]
-      resolvedElementId  = inst.elementId
-      resolvedDocumentId = inst.documentId || documentId
-
-    } else if (row.partId && byElementId[row.partId]) {
-      // S3: row.partId IS the elementId
-      const inst         = byElementId[row.partId]
-      resolvedElementId  = inst.elementId
-      resolvedDocumentId = inst.documentId || documentId
-
-    } else {
-      // S4: name match (fragile — last resort)
-      const inst = byName[(parsed.partName || '').toLowerCase()]
-      if (inst) {
-        resolvedElementId  = inst.elementId
-        resolvedDocumentId = inst.documentId || documentId
-        console.warn(`[onshape] S4 name-match for "${parsed.partName}" → elementId ${resolvedElementId}`)
-      }
-    }
-
-    if (resolvedElementId) {
-      console.log(`[onshape] Subassembly "${parsed.partName}" resolved → elementId: ${resolvedElementId}`)
-      subassemblies.push({
-        ...parsed,
-        resolvedElementId,
-        resolvedDocumentId,
-        resolvedWorkspaceId,
-      })
-    } else {
-      console.warn(
-        `[onshape] Cannot resolve elementId for "${parsed.partName}". ` +
-        `row.partId=${row.partId}. ` +
-        `Definition had: [${defAssemblies.map(i => `${i.name}→${i.id}`).join(', ')}]`
-      )
-      // Keep the sub-assembly as a flat part so nothing is silently lost
+    if (isPart) {
       directParts.push(parsed)
+      continue
     }
+
+    if (!isAssembly) {
+      // Unrecognized category — fail safe as a part.
+      console.warn(`[onshape] Row "${parsed.partName}" has unrecognized category "${category.name}"; treating as part.`)
+      directParts.push(parsed)
+      continue
+    }
+
+    // ── It's an assembly row — is it ours, or a vendor/COTS assembly? ──
+    const isOurs = ownerId !== null && category.ownerId !== null && category.ownerId === ownerId
+
+    if (!isOurs) {
+      // Vendor/outside assembly — treat as a purchased (COTS) part rather
+      // than something we recurse into.
+      console.log(`[onshape] "${parsed.partName}" is an outside-owned assembly (COTS) → logging as part.`)
+      directParts.push(parsed)
+      continue
+    }
+
+    // ── Genuine child (sub)assembly — resolve where its own BOM lives ──
+    const src = row.itemSource || {}
+    const resolvedElementId  = src.elementId
+    const resolvedDocumentId = src.documentId || documentId
+    const resolvedWorkspaceId = src.wvmId || workspaceId
+
+    if (!resolvedElementId) {
+      console.warn(`[onshape] Assembly row "${parsed.partName}" has no itemSource.elementId; treating as part.`)
+      directParts.push(parsed)
+      continue
+    }
+
+    console.log(`[onshape] "${parsed.partName}" is a child assembly → elementId: ${resolvedElementId}`)
+    subassemblies.push({
+      ...parsed,
+      resolvedElementId,
+      resolvedDocumentId,
+      resolvedWorkspaceId,
+    })
   }
 
-  console.log(`[onshape] Resolved: ${directParts.length} direct parts, ${subassemblies.length} subassemblies`)
+  console.log(`[onshape] Resolved: ${directParts.length} direct part(s), ${subassemblies.length} child subassembly(ies)`)
   return { headers, directParts, subassemblies }
 }
