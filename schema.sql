@@ -60,6 +60,7 @@ create table assembly_children (
   thumbnail_url         text,
   onshape_document_id   text,
   onshape_workspace_id  text,
+  onshape_wvm_type      text not null default 'w',  -- 'w' workspace | 'v' version | 'm' microversion
   onshape_element_id    text,
   quantity              integer not null default 1,
   created_at            timestamptz not null default now(),

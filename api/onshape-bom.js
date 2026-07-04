@@ -120,7 +120,7 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
 // `childrenOwner` — { parent_assembly_id } for a root assembly, or { parent_child_id } for a subassembly node
 
 async function seedAssemblyContents(supabase, {
-  documentId, workspaceId, elementId, depth, rootOwnerId,
+  documentId, workspaceId, elementId, wvmType = 'w', depth, rootOwnerId,
   partsOwner, childrenOwner, progressByPartNumber = {},
 }) {
   let directParts   = []
@@ -130,12 +130,12 @@ async function seedAssemblyContents(supabase, {
     // Category-header based resolver: classifies each row as a part or an
     // assembly, and — for assembly rows — as ours (recurse) vs. vendor/COTS
     // (logged as a part) by comparing document ids against the root document.
-    const resolved = await resolveBomWithSubassemblies(documentId, workspaceId, elementId, rootOwnerId)
+    const resolved = await resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType, rootOwnerId)
     directParts   = resolved.directParts
     subassemblies = resolved.subassemblies
   } else {
     // At max depth: flat BOM only, every row becomes a direct part
-    const bomData = await fetchBom(documentId, workspaceId, elementId)
+    const bomData = await fetchBom(documentId, workspaceId, elementId, wvmType)
     directParts   = parseBomRows(bomData).parts
   }
 
@@ -174,6 +174,7 @@ async function seedAssemblyContents(supabase, {
       name:                 sub.partName,
       onshape_document_id:  sub.resolvedDocumentId,
       onshape_workspace_id: sub.resolvedWorkspaceId,
+      onshape_wvm_type:     sub.resolvedWvmType || 'w',
       onshape_element_id:   sub.resolvedElementId,
       quantity:             sub.quantity,
     })
@@ -181,10 +182,13 @@ async function seedAssemblyContents(supabase, {
     childCount++
 
     // Recurse into the subassembly's own contents — nested under IT, not
-    // under the root assembly, so the hierarchy stays intact.
+    // under the root assembly, so the hierarchy stays intact. Crucially,
+    // pass along its actual branch type (workspace/version/microversion) —
+    // mirrored/released/frozen references are commonly 'v', not 'w'.
     await seedAssemblyContents(supabase, {
       documentId:  sub.resolvedDocumentId,
       workspaceId: sub.resolvedWorkspaceId,
+      wvmType:     sub.resolvedWvmType || 'w',
       elementId:   sub.resolvedElementId,
       depth:       depth + 1,
       rootOwnerId,

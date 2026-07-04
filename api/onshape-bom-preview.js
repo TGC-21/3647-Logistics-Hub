@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   try {
     const rootOwnerId = await fetchDocumentOwnerId(documentId)
     const { directParts, subassemblies } = await resolveBomWithSubassemblies(
-      documentId, workspaceId, elementId, rootOwnerId
+      documentId, workspaceId, elementId, 'w', rootOwnerId
     )
 
     const totalParts      = directParts.length

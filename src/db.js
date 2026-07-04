@@ -293,6 +293,7 @@ function localPartToDb(p) {
 }
 
 function dbChildToLocal(row) {
+  const wvmType = row.onshape_wvm_type || 'w'
   return {
     id:                 row.id,
     parentAssemblyId:   row.parent_assembly_id ?? null,
@@ -302,9 +303,10 @@ function dbChildToLocal(row) {
     thumbnail:          row.thumbnail_url ?? null,
     onshapeDocumentId:  row.onshape_document_id ?? '',
     onshapeWorkspaceId: row.onshape_workspace_id ?? '',
+    onshapeWvmType:     wvmType,
     onshapeElementId:   row.onshape_element_id ?? '',
     onshapeUrl:         (row.onshape_document_id && row.onshape_workspace_id && row.onshape_element_id)
-      ? `https://cad.onshape.com/documents/${row.onshape_document_id}/w/${row.onshape_workspace_id}/e/${row.onshape_element_id}`
+      ? `https://cad.onshape.com/documents/${row.onshape_document_id}/${wvmType}/${row.onshape_workspace_id}/e/${row.onshape_element_id}`
       : '',
     quantity:           row.quantity ?? 1,
     createdAt:          row.created_at,

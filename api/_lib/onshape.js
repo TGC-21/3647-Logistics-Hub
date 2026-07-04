@@ -41,8 +41,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
  * in the Onshape UI. Forcing the plain/default BOM shape first reliably
  * triggers generation; once generated, the originally-requested shape works.
  */
-async function fetchBomWithFallback(documentId, workspaceId, elementId, queryString) {
-  const base = `/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom`
+async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, queryString) {
+  const base = `/assemblies/d/${documentId}/${wvmType}/${workspaceId}/e/${elementId}/bom`
   const path = `${base}?${queryString}`
 
   try {
@@ -64,9 +64,9 @@ async function fetchBomWithFallback(documentId, workspaceId, elementId, queryStr
     return await onshapeGet(path)
   } catch (e2) {
     throw new Error(
-      `Could not load the BOM for element ${elementId} (document ${documentId}, workspace ${workspaceId}). ` +
+      `Could not load the BOM for element ${elementId} (document ${documentId}, ${wvmType} ${workspaceId}). ` +
       `Onshape returned 404 even after forcing BOM generation — check that this element is an Assembly ` +
-      `(not a Part Studio/other tab), that the workspace id is current, and that you have access to it.`
+      `(not a Part Studio/other tab), that the ${wvmType === 'v' ? 'version' : wvmType === 'm' ? 'microversion' : 'workspace'} id is current, and that you have access to it.`
     )
   }
 }
@@ -75,9 +75,15 @@ async function fetchBomWithFallback(documentId, workspaceId, elementId, queryStr
  * Flat BOM — multiLevel=false + indented=false.
  * Used only at/past MAX_CHILD_DEPTH (leaf level) where we treat every row
  * as a direct part regardless of type.
+ *
+ * `wvmType` must match the branch type of the referenced element — 'w'
+ * (workspace), 'v' (version), or 'm' (microversion). Mirrored / released /
+ * frozen references commonly come back as 'v', and hitting the workspace
+ * endpoint (`/w/`) for a version-only element 404s even though the ids
+ * themselves are perfectly valid.
  */
-export async function fetchBom(documentId, workspaceId, elementId) {
-  return fetchBomWithFallback(documentId, workspaceId, elementId, 'indented=false&multiLevel=false&generateIfAbsent=true')
+export async function fetchBom(documentId, workspaceId, elementId, wvmType = 'w') {
+  return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=false&multiLevel=false&generateIfAbsent=true')
 }
 
 // ── Row value resolver ────────────────────────────────────────
@@ -173,14 +179,21 @@ export const MAX_CHILD_DEPTH = 5
  *   always resolves to either "Onshape part" or "Assembly" and also
  *   carries an `ownerId` we can use to detect vendor/COTS assemblies.
  *
+ * WHY resolvedWvmType matters:
+ *   `itemSource.wvmType` tells us whether the referenced element lives on
+ *   a workspace ('w'), version ('v'), or microversion ('m'). Mirrored /
+ *   released / frozen instances commonly resolve to 'v' even when the
+ *   containing assembly is on a workspace — assuming 'w' for everything
+ *   404s for those rows even though the ids themselves are correct.
+ *
  * Returns { headers, directParts, subassemblies }
  */
-async function fetchIndentedBom(documentId, workspaceId, elementId) {
-  return fetchBomWithFallback(documentId, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true')
+async function fetchIndentedBom(documentId, workspaceId, elementId, wvmType) {
+  return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true')
 }
 
-export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, rootOwnerId = null) {
-  const bomData = await fetchIndentedBom(documentId, workspaceId, elementId)
+export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType = 'w', rootOwnerId = null) {
+  const bomData = await fetchIndentedBom(documentId, workspaceId, elementId, wvmType)
 
   const headers    = bomData.headers ?? []
   const headerById = {}
@@ -242,9 +255,14 @@ export async function resolveBomWithSubassemblies(documentId, workspaceId, eleme
 
     // ── Genuine child (sub)assembly — resolve where its own BOM lives ──
     const src = row.itemSource || {}
-    const resolvedElementId  = src.elementId
-    const resolvedDocumentId = src.documentId || documentId
+    const resolvedElementId   = src.elementId
+    const resolvedDocumentId  = src.documentId || documentId
     const resolvedWorkspaceId = src.wvmId || workspaceId
+    // 'w' (workspace), 'v' (version), or 'm' (microversion) — mirrored,
+    // released, or otherwise frozen references commonly come back as 'v',
+    // and hitting the workspace endpoint for those 404s even though the
+    // ids themselves are valid.
+    const resolvedWvmType     = src.wvmType || 'w'
 
     if (!resolvedElementId) {
       console.warn(`[onshape] Assembly row "${parsed.partName}" has no itemSource.elementId; treating as part.`)
@@ -252,12 +270,13 @@ export async function resolveBomWithSubassemblies(documentId, workspaceId, eleme
       continue
     }
 
-    console.log(`[onshape] "${parsed.partName}" is a child assembly → elementId: ${resolvedElementId}`)
+    console.log(`[onshape] "${parsed.partName}" is a child assembly → elementId: ${resolvedElementId} (${resolvedWvmType}:${resolvedWorkspaceId})`)
     subassemblies.push({
       ...parsed,
       resolvedElementId,
       resolvedDocumentId,
       resolvedWorkspaceId,
+      resolvedWvmType,
     })
   }
 
