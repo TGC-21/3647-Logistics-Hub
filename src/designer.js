@@ -2,7 +2,7 @@
 import {
   fetchAssemblies, upsertAssembly, deleteAssembly,
   fetchAssemblyParts, upsertAssemblyPart, bulkInsertAssemblyParts, deleteAssemblyPart,
-  fetchAssemblyChildren, bulkInsertAssemblyChildren, deleteAssemblyChildrenByParent, bulkDeleteAssemblies,
+  fetchAssemblyChildren, fetchChildrenOfChild, fetchAssemblyChildById, fetchChildParts,
 } from './db.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -10,11 +10,17 @@ let assemblies        = []
 let currentAssemblyId = null
 let currentParts      = []
 let currentChildren   = []   // assembly_children rows for the current assembly
-let navigationStack   = []   // [{id, name}] trail from root → current
+let navigationStack   = []   // [{id, name}] trail from root → current (root assemblies only)
 let editingAssemblyId = null
 let editingPartId     = null
 let detailTab         = 'parts'   // 'parts' | 'subassemblies' — active tab in assembly detail view
-let isolatedMode      = false     // true when opened via "?asm=<id>" in its own window/tab
+let isolatedMode      = false     // true when opened via "?asm=<id>" / "?child=<id>" in its own window/tab
+
+// Isolated subassembly-node view state (separate from root assembly state —
+// a subassembly is never a row in `assemblies`, so it can't share currentAssemblyId)
+let viewingChildId       = null   // assembly_children.id currently shown, or null
+let childNavStack        = []     // [{id, name}] trail when drilling into nested subassemblies
+let childDetailTab       = 'parts'
 
 // Onshape import picker state
 let onshapeStep        = 'search'   // 'search' | 'assemblies' | 'preview'
@@ -69,12 +75,11 @@ export async function designerBoot() {
 
 export function getAssemblies() { return assemblies }
 
-// ── Isolated single-assembly window (opened via "?asm=<id>") ──
+// ── Isolated single-node window (opened via "?asm=<id>" or "?child=<id>") ──
 export function setIsolatedMode(v) { isolatedMode = v }
 
-/** Boots the app straight into a single assembly's detail view, with no
- *  sidebar/other assemblies in reach — used by the "open in new window"
- *  action on a subassembly card. */
+/** Boots the app straight into a root assembly's detail view, with no
+ *  sidebar/other assemblies in reach. */
 export async function bootIsolatedAssembly(assemblyId) {
   isolatedMode    = true
   navigationStack = []
@@ -82,9 +87,19 @@ export async function bootIsolatedAssembly(assemblyId) {
   selectAssembly(assemblyId)
 }
 
-/** Opens a subassembly in a fresh, isolated browser window/tab. */
-function openSubassemblyWindow(childAssemblyId) {
-  const url = `${location.pathname}?asm=${encodeURIComponent(childAssemblyId)}`
+/** Boots the app straight into a SUBASSEMBLY node's detail view — used by
+ *  the "open in new window" action on a subassembly card. Subassemblies
+ *  aren't real assemblies, so this bypasses selectAssembly()/assemblies[]
+ *  entirely and renders directly from assembly_children + assembly_parts. */
+export async function bootIsolatedChild(childId) {
+  isolatedMode  = true
+  viewingChildId = childId
+  await renderChildDetail()
+}
+
+/** Opens a subassembly node in a fresh, isolated browser window/tab. */
+function openSubassemblyWindow(childId) {
+  const url = `${location.pathname}?child=${encodeURIComponent(childId)}`
   window.open(url, '_blank', 'noopener')
 }
 
@@ -254,16 +269,14 @@ async function renderAssemblyDetail() {
   const childrenHTML = currentChildren.length
     ? `<div class="asm-grid">
         ${currentChildren.map(c => {
-          const childAsm = assemblyById(c.childAssemblyId)
-          const thumbHTML = childAsm?.thumbnail
-            ? `<div class="asm-card-thumb"><img src="${childAsm.thumbnail}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+          const thumbHTML = c.thumbnail
+            ? `<div class="asm-card-thumb"><img src="${c.thumbnail}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
             : ''
-          return `<div class="asm-card asm-subasm-card" data-open-child="${c.childAssemblyId}" title="Opens in a new window">
+          return `<div class="asm-card asm-subasm-card" data-open-child="${c.id}" title="Opens in a new window">
             <i class="ti ti-arrow-up-right asm-card-open-icon" aria-hidden="true"></i>
             ${thumbHTML}
             <div class="asm-card-header">
-              <div class="asm-card-name">${childAsm?.name ?? 'Subassembly'}</div>
-              ${childAsm ? statusLabel(childAsm.status) : ''}
+              <div class="asm-card-name">${c.name}</div>
             </div>
             <div class="asm-child-qty">× ${c.quantity}</div>
           </div>`
@@ -386,6 +399,175 @@ async function renderAssemblyDetail() {
   )
 
   bindPartRowEvents()
+}
+
+// ── Subassembly node detail (isolated window only) ─────────────
+// A subassembly is never a row in `assemblies` — this renders directly
+// from assembly_children + assembly_parts (assembly_child_id). It's
+// intentionally lighter than renderAssemblyDetail: no edit/delete/re-import,
+// since a subassembly's contents are owned by re-importing the ROOT
+// assembly, which rebuilds the whole tree underneath it. Quantity
+// collection tracking still works, since that's independent per-part state.
+let currentChildParts    = []
+let currentChildChildren = []
+
+async function renderChildDetail() {
+  const title = document.getElementById('content-title')
+  const meta  = document.getElementById('content-meta')
+  const area  = document.getElementById('main-area')
+
+  area.innerHTML = `<div class="empty"><i class="ti ti-loader-2 spin"></i><div class="empty-title">Loading…</div></div>`
+
+  let child
+  try {
+    ;[child, currentChildParts, currentChildChildren] = await Promise.all([
+      fetchAssemblyChildById(viewingChildId),
+      fetchChildParts(viewingChildId),
+      fetchChildrenOfChild(viewingChildId),
+    ])
+  } catch (e) {
+    area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading subassembly</div></div>`
+    return
+  }
+
+  title.textContent = child.name
+  meta.innerHTML    = `<span class="asm-badge asm-badge--draft"><i class="ti ti-git-branch" aria-hidden="true"></i> Subassembly</span>`
+
+  const prog = partsProgress(currentChildParts)
+
+  const onshapeBtn = child.onshapeUrl
+    ? `<a class="btn btn-sm" href="${child.onshapeUrl}" target="_blank" rel="noreferrer">
+        <i class="ti ti-external-link" aria-hidden="true"></i> Onshape
+      </a>`
+    : ''
+
+  const childrenHTML = currentChildChildren.length
+    ? `<div class="asm-grid">
+        ${currentChildChildren.map(c => {
+          const thumbHTML = c.thumbnail
+            ? `<div class="asm-card-thumb"><img src="${c.thumbnail}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+            : ''
+          return `<div class="asm-card asm-subasm-card" data-open-child="${c.id}" title="Opens in a new window">
+            <i class="ti ti-arrow-up-right asm-card-open-icon" aria-hidden="true"></i>
+            ${thumbHTML}
+            <div class="asm-card-header"><div class="asm-card-name">${c.name}</div></div>
+            <div class="asm-child-qty">× ${c.quantity}</div>
+          </div>`
+        }).join('')}
+      </div>`
+    : `<div class="empty" style="padding:40px 0">
+        <i class="ti ti-cube-off" aria-hidden="true"></i>
+        <div class="empty-title">No subassemblies</div>
+      </div>`
+
+  const tabsHTML = currentChildChildren.length
+    ? `<div class="asm-detail-tabs">
+        <button class="asm-detail-tab${childDetailTab === 'parts' ? ' active' : ''}" id="tab-btn-parts">
+          Parts <span class="section-count">${currentChildParts.length}</span>
+        </button>
+        <button class="asm-detail-tab${childDetailTab === 'subassemblies' ? ' active' : ''}" id="tab-btn-subassemblies">
+          Subassemblies <span class="section-count">${currentChildChildren.length}</span>
+        </button>
+      </div>`
+    : ''
+
+  const showSubTab = childDetailTab === 'subassemblies' && currentChildChildren.length
+
+  const partsSectionHTML = showSubTab ? '' : `
+      ${tabsHTML ? '' : `<div class="asm-parts-toolbar"><div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div></div>`}
+      ${currentChildParts.length
+        ? `<div class="parts-table-wrap">
+            <table class="parts-table">
+              <thead>
+                <tr>
+                  <th>Part name</th>
+                  <th>Part #</th>
+                  <th style="text-align:center">Needed</th>
+                  <th style="text-align:center">Collected</th>
+                  <th style="text-align:center">Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="child-parts-tbody">
+                ${currentChildParts.map(childPartRowHTML).join('')}
+              </tbody>
+            </table>
+          </div>`
+        : `<div class="empty" style="padding:40px 0">
+            <i class="ti ti-list-check" aria-hidden="true"></i>
+            <div class="empty-title">No direct parts</div>
+          </div>`}`
+
+  area.innerHTML = `
+    <div class="asm-detail">
+      <div class="asm-detail-toolbar">
+        <button class="btn btn-sm" id="btn-back-asm"><i class="ti ti-x" aria-hidden="true"></i> Close</button>
+        <span class="asm-linked-badge asm-linked-badge--detail"><i class="ti ti-link" aria-hidden="true"></i> From Onshape</span>
+        <div style="flex:1"></div>
+        ${onshapeBtn}
+      </div>
+
+      <div class="asm-progress-row">
+        <div class="asm-progress-bar"><div class="asm-progress-fill" style="width:${prog.pct}%"></div></div>
+        <div class="asm-progress-label">${prog.collected} / ${prog.total} collected (${prog.pct}%)</div>
+      </div>
+
+      ${tabsHTML}
+      ${showSubTab ? `<div style="margin-top:12px">${childrenHTML}</div>` : ''}
+      ${partsSectionHTML}
+    </div>`
+
+  document.getElementById('btn-back-asm').addEventListener('click', () => window.close())
+  document.getElementById('tab-btn-parts')?.addEventListener('click', () => { childDetailTab = 'parts'; renderChildDetail() })
+  document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
+
+  area.querySelectorAll('[data-open-child]').forEach(el =>
+    el.addEventListener('click', () => openSubassemblyWindow(el.dataset.openChild))
+  )
+
+  const tbody = document.getElementById('child-parts-tbody')
+  if (tbody) {
+    tbody.addEventListener('click', async e => {
+      const incBtn = e.target.closest('[data-qty-inc]')
+      const decBtn = e.target.closest('[data-qty-dec]')
+      if (!incBtn && !decBtn) return
+      const partId = (incBtn || decBtn).dataset.qtyInc || (incBtn || decBtn).dataset.qtyDec
+      const delta  = incBtn ? +1 : -1
+      const part   = currentChildParts.find(p => p.id === partId)
+      if (!part) return
+      const newQty    = Math.max(0, Math.min(part.quantityNeeded, part.quantityCollected + delta))
+      const newStatus = newQty >= part.quantityNeeded ? 'complete' : newQty > 0 ? 'partial' : 'pending'
+      try {
+        const updated = await upsertAssemblyPart({ ...part, quantityCollected: newQty, status: newStatus })
+        const idx = currentChildParts.findIndex(p => p.id === partId)
+        if (idx > -1) currentChildParts[idx] = updated
+        renderChildDetail()
+      } catch (e) { toastFn('Error updating quantity') }
+    })
+  }
+}
+
+function childPartRowHTML(p) {
+  const status = computePartStatus(p)
+  const statusBadge = {
+    complete: '<span class="part-badge part-badge--complete">Complete</span>',
+    partial:  '<span class="part-badge part-badge--partial">Partial</span>',
+    pending:  '<span class="part-badge part-badge--pending">Pending</span>',
+  }[status]
+  return `<tr data-part-id="${p.id}">
+    <td><div class="part-name">${p.partName}</div></td>
+    <td><span class="part-number">${p.partNumber || '—'}</span></td>
+    <td style="text-align:center">${p.quantityNeeded}</td>
+    <td style="text-align:center">
+      <div class="qty-stepper">
+        <button class="qty-btn" data-qty-dec="${p.id}" ${p.quantityCollected <= 0 ? 'disabled' : ''}>−</button>
+        <span class="qty-val">${p.quantityCollected}</span>
+        <button class="qty-btn" data-qty-inc="${p.id}" ${p.quantityCollected >= p.quantityNeeded ? 'disabled' : ''}>+</button>
+      </div>
+    </td>
+    <td style="text-align:center">${statusBadge}</td>
+    <td></td>
+  </tr>`
 }
 
 function partRowHTML(p) {
@@ -1226,7 +1408,7 @@ async function confirmLinkAssembly() {
   assemblies = await fetchAssemblies()
   closeOnshapeModal()
   selectAssembly(data.assemblyId)
-  toastFn(`"${name}" created — ${data.partCount} part(s), ${data.childCount} subassembly link(s)`)
+  toastFn(`"${name}" created — ${data.partCount} part(s), ${data.childCount} subassembly(ies)`)
 }
 
 // 'import' mode — add flat parts to the currently open assembly

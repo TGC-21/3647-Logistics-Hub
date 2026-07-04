@@ -41,18 +41,35 @@ create table if not exists assemblies (
   created_at           timestamptz not null default now()
 );
 
--- ── Assembly children (subassembly references) ──────────────
--- One row per subassembly used in a parent assembly.
--- `quantity` = how many instances of the child assembly the parent needs.
--- On delete of the parent, children rows cascade; the child assembly itself
--- is left intact (it can exist standalone or be referenced elsewhere).
-create table if not exists assembly_children (
-  id                 text primary key,
-  parent_assembly_id text not null references assemblies(id) on delete cascade,
-  child_assembly_id  text not null references assemblies(id) on delete restrict,
-  quantity           integer not null default 1,
-  created_at         timestamptz not null default now()
+-- ── Assembly children (subassemblies) ────────────────────────
+-- Subassemblies are NOT stored in `assemblies` — they live only here, so
+-- they can never show up in "All assemblies" or be opened/edited/deleted
+-- as if they were independent top-level assemblies. The BOM hierarchy is
+-- preserved by making each row belong to exactly one parent:
+--   • parent_assembly_id — set when this is a direct child of a root assembly
+--   • parent_child_id    — set when this is nested under ANOTHER subassembly
+-- Deleting the parent (either kind) cascades down through the whole
+-- subtree, including that subtree's own assembly_parts rows.
+drop table if exists assembly_children cascade;
+create table assembly_children (
+  id                    text primary key,
+  parent_assembly_id    text references assemblies(id) on delete cascade,
+  parent_child_id       text references assembly_children(id) on delete cascade,
+  name                  text not null,
+  description           text,
+  thumbnail_url         text,
+  onshape_document_id   text,
+  onshape_workspace_id  text,
+  onshape_element_id    text,
+  quantity              integer not null default 1,
+  created_at            timestamptz not null default now(),
+  constraint assembly_children_exactly_one_parent check (
+    (parent_assembly_id is not null and parent_child_id is null) or
+    (parent_assembly_id is null and parent_child_id is not null)
+  )
 );
+create index if not exists idx_assembly_children_parent_assembly on assembly_children(parent_assembly_id);
+create index if not exists idx_assembly_children_parent_child    on assembly_children(parent_child_id);
 
 -- Migration for existing installs — these are no-ops on a fresh setup
 alter table assemblies add column if not exists onshape_element_id text;
@@ -61,7 +78,8 @@ alter table assemblies add column if not exists thumbnail_url      text;
 -- ── Row Level Security ───────────────────────────────────────
 create table if not exists assembly_parts (
   id                  text primary key,
-  assembly_id         text not null references assemblies(id) on delete cascade,
+  assembly_id         text references assemblies(id) on delete cascade,
+  assembly_child_id   text references assembly_children(id) on delete cascade,
   part_name           text not null,
   part_number         text not null default '',
   quantity_needed     integer not null default 1,
@@ -70,8 +88,22 @@ create table if not exists assembly_parts (
   source              text not null default 'manual',   -- manual | csv | onshape
   notes               text,
   onshape_reference   jsonb,
-  created_at          timestamptz not null default now()
+  created_at          timestamptz not null default now(),
+  constraint assembly_parts_exactly_one_owner check (
+    (assembly_id is not null and assembly_child_id is null) or
+    (assembly_id is null and assembly_child_id is not null)
+  )
 );
+
+-- Migration for existing installs — these are no-ops on a fresh setup
+alter table assembly_parts alter column assembly_id drop not null;
+alter table assembly_parts add column if not exists assembly_child_id text references assembly_children(id) on delete cascade;
+alter table assembly_parts drop constraint if exists assembly_parts_exactly_one_owner;
+alter table assembly_parts add constraint assembly_parts_exactly_one_owner check (
+  (assembly_id is not null and assembly_child_id is null) or
+  (assembly_id is null and assembly_child_id is not null)
+);
+create index if not exists idx_assembly_parts_assembly_child on assembly_parts(assembly_child_id);
 
 -- ── Storage bucket for component images ──────────────────────
 insert into storage.buckets (id, name, public)

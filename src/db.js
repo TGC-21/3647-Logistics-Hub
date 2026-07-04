@@ -146,44 +146,53 @@ export async function deleteAssemblyPart(id) {
   if (error) throw error
 }
 
-// ── Assembly children ─────────────────────────────────────────
+// ── Assembly children (subassemblies) ─────────────────────────
+// Subassemblies never live in `assemblies` — they're their own node type,
+// nested under either a root assembly or another subassembly node. All
+// writes happen server-side (api/onshape-bom.js, via the service key); the
+// client only ever reads them.
 
-export async function fetchAssemblyChildren(parentId) {
+/** Direct subassemblies of a root assembly. */
+export async function fetchAssemblyChildren(parentAssemblyId) {
   const { data, error } = await supabase
     .from('assembly_children')
     .select('*')
-    .eq('parent_assembly_id', parentId)
+    .eq('parent_assembly_id', parentAssemblyId)
     .order('created_at', { ascending: true })
   if (error) throw error
   return data.map(dbChildToLocal)
 }
 
-export async function bulkInsertAssemblyChildren(children) {
-  if (!children.length) return []
+/** Subassemblies nested under ANOTHER subassembly node. */
+export async function fetchChildrenOfChild(parentChildId) {
   const { data, error } = await supabase
     .from('assembly_children')
-    .insert(children.map(localChildToDb))
-    .select()
+    .select('*')
+    .eq('parent_child_id', parentChildId)
+    .order('created_at', { ascending: true })
   if (error) throw error
   return data.map(dbChildToLocal)
 }
 
-export async function deleteAssemblyChildrenByParent(parentId) {
-  const { error } = await supabase
+export async function fetchAssemblyChildById(id) {
+  const { data, error } = await supabase
     .from('assembly_children')
-    .delete()
-    .eq('parent_assembly_id', parentId)
+    .select('*')
+    .eq('id', id)
+    .single()
   if (error) throw error
+  return dbChildToLocal(data)
 }
 
-/** Delete assembly records by ID list (used during re-import cleanup). */
-export async function bulkDeleteAssemblies(ids) {
-  if (!ids.length) return
-  const { error } = await supabase
-    .from('assemblies')
-    .delete()
-    .in('id', ids)
+/** Parts that belong directly to a subassembly node (not a root assembly). */
+export async function fetchChildParts(childId) {
+  const { data, error } = await supabase
+    .from('assembly_parts')
+    .select('*')
+    .eq('assembly_child_id', childId)
+    .order('created_at', { ascending: true })
   if (error) throw error
+  return data.map(dbPartToLocal)
 }
 
 // ── Mapping helpers ───────────────────────────────────────────
@@ -254,7 +263,8 @@ function localAssemblyToDb(a) {
 function dbPartToLocal(row) {
   return {
     id:                row.id,
-    assemblyId:        row.assembly_id,
+    assemblyId:        row.assembly_id ?? null,
+    assemblyChildId:   row.assembly_child_id ?? null,
     partName:          row.part_name,
     partNumber:        row.part_number ?? '',
     quantityNeeded:    row.quantity_needed ?? 1,
@@ -269,7 +279,8 @@ function dbPartToLocal(row) {
 function localPartToDb(p) {
   return {
     id:                 p.id,
-    assembly_id:        p.assemblyId,
+    assembly_id:        p.assemblyId ?? null,
+    assembly_child_id:  p.assemblyChildId ?? null,
     part_name:          p.partName,
     part_number:        p.partNumber ?? '',
     quantity_needed:    p.quantityNeeded ?? 1,
@@ -283,18 +294,19 @@ function localPartToDb(p) {
 
 function dbChildToLocal(row) {
   return {
-    id:               row.id,
-    parentAssemblyId: row.parent_assembly_id,
-    childAssemblyId:  row.child_assembly_id,
-    quantity:         row.quantity ?? 1,
-    createdAt:        row.created_at,
-  }
-}
-function localChildToDb(c) {
-  return {
-    id:                  c.id,
-    parent_assembly_id:  c.parentAssemblyId,
-    child_assembly_id:   c.childAssemblyId,
-    quantity:            c.quantity ?? 1,
+    id:                 row.id,
+    parentAssemblyId:   row.parent_assembly_id ?? null,
+    parentChildId:      row.parent_child_id ?? null,
+    name:               row.name,
+    description:        row.description ?? '',
+    thumbnail:          row.thumbnail_url ?? null,
+    onshapeDocumentId:  row.onshape_document_id ?? '',
+    onshapeWorkspaceId: row.onshape_workspace_id ?? '',
+    onshapeElementId:   row.onshape_element_id ?? '',
+    onshapeUrl:         (row.onshape_document_id && row.onshape_workspace_id && row.onshape_element_id)
+      ? `https://cad.onshape.com/documents/${row.onshape_document_id}/w/${row.onshape_workspace_id}/e/${row.onshape_element_id}`
+      : '',
+    quantity:           row.quantity ?? 1,
+    createdAt:          row.created_at,
   }
 }
