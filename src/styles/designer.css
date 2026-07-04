@@ -351,6 +351,56 @@
 .onshape-preview-warning i { flex-shrink: 0; margin-top: 1px; }
 
 /* ── Subassembly children list (assembly detail view) ──────── */
+.asm-detail-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 0.5px solid var(--color-border-secondary);
+  margin-top: 4px;
+}
+.asm-detail-tab {
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  padding: 8px 4px 9px;
+  margin-bottom: -0.5px;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.asm-detail-tab .section-count {
+  font-size: 11px;
+  font-weight: 500;
+}
+.asm-detail-tab:hover { color: var(--color-text-primary); }
+.asm-detail-tab.active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent);
+}
+.asm-detail-tab + .asm-detail-tab { margin-left: 8px; }
+
+.asm-subasm-card {
+  position: relative;
+}
+.asm-subasm-card .asm-card-open-icon {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+}
+.asm-subasm-card .asm-child-qty {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-top: 6px;
+}
+
 .asm-section-heading {
   display: flex;
   align-items: center;

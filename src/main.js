@@ -10,6 +10,7 @@ import {
   renderDesignerSidebar, renderDesignerContent,
   bindDesignerEvents,  openAssemblyModal,
   selectAssembly,      openOnshapeModal,
+  bootIsolatedAssembly,
 } from './designer.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -29,6 +30,24 @@ let designerMode  = false
 // ── Boot ──────────────────────────────────────────────────────
 async function boot() {
   setToast(showToast)
+
+  // "?asm=<id>" opens a single assembly full-screen with no sidebar/other
+  // assemblies in reach — used by the subassembly "open in new window" action.
+  const isolatedAsmId = new URLSearchParams(location.search).get('asm')
+  if (isolatedAsmId) {
+    document.body.classList.add('isolated-view')
+    designerMode = true
+    try {
+      await bootIsolatedAssembly(isolatedAsmId)
+    } catch (e) {
+      console.error(e)
+      showToast('Could not load assembly')
+    }
+    bindStaticEvents()
+    bindDesignerEvents()
+    return
+  }
+
   try {
     [categories, items] = await Promise.all([fetchCategories(), fetchComponents()])
     await designerBoot()

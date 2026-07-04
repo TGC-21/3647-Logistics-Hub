@@ -183,3 +183,15 @@
 
 /* Sidebar backdrop — hidden on desktop, shown by JS on mobile */
 .sidebar-backdrop { display: none; }
+
+/* Isolated subassembly window — opened via "?asm=<id>", shows a single
+   assembly full-screen with no sidebar, mode switch, or search chrome. */
+body.isolated-view .sidebar,
+body.isolated-view .mode-toggle,
+body.isolated-view .topbar-search,
+body.isolated-view #inventory-actions,
+body.isolated-view #designer-actions,
+body.isolated-view .btn-sidebar-toggle {
+  display: none !important;
+}
+body.isolated-view .content { padding: 18px 24px; }
