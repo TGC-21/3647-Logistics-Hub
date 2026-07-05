@@ -599,3 +599,47 @@
   background: none; border: none; cursor: pointer;
   color: var(--color-accent); font-size: 12px; line-height: 1;
 }
+
+.inv-link-linked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-accent);
+  background: var(--color-accent-light);
+  padding: 3px 8px;
+  border-radius: 8px;
+  margin-top: 4px;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+.inv-link-linked-badge:hover { background: var(--color-accent-mid); }
+
+.inv-linked-detail {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inv-linked-loading { font-size: 11px; color: var(--color-text-tertiary); display: flex; align-items: center; gap: 5px; }
+.inv-linked-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.inv-linked-loc-input {
+  flex: 1;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 11px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+.inv-linked-loc-input:focus { outline: none; border-color: var(--color-accent); }

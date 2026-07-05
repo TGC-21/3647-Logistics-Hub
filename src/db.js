@@ -533,3 +533,24 @@ function dbChildToLocal(row) {
     createdAt:          row.created_at,
   }
 }
+
+export async function fetchInstancesByIds(ids) {
+  if (!ids || !ids.length) return []
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('*')
+    .in('id', ids)
+  if (error) throw error
+  return data.map(dbInstanceToLocal)
+}
+
+export async function updateInstanceLocation(id, location) {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .update({ location })
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw error
+  return dbInstanceToLocal(data)
+}

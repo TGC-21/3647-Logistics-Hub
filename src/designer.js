@@ -4,6 +4,7 @@ import {
   fetchAssemblyParts, upsertAssemblyPart, bulkInsertAssemblyParts, deleteAssemblyPart,
   fetchAssemblyChildren, fetchChildrenOfChild, fetchAssemblyChildById, fetchChildParts,
   fetchComponents, fetchAvailableInstances, reserveInstance, unreserveInstance,
+  fetchInstancesByIds, updateInstanceLocation,
 } from './db.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -606,6 +607,12 @@ async function renderChildDetail() {
     tbody.addEventListener('click', async e => {
       const incBtn = e.target.closest('[data-qty-inc]')
       const decBtn = e.target.closest('[data-qty-dec]')
+      const linkBtn = e.target.closest('[data-part-link]')
+      const viewLinkedBtn = e.target.closest('[data-view-linked]')
+
+      if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
+      if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
+
       if (!incBtn && !decBtn) return
       const partId = (incBtn || decBtn).dataset.qtyInc || (incBtn || decBtn).dataset.qtyDec
       const delta  = incBtn ? +1 : -1
@@ -630,8 +637,20 @@ function childPartRowHTML(p) {
     partial:  '<span class="part-badge part-badge--partial">Partial</span>',
     pending:  '<span class="part-badge part-badge--pending">Pending</span>',
   }[status]
+
+  const linkedCount = (p.linkedInstanceIds || []).length
+  const linkedBadge = linkedCount
+    ? `<button class="inv-link-linked-badge" data-view-linked="${p.id}" type="button">
+        <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
+       </button>`
+    : ''
+
   return `<tr data-part-id="${p.id}">
-    <td><div class="part-name">${p.partName}</div></td>
+    <td>
+      <div class="part-name">${p.partName}</div>
+      ${linkedBadge}
+      <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
+    </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
     <td style="text-align:center">
@@ -642,7 +661,9 @@ function childPartRowHTML(p) {
       </div>
     </td>
     <td style="text-align:center">${statusBadge}</td>
-    <td></td>
+    <td style="text-align:right">
+      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory"><i class="ti ti-search" style="font-size:13px"></i></button>
+    </td>
   </tr>`
 }
 
@@ -656,9 +677,9 @@ function partRowHTML(p) {
 
   const linkedCount = (p.linkedInstanceIds || []).length
   const linkedBadge = linkedCount
-    ? `<div class="inv-link-linked-badge">
+    ? `<button class="inv-link-linked-badge" data-view-linked="${p.id}" type="button">
         <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
-       </div>`
+       </button>`
     : ''
 
   return `<tr data-part-id="${p.id}">
@@ -666,6 +687,7 @@ function partRowHTML(p) {
       <div class="part-name">${p.partName}</div>
       ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
       ${linkedBadge}
+      <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
@@ -698,6 +720,9 @@ function bindPartRowEvents() {
 
     const linkBtn = e.target.closest('[data-part-link]')
     if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, false); return }
+
+    const viewLinkedBtn = e.target.closest('[data-view-linked]')
+    if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, false); return }
 
     const editBtn = e.target.closest('[data-part-edit]')
     if (editBtn) { openPartModal(editBtn.dataset.partEdit); return }
@@ -1325,7 +1350,7 @@ async function unlinkInstanceFromPart(partId, instanceId, isChildPart) {
   if (!confirm('Unlink this inventory item? It will be marked available again.')) return
 
   try {
-    await unreserveInstance(instanceId, '')  // clear location on return to inventory
+    await unreserveInstance(instanceId, '')
 
     const remaining = (part.linkedInstanceIds || []).filter(id => id !== instanceId)
     const updatedPart = {
@@ -1342,11 +1367,14 @@ async function unlinkInstanceFromPart(partId, instanceId, isChildPart) {
       const idx = currentChildParts.findIndex(p => p.id === partId)
       if (idx > -1) currentChildParts[idx] = saved
       renderChildDetail()
+      // Re-open detail panel post-render if it was open
+      if (openLinkedDetailIds.has(partId)) { openLinkedDetailIds.delete(partId); toggleLinkedDetail(partId, false) }
     } else {
       const idx = currentParts.findIndex(p => p.id === partId)
       if (idx > -1) currentParts[idx] = saved
       await syncAssemblyStatus()
       renderAssemblyDetail()
+      if (openLinkedDetailIds.has(partId)) { openLinkedDetailIds.delete(partId); toggleLinkedDetail(partId, false) }
     }
 
     toastFn('Unlinked from inventory')
@@ -1826,4 +1854,79 @@ export function bindDesignerEvents() {
 export async function refreshAndOpenAssembly(assemblyId) {
   assemblies = await fetchAssemblies()
   selectAssembly(assemblyId)
+}
+// ── Linked instance detail (inline expansion under a part row) ─
+// Tracks which part rows currently have their linked-instance detail open,
+// so re-renders (e.g. after qty change) can restore the open state.
+let openLinkedDetailIds = new Set()
+
+async function toggleLinkedDetail(partId, isChildPart) {
+  const el = document.getElementById(`linked-detail-${partId}`)
+  if (!el) return
+
+  const isOpen = el.style.display !== 'none'
+  if (isOpen) {
+    el.style.display = 'none'
+    openLinkedDetailIds.delete(partId)
+    return
+  }
+
+  openLinkedDetailIds.add(partId)
+  el.style.display = 'block'
+  el.innerHTML = `<div class="inv-linked-loading"><i class="ti ti-loader-2 spin" aria-hidden="true"></i> Loading…</div>`
+
+  const part = isChildPart
+    ? currentChildParts.find(p => p.id === partId)
+    : currentParts.find(p => p.id === partId)
+  if (!part) return
+
+  try {
+    const instances = await fetchInstancesByIds(part.linkedInstanceIds || [])
+    renderLinkedDetail(partId, instances, isChildPart)
+  } catch (e) {
+    console.error(e)
+    el.innerHTML = `<div class="inv-linked-loading">Error loading linked items</div>`
+  }
+}
+
+function renderLinkedDetail(partId, instances, isChildPart) {
+  const el = document.getElementById(`linked-detail-${partId}`)
+  if (!el) return
+
+  if (!instances.length) {
+    el.innerHTML = ''
+    el.style.display = 'none'
+    return
+  }
+
+  el.innerHTML = instances.map(inst => `
+    <div class="inv-linked-row" data-instance-id="${inst.id}">
+      <i class="ti ti-map-pin" style="font-size:11px;color:var(--color-text-tertiary)" aria-hidden="true"></i>
+      <input type="text" class="inv-linked-loc-input" value="${inst.location || ''}"
+             placeholder="Set location…" data-loc-input="${inst.id}">
+      <button class="btn-icon" data-unlink-instance="${inst.id}" aria-label="Unlink" title="Unlink">
+        <i class="ti ti-unlink" style="font-size:12px"></i>
+      </button>
+    </div>
+  `).join('')
+
+  // Location edit — save on blur/Enter
+  el.querySelectorAll('[data-loc-input]').forEach(input => {
+    const save = async () => {
+      const instId = input.dataset.locInput
+      try {
+        await updateInstanceLocation(instId, input.value.trim())
+      } catch (e) {
+        console.error(e)
+        toastFn('Error updating location')
+      }
+    }
+    input.addEventListener('blur', save)
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur() })
+  })
+
+  // Unlink button
+  el.querySelectorAll('[data-unlink-instance]').forEach(btn =>
+    btn.addEventListener('click', () => unlinkInstanceFromPart(partId, btn.dataset.unlinkInstance, isChildPart))
+  )
 }
