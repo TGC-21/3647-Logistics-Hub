@@ -100,6 +100,16 @@ function computePartStatus(p) {
   return 'pending'
 }
 
+/** True when the part has fewer linked inventory instances than its
+ *  quantityCollected implies — i.e. someone incremented the qty stepper
+ *  manually beyond what's actually backed by inventory. Purely informational;
+ *  doesn't block anything. */
+function hasUnbackedQuantity(p) {
+  const linked = (p.linkedInstanceIds || []).length
+  return linked > 0 && linked < p.quantityCollected
+}
+
+
 function statusLabel(s) {
   if (s === 'complete') return '<span class="asm-badge asm-badge--complete"><i class="ti ti-check"></i> Complete</span>'
   if (s === 'active')   return '<span class="asm-badge asm-badge--active"><i class="ti ti-loader-2"></i> Active</span>'
@@ -610,9 +620,11 @@ async function renderChildDetail() {
       const decBtn = e.target.closest('[data-qty-dec]')
       const linkBtn = e.target.closest('[data-part-link]')
       const viewLinkedBtn = e.target.closest('[data-view-linked]')
+      const delBtn = e.target.closest('[data-child-part-del]')
 
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
+      if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
 
       if (!incBtn && !decBtn) return
       const partId = (incBtn || decBtn).dataset.qtyInc || (incBtn || decBtn).dataset.qtyDec
@@ -646,10 +658,17 @@ function childPartRowHTML(p) {
        </button>`
     : ''
 
+  const unbackedWarning = hasUnbackedQuantity(p)
+    ? `<div class="inv-unbacked-warning" title="Collected quantity exceeds linked inventory items">
+        <i class="ti ti-alert-triangle" aria-hidden="true"></i> ${p.quantityCollected - linkedCount} unbacked
+       </div>`
+    : ''
+
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name">${p.partName}</div>
       ${linkedBadge}
+      ${unbackedWarning}
       <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
@@ -664,6 +683,7 @@ function childPartRowHTML(p) {
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
       <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory"><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
   </tr>`
 }
@@ -682,12 +702,19 @@ function partRowHTML(p) {
         <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
        </button>`
     : ''
+  const unbackedWarning = hasUnbackedQuantity(p)
+    ? `<div class="inv-unbacked-warning" title="Collected quantity exceeds linked inventory items">
+        <i class="ti ti-alert-triangle" aria-hidden="true"></i> ${p.quantityCollected - linkedCount} unbacked
+       </div>`
+    : ''
+
 
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name">${p.partName}</div>
       ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
       ${linkedBadge}
+      ${unbackedWarning}
       <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
