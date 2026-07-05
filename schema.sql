@@ -160,3 +160,58 @@ create policy "Public image reads"
 create policy "Public image deletes"
   on storage.objects for delete
   using (bucket_id = 'component-images');
+
+  -- ============================================================
+-- PHASE 1: Inventory Instances Refactor
+-- Run this AFTER the existing schema.sql has already been applied.
+-- ============================================================
+
+-- ── Inventory Instances ──────────────────────────────────────
+-- Each row = ONE physical item. Replaces components.quantity as a count;
+-- location now lives on the instance, not the component "type".
+create table if not exists inventory_instances (
+  id            text primary key,
+  component_id  text not null references components(id) on delete cascade,
+  location      text,
+  status        text not null default 'available',  -- available | in_assembly | in_use
+  notes         text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_inventory_instances_component on inventory_instances(component_id);
+create index if not exists idx_inventory_instances_status    on inventory_instances(status);
+
+alter table inventory_instances enable row level security;
+create policy "Public read inventory_instances"   on inventory_instances for select using (true);
+create policy "Public insert inventory_instances" on inventory_instances for insert with check (true);
+create policy "Public update inventory_instances" on inventory_instances for update using (true);
+create policy "Public delete inventory_instances" on inventory_instances for delete using (true);
+
+-- ── Migrate existing components.quantity → instances ─────────
+-- For every component with a numeric quantity > 0, spin up N instance
+-- rows carrying over the component's old location. Non-numeric or blank
+-- quantities are treated as 1 (better to over-create than silently lose
+-- an item — you can delete extras after reviewing).
+do $$
+declare
+  comp record;
+  qty  integer;
+  i    integer;
+begin
+  for comp in select id, quantity, location from components loop
+    qty := coalesce(nullif(regexp_replace(comp.quantity, '[^0-9]', '', 'g'), '')::integer, 1);
+    if qty < 1 then qty := 1; end if;
+    for i in 1..qty loop
+      insert into inventory_instances (id, component_id, location, status)
+      values (comp.id || '_inst_' || i, comp.id, comp.location, 'available');
+    end loop;
+  end loop;
+end $$;
+
+-- ── Drop the now-redundant columns from components ───────────
+-- Quantity and location are derived from inventory_instances going forward.
+alter table components drop column if exists quantity;
+alter table components drop column if exists location;
+
+-- ── Link assembly_parts to a component + its reserved instances ──
+alter table assembly_parts add column if not exists component_id text references components(id) on delete set null;
+alter table assembly_parts add column if not exists linked_instance_ids text[] not null default '{}';

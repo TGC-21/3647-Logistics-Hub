@@ -3,6 +3,7 @@ import {
   fetchAssemblies, upsertAssembly, deleteAssembly,
   fetchAssemblyParts, upsertAssemblyPart, bulkInsertAssemblyParts, deleteAssemblyPart,
   fetchAssemblyChildren, fetchChildrenOfChild, fetchAssemblyChildById, fetchChildParts,
+  fetchComponents, fetchAvailableInstances, reserveInstance, unreserveInstance,
 } from './db.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -34,6 +35,51 @@ let onshapePreviewSubassemblies = []  // subassembly nodes from the hierarchy
 let onshapePreviewWarning       = null
 let onshapeLoading       = false
 let onshapeSearchTimer   = null
+
+// Inventory link modal state
+let invLinkPartId      = null   // the assembly_parts.id (or child part) being linked
+let invLinkIsChildPart = false  // true if linking a subassembly's part, not a root assembly's
+let invLinkQuery       = ''
+let invLinkResults     = []     // [{ component, instances }] — components w/ available instances
+let invLinkAllComponents = []   // cached full component list for client-side search
+let invLinkLoading     = false
+
+// ── Part name → category dictionary ─────────────────────────
+// Keys are lowercase keywords checked against words in a part's name.
+// Values are candidate category names to prioritize in search results.
+// Extend freely — this is just a starting set.
+const PART_NAME_DICTIONARY = {
+  bolt:    ['Fasteners', 'Hardware'],
+  screw:   ['Fasteners', 'Hardware'],
+  nut:     ['Fasteners', 'Hardware'],
+  washer:  ['Fasteners', 'Hardware'],
+  rivet:   ['Fasteners', 'Hardware'],
+  gear:    ['Gears', 'Drivetrain'],
+  sprocket:['Gears', 'Drivetrain'],
+  pulley:  ['Drivetrain'],
+  belt:    ['Drivetrain'],
+  chain:   ['Drivetrain'],
+  bearing: ['Bearings', 'Hardware'],
+  motor:   ['Motors', 'Electronics'],
+  servo:   ['Motors', 'Electronics'],
+  wire:    ['Electronics'],
+  wheel:   ['Wheels', 'Drivetrain'],
+  bracket: ['Structural', 'Hardware'],
+  plate:   ['Structural'],
+  tube:    ['Structural'],
+  rod:     ['Structural'],
+  spacer:  ['Hardware'],
+  standoff:['Hardware'],
+}
+
+/** Returns the first matching category name(s) for a part name, or null. */
+function suggestCategoriesForPartName(partName) {
+  const words = partName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  for (const w of words) {
+    if (PART_NAME_DICTIONARY[w]) return PART_NAME_DICTIONARY[w]
+  }
+  return null
+}
 
 // ── Shared utilities ──────────────────────────────────────────
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -608,10 +654,18 @@ function partRowHTML(p) {
     pending:  '<span class="part-badge part-badge--pending">Pending</span>',
   }[status]
 
+  const linkedCount = (p.linkedInstanceIds || []).length
+  const linkedBadge = linkedCount
+    ? `<div class="inv-link-linked-badge">
+        <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
+       </div>`
+    : ''
+
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name">${p.partName}</div>
       ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
+      ${linkedBadge}
     </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
@@ -624,6 +678,7 @@ function partRowHTML(p) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
+      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory"><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
@@ -640,6 +695,9 @@ function bindPartRowEvents() {
 
     const decBtn = e.target.closest('[data-qty-dec]')
     if (decBtn) { await adjustQty(decBtn.dataset.qtyDec, -1); return }
+
+    const linkBtn = e.target.closest('[data-part-link]')
+    if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, false); return }
 
     const editBtn = e.target.closest('[data-part-edit]')
     if (editBtn) { openPartModal(editBtn.dataset.partEdit); return }
@@ -1071,6 +1129,231 @@ function renderOnshapeModal() {
   if (onshapeStep === 'search')     return renderOnshapeSearchStep()
   if (onshapeStep === 'assemblies') return renderOnshapeAssembliesStep()
   if (onshapeStep === 'preview')    return renderOnshapePreviewStep()
+}
+
+// ── Inventory link modal ─────────────────────────────────────
+// Lets a user search existing inventory components and link one or more
+// physical instances to a specific assembly part. Works for both root
+// assembly parts (currentParts) and subassembly-node parts (currentChildParts).
+
+export function openInventoryLinkModal(partId, isChildPart = false) {
+  invLinkPartId      = partId
+  invLinkIsChildPart = isChildPart
+  invLinkQuery       = ''
+  invLinkResults     = []
+  invLinkLoading     = false
+
+  const part = isChildPart
+    ? currentChildParts.find(p => p.id === partId)
+    : currentParts.find(p => p.id === partId)
+  if (!part) return
+
+  document.getElementById('inv-link-subtitle').textContent = `For: ${part.partName}`
+  document.getElementById('inv-link-search-input').value = ''
+  document.getElementById('inv-link-overlay').style.display = 'flex'
+
+  renderInventoryLinkSuggestion(part.partName)
+  loadAndSearchInventory('')
+  setTimeout(() => document.getElementById('inv-link-search-input').focus(), 80)
+}
+
+function closeInventoryLinkModal() {
+  document.getElementById('inv-link-overlay').style.display = 'none'
+  invLinkPartId = null
+}
+
+function currentInvLinkPart() {
+  return invLinkIsChildPart
+    ? currentChildParts.find(p => p.id === invLinkPartId)
+    : currentParts.find(p => p.id === invLinkPartId)
+}
+
+function renderInventoryLinkSuggestion(partName) {
+  const el = document.getElementById('inv-link-suggestion')
+  const suggestions = suggestCategoriesForPartName(partName)
+  if (!suggestions) { el.innerHTML = ''; return }
+
+  el.innerHTML = suggestions.map(cat =>
+    `<span class="inv-link-suggestion-chip" data-suggest-cat="${cat}">
+      <i class="ti ti-sparkles" style="font-size:11px" aria-hidden="true"></i> ${cat}
+    </span>`
+  ).join(' ')
+
+  el.querySelectorAll('[data-suggest-cat]').forEach(chip =>
+    chip.addEventListener('click', () => {
+      document.getElementById('inv-link-search-input').value = chip.dataset.suggestCat
+      invLinkQuery = chip.dataset.suggestCat
+      loadAndSearchInventory(invLinkQuery)
+    })
+  )
+}
+
+async function loadAndSearchInventory(query) {
+  invLinkLoading = true
+  renderInventoryLinkResults()
+
+  try {
+    if (!invLinkAllComponents.length) {
+      invLinkAllComponents = await fetchComponents()
+    }
+
+    const q = query.trim().toLowerCase()
+    const matches = q
+      ? invLinkAllComponents.filter(c =>
+          c.name.toLowerCase().includes(q) ||
+          (c.tags || []).some(t => t.toLowerCase().includes(q)))
+      : invLinkAllComponents
+
+    // Fetch available instances per matching component in parallel
+    const withInstances = await Promise.all(
+      matches.slice(0, 30).map(async c => ({
+        component: c,
+        instances: await fetchAvailableInstances(c.id),
+      }))
+    )
+
+    invLinkResults = withInstances.filter(r => r.instances.length > 0)
+  } catch (e) {
+    console.error(e)
+    toastFn('Error searching inventory')
+    invLinkResults = []
+  } finally {
+    invLinkLoading = false
+    renderInventoryLinkResults()
+  }
+}
+
+function renderInventoryLinkResults() {
+  const el = document.getElementById('inv-link-results')
+
+  if (invLinkLoading) {
+    el.innerHTML = `<div class="onshape-state"><i class="ti ti-loader-2 spin" aria-hidden="true"></i><div class="onshape-state-title">Searching…</div></div>`
+    return
+  }
+
+  const part = currentInvLinkPart()
+  const linkedIds = new Set(part?.linkedInstanceIds || [])
+
+  if (!invLinkResults.length) {
+    el.innerHTML = `<div class="onshape-state">
+      <i class="ti ti-package-off" aria-hidden="true"></i>
+      <div class="onshape-state-title">No available inventory found</div>
+      <div class="onshape-state-sub">Try a different search term, or add this component to Inventory first.</div>
+    </div>`
+    return
+  }
+
+  el.innerHTML = invLinkResults.map(({ component, instances }) => `
+    <div class="inv-link-comp-card">
+      <div class="inv-link-comp-header">
+        <span class="inv-link-comp-name">${component.name}</span>
+        <span class="inv-link-comp-count">${instances.length} available</span>
+      </div>
+      ${instances.map(inst => `
+        <div class="inv-link-instance-row">
+          <span class="inv-link-instance-loc">
+            <i class="ti ti-map-pin" aria-hidden="true"></i> ${inst.location || 'No location set'}
+          </span>
+          <button class="btn btn-sm btn-primary" data-add-instance="${inst.id}" data-comp-name="${component.name}">
+            <i class="ti ti-plus" aria-hidden="true"></i> Add to assembly
+          </button>
+        </div>
+      `).join('')}
+    </div>
+  `).join('')
+
+  el.querySelectorAll('[data-add-instance]').forEach(btn =>
+    btn.addEventListener('click', () => linkInstanceToPart(btn.dataset.addInstance, btn.dataset.compName, btn.dataset.componentId))
+  )
+
+  // Attach component id via closure lookup since dataset can't hold it cleanly per-row
+  el.querySelectorAll('.inv-link-comp-card').forEach((card, i) => {
+    const componentId = invLinkResults[i].component.id
+    card.querySelectorAll('[data-add-instance]').forEach(btn => {
+      btn.dataset.componentId = componentId
+    })
+  })
+}
+
+async function linkInstanceToPart(instanceId, componentName, componentId) {
+  const part = currentInvLinkPart()
+  if (!part) return
+
+  const assemblyName = invLinkIsChildPart
+    ? (document.getElementById('content-title')?.textContent || 'Assembly')
+    : (assemblyById(currentAssemblyId)?.name || 'Assembly')
+
+  try {
+    await reserveInstance(instanceId, assemblyName)
+
+    const updatedPart = {
+      ...part,
+      componentId:       part.componentId || componentId,
+      linkedInstanceIds: [...(part.linkedInstanceIds || []), instanceId],
+      quantityCollected: Math.min(part.quantityNeeded, part.quantityCollected + 1),
+    }
+    updatedPart.status = computePartStatus(updatedPart)
+
+    const saved = await upsertAssemblyPart(updatedPart)
+
+    if (invLinkIsChildPart) {
+      const idx = currentChildParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentChildParts[idx] = saved
+      renderChildDetail()
+    } else {
+      const idx = currentParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentParts[idx] = saved
+      await syncAssemblyStatus()
+      renderAssemblyDetail()
+    }
+
+    toastFn(`Linked ${componentName} to "${part.partName}"`)
+    loadAndSearchInventory(invLinkQuery)  // refresh available counts
+  } catch (e) {
+    console.error(e)
+    toastFn('Error linking inventory item')
+  }
+}
+
+/** Unlinks a single instance from a part, restoring it to available. */
+async function unlinkInstanceFromPart(partId, instanceId, isChildPart) {
+  const part = isChildPart
+    ? currentChildParts.find(p => p.id === partId)
+    : currentParts.find(p => p.id === partId)
+  if (!part) return
+
+  if (!confirm('Unlink this inventory item? It will be marked available again.')) return
+
+  try {
+    await unreserveInstance(instanceId, '')  // clear location on return to inventory
+
+    const remaining = (part.linkedInstanceIds || []).filter(id => id !== instanceId)
+    const updatedPart = {
+      ...part,
+      linkedInstanceIds: remaining,
+      componentId:       remaining.length ? part.componentId : null,
+      quantityCollected: Math.max(0, part.quantityCollected - 1),
+    }
+    updatedPart.status = computePartStatus(updatedPart)
+
+    const saved = await upsertAssemblyPart(updatedPart)
+
+    if (isChildPart) {
+      const idx = currentChildParts.findIndex(p => p.id === partId)
+      if (idx > -1) currentChildParts[idx] = saved
+      renderChildDetail()
+    } else {
+      const idx = currentParts.findIndex(p => p.id === partId)
+      if (idx > -1) currentParts[idx] = saved
+      await syncAssemblyStatus()
+      renderAssemblyDetail()
+    }
+
+    toastFn('Unlinked from inventory')
+  } catch (e) {
+    console.error(e)
+    toastFn('Error unlinking item')
+  }
 }
 
 // ── Step 1: search documents ───────────────────────────────────
@@ -1521,6 +1804,19 @@ export function bindDesignerEvents() {
   document.getElementById('btn-confirm-onshape').addEventListener('click', confirmOnshapeImport)
   document.getElementById('onshape-import-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeOnshapeModal()
+  })
+
+  // Inventory link modal
+  document.getElementById('btn-close-inv-link').addEventListener('click', closeInventoryLinkModal)
+  document.getElementById('btn-close-inv-link-2').addEventListener('click', closeInventoryLinkModal)
+  document.getElementById('inv-link-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeInventoryLinkModal()
+  })
+  let invLinkSearchTimer
+  document.getElementById('inv-link-search-input').addEventListener('input', e => {
+    invLinkQuery = e.target.value
+    clearTimeout(invLinkSearchTimer)
+    invLinkSearchTimer = setTimeout(() => loadAndSearchInventory(invLinkQuery), 250)
   })
 }
 

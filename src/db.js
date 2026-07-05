@@ -40,6 +40,10 @@ export async function deleteCategory(id) {
 
 // ── Components ───────────────────────────────────────────────
 
+// ── Components ───────────────────────────────────────────────
+// NOTE: quantity/location no longer live here — they're derived from
+// inventory_instances (fetchInventoryInstances / fetchInstanceCounts).
+
 export async function fetchComponents() {
   const { data, error } = await supabase
     .from('components')
@@ -62,6 +66,115 @@ export async function upsertComponent(item) {
 export async function deleteComponent(id) {
   const { error } = await supabase.from('components').delete().eq('id', id)
   if (error) throw error
+}
+
+// ── Inventory Instances ──────────────────────────────────────
+// One row = one physical item of a given component. Location + status
+// live here so a component "type" can have items scattered across bins,
+// assemblies, or in-use locations simultaneously.
+
+export async function fetchInventoryInstances(componentId) {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('*')
+    .eq('component_id', componentId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data.map(dbInstanceToLocal)
+}
+
+/** Only instances free to be linked to an assembly. */
+export async function fetchAvailableInstances(componentId) {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('*')
+    .eq('component_id', componentId)
+    .eq('status', 'available')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data.map(dbInstanceToLocal)
+}
+
+/** Aggregate counts per component — used to show "qty on hand" without
+ *  pulling every instance row (e.g. for the inventory grid cards). */
+export async function fetchInstanceCounts() {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('component_id, status')
+  if (error) throw error
+
+  const counts = {}
+  for (const row of data) {
+    if (!counts[row.component_id]) counts[row.component_id] = { total: 0, available: 0 }
+    counts[row.component_id].total++
+    if (row.status === 'available') counts[row.component_id].available++
+  }
+  return counts
+}
+
+export async function upsertInventoryInstance(instance) {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .upsert(localInstanceToDb(instance))
+    .select()
+    .single()
+  if (error) throw error
+  return dbInstanceToLocal(data)
+}
+
+export async function deleteInventoryInstance(id) {
+  const { error } = await supabase.from('inventory_instances').delete().eq('id', id)
+  if (error) throw error
+}
+
+/** Marks an instance as claimed by an assembly part and updates its
+ *  location. Does NOT touch assembly_parts — the caller is responsible
+ *  for pushing the instance id into that part's linked_instance_ids. */
+export async function reserveInstance(instanceId, location) {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .update({ status: 'in_assembly', location })
+    .eq('id', instanceId)
+    .select()
+    .single()
+  if (error) throw error
+  return dbInstanceToLocal(data)
+}
+
+/** Reverses reserveInstance — instance goes back to available. Location
+ *  is left as-is by default (caller can pass a resetLocation to clear it,
+ *  e.g. back to its original bin). */
+export async function unreserveInstance(instanceId, resetLocation = null) {
+  const patch = { status: 'available' }
+  if (resetLocation !== null) patch.location = resetLocation
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .update(patch)
+    .eq('id', instanceId)
+    .select()
+    .single()
+  if (error) throw error
+  return dbInstanceToLocal(data)
+}
+
+function dbInstanceToLocal(row) {
+  return {
+    id:          row.id,
+    componentId: row.component_id,
+    location:    row.location ?? '',
+    status:      row.status ?? 'available',
+    notes:       row.notes ?? '',
+    createdAt:   row.created_at,
+  }
+}
+function localInstanceToDb(inst) {
+  return {
+    id:           inst.id,
+    component_id: inst.componentId,
+    location:     inst.location ?? '',
+    status:       inst.status ?? 'available',
+    notes:        inst.notes ?? '',
+  }
 }
 
 // ── Image storage ─────────────────────────────────────────────
@@ -319,8 +432,6 @@ function dbItemToLocal(row) {
     name:        row.name,
     description: row.description ?? '',
     categoryId:  row.category_id ?? null,
-    quantity:    row.quantity ?? '',
-    location:    row.location ?? '',
     image:       row.image_url ?? null,
     tags:        row.tags ?? [],
     attributes:  row.attributes ?? [],
@@ -333,8 +444,6 @@ function localItemToDb(item) {
     name:        item.name,
     description: item.description ?? '',
     category_id: item.categoryId ?? null,
-    quantity:    item.quantity ?? '',
-    location:    item.location ?? '',
     image_url:   item.image ?? null,
     tags:        item.tags ?? [],
     attributes:  item.attributes ?? [],
@@ -382,6 +491,8 @@ function dbPartToLocal(row) {
     source:            row.source ?? 'manual',
     notes:             row.notes ?? '',
     onshapeReference:  row.onshape_reference ?? null,
+    componentId:       row.component_id ?? null,
+    linkedInstanceIds: row.linked_instance_ids ?? [],
     createdAt:         row.created_at,
   }
 }
@@ -398,9 +509,10 @@ function localPartToDb(p) {
     source:             p.source ?? 'manual',
     notes:              p.notes ?? '',
     onshape_reference:  p.onshapeReference ?? null,
+    component_id:       p.componentId ?? null,
+    linked_instance_ids: p.linkedInstanceIds ?? [],
   }
 }
-
 function dbChildToLocal(row) {
   const wvmType = row.onshape_wvm_type || 'w'
   return {

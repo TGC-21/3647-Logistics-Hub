@@ -378,6 +378,30 @@
   </div>
 </div>
 
+<!-- ── Inventory Link Modal (search + link instances to an assembly part) ── -->
+<div class="overlay" id="inv-link-overlay" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Link inventory part</div>
+        <div class="inv-link-subtitle" id="inv-link-subtitle"></div>
+      </div>
+      <button class="btn-icon" id="btn-close-inv-link"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="onshape-search-row">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" id="inv-link-search-input" placeholder="Search components…">
+      </div>
+      <div id="inv-link-suggestion"></div>
+      <div id="inv-link-results"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-close-inv-link-2">Done</button>
+    </div>
+  </div>
+</div>
+
 <script type="module" src="/src/main.js"></script>
 </body>
 </html>
