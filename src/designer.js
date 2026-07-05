@@ -5,6 +5,7 @@ import {
   fetchAssemblyChildren, fetchChildrenOfChild, fetchAssemblyChildById, fetchChildParts,
   fetchComponents, fetchAvailableInstances, reserveInstance, unreserveInstance,
   fetchInstancesByIds, updateInstanceLocation,
+  releaseInstances, fetchAllLinkedInstanceIdsForAssembly,
 } from './db.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ const PART_NAME_DICTIONARY = {
   washer:  ['Fasteners', 'Hardware'],
   rivet:   ['Fasteners', 'Hardware'],
   gear:    ['Gears', 'Drivetrain'],
-  sprocket:['Gears', 'Drivetrain'],
+  sprocket:['Sprocket', 'Drivetrain'],
   pulley:  ['Drivetrain'],
   belt:    ['Drivetrain'],
   chain:   ['Drivetrain'],
@@ -761,23 +762,35 @@ async function deletePart(partId) {
   const part = currentParts.find(p => p.id === partId)
   if (!part || !confirm(`Remove "${part.partName}" from this assembly?`)) return
   try {
+    // Release any linked inventory before the part row disappears —
+    // otherwise those instances stay stuck at status: 'in_assembly'
+    // with nothing left pointing back to them.
+    if (part.linkedInstanceIds?.length) {
+      await releaseInstances(part.linkedInstanceIds)
+    }
     await deleteAssemblyPart(partId)
     currentParts = currentParts.filter(p => p.id !== partId)
     await syncAssemblyStatus()
     renderAssemblyDetail()
     toastFn('Part removed')
-  } catch (e) { toastFn('Error removing part') }
+  } catch (e) { console.error(e); toastFn('Error removing part') }
 }
 
 async function deleteCurrentAssembly() {
   const a = assemblyById(currentAssemblyId)
   if (!a || !confirm(`Delete assembly "${a.name}" and all its parts? This cannot be undone.`)) return
   try {
+    // Release every linked instance in the whole tree (root parts + all
+    // nested subassembly parts) BEFORE the cascade delete removes the
+    // rows that reference them.
+    const linkedIds = await fetchAllLinkedInstanceIdsForAssembly(currentAssemblyId)
+    if (linkedIds.length) await releaseInstances(linkedIds)
+    
     await deleteAssembly(currentAssemblyId)
     assemblies = assemblies.filter(x => x.id !== currentAssemblyId)
     selectAssembly(null)
     toastFn('Assembly deleted')
-  } catch (e) { toastFn('Error deleting assembly') }
+  } catch (e) { console.error(e); toastFn('Error deleting assembly') }
 }
 
 // ── Navigation ────────────────────────────────────────────────

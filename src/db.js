@@ -157,6 +157,19 @@ export async function unreserveInstance(instanceId, resetLocation = null) {
   return dbInstanceToLocal(data)
 }
 
+/** Releases many instances at once (e.g. when deleting a part or an
+ *  entire assembly) — flips them all back to available in one call
+ *  instead of one round-trip per instance. */
+export async function releaseInstances(instanceIds) {
+  if (!instanceIds || !instanceIds.length) return
+  const { error } = await supabase
+    .from('inventory_instances')
+    .update({ status: 'available', location: '' })
+    .in('id', instanceIds)
+  if (error) throw error
+}
+
+
 function dbInstanceToLocal(row) {
   return {
     id:          row.id,
@@ -307,6 +320,48 @@ export async function fetchChildParts(childId) {
   if (error) throw error
   return data.map(dbPartToLocal)
 }
+
+/** Recursively collects every linked_instance_id under a root assembly —
+ *  its own direct parts, plus every nested subassembly's parts. Used to
+ *  release inventory before an assembly (and its whole tree) is deleted. */
+export async function fetchAllLinkedInstanceIdsForAssembly(assemblyId) {
+  const ids = []
+
+  const { data: rootParts, error: rootErr } = await supabase
+    .from('assembly_parts')
+    .select('linked_instance_ids')
+    .eq('assembly_id', assemblyId)
+  if (rootErr) throw rootErr
+  rootParts.forEach(p => ids.push(...(p.linked_instance_ids || [])))
+
+  const { data: directChildren, error: childErr } = await supabase
+    .from('assembly_children')
+    .select('id')
+    .eq('parent_assembly_id', assemblyId)
+  if (childErr) throw childErr
+
+  const queue = (directChildren || []).map(c => c.id)
+  while (queue.length) {
+    const childId = queue.pop()
+
+    const { data: childParts, error: cpErr } = await supabase
+      .from('assembly_parts')
+      .select('linked_instance_ids')
+      .eq('assembly_child_id', childId)
+    if (cpErr) throw cpErr
+    childParts.forEach(p => ids.push(...(p.linked_instance_ids || [])))
+
+    const { data: grandchildren, error: gcErr } = await supabase
+      .from('assembly_children')
+      .select('id')
+      .eq('parent_child_id', childId)
+    if (gcErr) throw gcErr
+    queue.push(...(grandchildren || []).map(c => c.id))
+  }
+
+  return ids
+}
+
 
 // ── Typed characteristic helpers ──────────────────────────────
 //

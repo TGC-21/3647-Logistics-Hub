@@ -216,7 +216,7 @@ async function reimportAssembly(supabase, assemblyId) {
   // Save progress by part_number before wiping (root-level parts only)
   const { data: oldParts } = await supabase
     .from('assembly_parts')
-    .select('part_number, quantity_collected')
+    .select('part_number, quantity_collected, linked_instance_ids')
     .eq('assembly_id', assemblyId)
 
   const progressByPartNumber = {}
@@ -225,6 +225,13 @@ async function reimportAssembly(supabase, assemblyId) {
       progressByPartNumber[p.part_number] = p.quantity_collected
     }
   }
+
+  // Release every linked inventory instance under this assembly tree back
+  // to "available" BEFORE the cascade delete wipes the rows that reference
+  // them — otherwise they're left stuck at status: 'in_assembly' forever
+  // with nothing pointing back to them.
+  await releaseAllLinkedInstances(supabase, assemblyId)
+
 
   await supabase.from('assembly_parts').delete().eq('assembly_id', assemblyId)
   await supabase.from('assembly_children').delete().eq('parent_assembly_id', assemblyId)
@@ -252,4 +259,58 @@ async function reimportAssembly(supabase, assemblyId) {
     restoredProgress: restored,
     message: `Re-imported: ${partCount} part(s), ${childCount} subassembly(ies). Progress restored for ${restored} part number(s).`,
   }
+}
+
+// ── releaseAllLinkedInstances ──────────────────────────────────
+// Walks the FULL tree under a root assembly (its own assembly_parts, plus
+// every nested assembly_children's assembly_parts, recursively) and flips
+// every linked inventory_instances row back to "available" with location
+// cleared. Must run BEFORE any cascade delete of assembly_parts/children,
+// since it depends on reading their linked_instance_ids first.
+
+async function releaseAllLinkedInstances(supabase, assemblyId) {
+  const allInstanceIds = []
+
+  // Root-level parts
+  const { data: rootParts } = await supabase
+    .from('assembly_parts')
+    .select('linked_instance_ids')
+    .eq('assembly_id', assemblyId)
+  for (const p of rootParts ?? []) {
+    allInstanceIds.push(...(p.linked_instance_ids || []))
+  }
+
+  // Walk assembly_children recursively (direct  nested)
+  const { data: directChildren } = await supabase
+    .from('assembly_children')
+    .select('id')
+    .eq('parent_assembly_id', assemblyId)
+
+  const childQueue = (directChildren ?? []).map(c => c.id)
+  while (childQueue.length) {
+    const childId = childQueue.pop()
+
+    const { data: childParts } = await supabase
+      .from('assembly_parts')
+      .select('linked_instance_ids')
+      .eq('assembly_child_id', childId)
+    for (const p of childParts ?? []) {
+      allInstanceIds.push(...(p.linked_instance_ids || []))
+    }
+
+    const { data: grandchildren } = await supabase
+      .from('assembly_children')
+      .select('id')
+      .eq('parent_child_id', childId)
+    childQueue.push(...(grandchildren ?? []).map(c => c.id))
+  }
+
+  if (!allInstanceIds.length) return
+
+  const { error } = await supabase
+    .from('inventory_instances')
+    .update({ status: 'available', location: '' })
+    .in('id', allInstanceIds)
+  if (error) console.warn(`[onshape-bom] Failed releasing ${allInstanceIds.length} instance(s): ${error.message}`)
+  else console.log(`[onshape-bom] Released ${allInstanceIds.length} inventory instance(s) back to available.`)
 }
