@@ -4,7 +4,7 @@ import {
   upsertCategory,  deleteCategory,
   upsertComponent, deleteComponent,
   uploadImage,     deleteImage,
-  validateAttribute,
+  validateAttribute, reconcileOrphanedInstances
 } from './db.js'
 import {
   designerBoot,        setToast,
@@ -13,6 +13,8 @@ import {
   selectAssembly,      openOnshapeModal,
   bootIsolatedAssembly, bootIsolatedChild,
 } from './designer.js'
+
+window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
 let items         = []

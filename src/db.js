@@ -362,6 +362,53 @@ export async function fetchAllLinkedInstanceIdsForAssembly(assemblyId) {
   return ids
 }
 
+/** Safety-net reconciliation: finds every inventory_instances row marked
+ *  'in_assembly' that is NOT referenced by any assembly_parts.linked_instance_ids
+ *  anywhere in the database, and releases it back to 'available'. Run this
+ *  manually (e.g. from the browser console) if you suspect drift from before
+ *  the Phase 4 release-on-delete/reimport fixes were in place. Read-only
+ *  until the final update call — logs what it WOULD fix if dryRun is true.
+ */
+export async function reconcileOrphanedInstances(dryRun = true) {
+  const { data: inAssembly, error: instErr } = await supabase
+    .from('inventory_instances')
+    .select('id')
+    .eq('status', 'in_assembly')
+  if (instErr) throw instErr
+
+  const { data: allParts, error: partsErr } = await supabase
+    .from('assembly_parts')
+    .select('linked_instance_ids')
+  if (partsErr) throw partsErr
+
+  const referencedIds = new Set()
+  allParts.forEach(p => (p.linked_instance_ids || []).forEach(id => referencedIds.add(id)))
+
+  const orphanedIds = inAssembly
+    .map(i => i.id)
+    .filter(id => !referencedIds.has(id))
+
+  if (!orphanedIds.length) {
+    console.log('[reconcile] No orphaned instances found.')
+    return { orphanedCount: 0, orphanedIds: [] }
+  }
+
+  console.warn(`[reconcile] Found ${orphanedIds.length} orphaned instance(s):`, orphanedIds)
+
+  if (!dryRun) {
+    const { error } = await supabase
+      .from('inventory_instances')
+      .update({ status: 'available', location: '' })
+      .in('id', orphanedIds)
+    if (error) throw error
+    console.log(`[reconcile] Released ${orphanedIds.length} orphaned instance(s).`)
+  } else {
+    console.log('[reconcile] Dry run — no changes made. Call reconcileOrphanedInstances(false) to apply.')
+  }
+
+  return { orphanedCount: orphanedIds.length, orphanedIds }
+}
+
 
 // ── Typed characteristic helpers ──────────────────────────────
 //

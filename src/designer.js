@@ -803,6 +803,23 @@ async function deletePart(partId) {
   } catch (e) { console.error(e); toastFn('Error removing part') }
 }
 
+/** Deletes a part belonging to a subassembly NODE (not a root assembly).
+ *  Mirrors deletePart() but operates on currentChildParts / renderChildDetail. */
+async function deleteChildPart(partId) {
+  const part = currentChildParts.find(p => p.id === partId)
+  if (!part || !confirm(`Remove "${part.partName}" from this subassembly?`)) return
+  try {
+    if (part.linkedInstanceIds?.length) {
+      await releaseInstances(part.linkedInstanceIds)
+    }
+    await deleteAssemblyPart(partId)
+    currentChildParts = currentChildParts.filter(p => p.id !== partId)
+    renderChildDetail()
+    toastFn('Part removed')
+  } catch (e) { console.error(e); toastFn('Error removing part') }
+}
+
+
 async function deleteCurrentAssembly() {
   const a = assemblyById(currentAssemblyId)
   if (!a || !confirm(`Delete assembly "${a.name}" and all its parts? This cannot be undone.`)) return
