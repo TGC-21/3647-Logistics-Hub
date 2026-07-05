@@ -654,9 +654,37 @@ async function confirmNewCat() {
   } catch (e) { showToast('Error saving category') }
 }
 
-function handleImageUpload(e) {
+// Compresses an image client-side (resize + re-encode as JPEG) before it
+// ever reaches uploadImage()/Supabase, so storage isn't full of untouched
+// multi-megabyte phone photos.
+function compressImage(file, maxWidth = 800, quality = 0.75) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = e => {
+      const img = new Image()
+      img.onload = () => {
+        const scale  = Math.min(1, maxWidth / img.width)
+        const canvas = document.createElement('canvas')
+        canvas.width  = img.width * scale
+        canvas.height = img.height * scale
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+        canvas.toBlob(
+          blob => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
+          'image/jpeg',
+          quality
+        )
+      }
+      img.onerror = reject
+      img.src = e.target.result
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleImageUpload(e) {
   const file = e.target.files[0]; if (!file) return
-  currentImageFile = file
+  currentImageFile = await compressImage(file)
   const reader = new FileReader()
   reader.onload = ev => {
     currentImageUrl = ev.target.result
@@ -665,7 +693,7 @@ function handleImageUpload(e) {
     document.getElementById('btn-clear-img').style.display = 'inline-flex'
     document.getElementById('img-upload-inner').style.display = 'none'
   }
-  reader.readAsDataURL(file)
+  reader.readAsDataURL(currentImageFile)
 }
 
 function clearImage() {
