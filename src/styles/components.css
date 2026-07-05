@@ -188,10 +188,15 @@
 .tag-chip button { background: none; border: none; cursor: pointer; color: var(--color-accent); font-size: 13px; line-height: 1; padding: 0 0 0 1px; }
 .tags-input-wrap input { border: none; outline: none; font-size: 12px; min-width: 70px; background: transparent; color: var(--color-text-primary); flex: 1; }
 
-/* ── Attribute rows ───────────────────────────────────────── */
+/* ── Attribute rows (component add/edit modal) ───────────────
+   Each row's value cell is type-aware:
+     .attr-typed-select    → enum dropdown
+     .attr-quantity-wrap    → number input + unit label
+     plain <input>          → string (or free-form extra attribute) */
 #attrs-list { display: flex; flex-direction: column; gap: 6px; }
 .attr-row { display: flex; gap: 5px; align-items: center; }
-.attr-row input {
+.attr-row input,
+.attr-row select {
   flex: 1;
   padding: 5px 8px;
   border: 0.5px solid var(--color-border-secondary);
@@ -201,10 +206,30 @@
   color: var(--color-text-primary);
   font-family: var(--font-sans);
 }
-.attr-row input:focus { outline: none; border-color: var(--color-accent); }
-.attr-row input.error { border-color: #E24B4A; }
+.attr-row input:focus,
+.attr-row select:focus { outline: none; border-color: var(--color-accent); }
+.attr-row input.error,
+.attr-row select.error { border-color: #E24B4A; }
 .attr-row input[readonly] { background: var(--color-background-secondary); color: var(--color-text-secondary); }
 .attr-required-badge { font-size: 10px; color: var(--color-danger); white-space: nowrap; padding: 2px 5px; background: var(--color-danger-light); border-radius: 5px; flex-shrink: 0; }
+
+.attr-quantity-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.attr-quantity-wrap input[type="number"] {
+  flex: 1;
+  min-width: 0;
+}
+.attr-quantity-wrap input[type="number"].error { border-color: #E24B4A; }
+.attr-quantity-unit {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  min-width: 28px;
+  flex-shrink: 0;
+}
 
 /* ── Detail view ──────────────────────────────────────────── */
 .detail-img { width: 100%; max-height: 220px; display: flex; align-items: center; justify-content: center; border-radius: var(--border-radius-md); background: var(--color-background-secondary); }
@@ -232,12 +257,112 @@
   font-family: var(--font-sans);
 }
 .new-cat-row input:focus { outline: none; border-color: var(--color-accent); }
-.req-chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.req-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; background: var(--color-danger-light); color: var(--color-danger); border-radius: 9px; font-size: 11px; font-weight: 500; }
-.req-chip button { background: none; border: none; cursor: pointer; color: var(--color-danger); font-size: 13px; line-height: 1; }
 .cat-manage-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); margin-bottom: 6px; background: var(--color-background-primary); }
 .cat-manage-name { font-size: 13px; font-weight: 500; }
 .cat-manage-reqs { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
+.cat-manage-type-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-accent);
+  background: var(--color-accent-light);
+  padding: 0 4px;
+  border-radius: 4px;
+  margin-left: 1px;
+}
+
+/* ── Typed characteristic config builder (edit-category modal) ──
+   Each row lets you name a characteristic and pick its type
+   (Text / Quantity / Preset list). Choosing a type reveals an
+   extra panel below the row for that type's specific settings. */
+#req-keys-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.req-keys-empty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding: 10px;
+  text-align: center;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border: 0.5px dashed var(--color-border-secondary);
+}
+.req-key-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+}
+.req-key-config-main {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.req-key-config-main .req-key-input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  font-size: 13px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+.req-key-config-main .req-type-select {
+  flex: 0 0 118px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  font-size: 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+.req-key-config-main .req-key-input:focus,
+.req-key-config-main .req-type-select:focus { outline: none; border-color: var(--color-accent); }
+.req-key-config-main .btn-icon { flex-shrink: 0; }
+
+.req-type-panel {
+  padding: 8px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+}
+.req-type-panel label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.req-type-panel input,
+.req-type-panel textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  font-size: 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+.req-type-panel textarea {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  min-height: 62px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.req-type-panel input:focus,
+.req-type-panel textarea:focus { outline: none; border-color: var(--color-accent); }
 
 /* ── Toast ────────────────────────────────────────────────── */
 .toast {

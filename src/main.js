@@ -4,6 +4,7 @@ import {
   upsertCategory,  deleteCategory,
   upsertComponent, deleteComponent,
   uploadImage,     deleteImage,
+  validateAttribute,
 } from './db.js'
 import {
   designerBoot,        setToast,
@@ -24,7 +25,7 @@ let detailId      = null
 let view          = { type: 'all', catId: null, tag: null }
 let openCats      = new Set()
 let editingCatId  = null
-let editingReqKeys = []
+let editingReqKeysConfig = []   // [{ key, type: 'string'|'quantity'|'enum', options?, defaultUnit? }]
 let designerMode  = false
 
 // ── Boot ──────────────────────────────────────────────────────
@@ -396,6 +397,7 @@ function bindStaticEvents() {
   document.getElementById('btn-save-edit-cat').addEventListener('click', saveEditCat)
   document.getElementById('btn-delete-cat').addEventListener('click', deleteCat)
   document.getElementById('edit-cat-overlay').addEventListener('click', e => { if (e.target === e.currentTarget) closeEditCat() })
+  document.getElementById('btn-add-req-key-config').addEventListener('click', addReqKeyConfig)
 
   // Component form fields
   document.getElementById('field-cat').addEventListener('change', () => onCatChange())
@@ -410,10 +412,6 @@ function bindStaticEvents() {
   // Tags input
   document.getElementById('tags-wrap').addEventListener('click', () => document.getElementById('tag-input').focus())
   document.getElementById('tag-input').addEventListener('keydown', handleTagKey)
-
-  // Required key input
-  document.getElementById('req-key-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addReqKey() } })
-  document.getElementById('btn-add-req-key').addEventListener('click', addReqKey)
 }
 
 // ── View navigation ───────────────────────────────────────────
@@ -438,33 +436,135 @@ function onCatChange() {
   refreshRequiredAttrs(document.getElementById('field-cat').value)
 }
 
+// ── Typed required-attribute rendering ─────────────────────────
+//
+// Each required characteristic on a category carries a `type`:
+//   'string'   → plain text input
+//   'quantity' → number input + a (read-only) unit label from the category
+//   'enum'     → <select> populated from the category's preset options
+//
+// The rendered row always stores machine-usable state via data-* attrs
+// (data-type, data-config-key) so saveItem() can read values back out
+// without re-looking-up the category.
+
 function refreshRequiredAttrs(catId) {
-  const cat      = catById(catId)
-  const reqKeys  = (cat && cat.requiredKeys) || []
-  const list     = document.getElementById('attrs-list')
-  const existing = [...list.querySelectorAll('.attr-row:not([data-required])')].map(r => ({
-    key: r.querySelector('[data-key-input]').value,
-    val: r.querySelector('[data-val-input]').value,
+  const cat        = catById(catId)
+  const keysConfig = (cat && cat.requiredKeysConfig) || []
+  const list       = document.getElementById('attrs-list')
+
+  // Preserve any existing NON-required rows (free-form extras) before wiping.
+  const existingExtras = [...list.querySelectorAll('.attr-row:not([data-required])')].map(r => ({
+    key: r.querySelector('[data-key-input]')?.value || '',
+    val: r.querySelector('[data-val-input]')?.value || '',
   }))
-  const existingReq = [...list.querySelectorAll('.attr-row[data-required]')].reduce((m, r) => {
-    m[r.querySelector('[data-key-input]').value] = r.querySelector('[data-val-input]').value
-    return m
-  }, {})
-  list.innerHTML = ''
-  reqKeys.forEach(key => {
-    const row = document.createElement('div')
-    row.className = 'attr-row'
-    row.dataset.required = '1'
-    const valInput = document.createElement('input')
-    valInput.type = 'text'; valInput.placeholder = 'Value'; valInput.dataset.valInput = '1'
-    valInput.value = existingReq[key] || ''; valInput.style.flex = '1.5'
-    const keyInput = document.createElement('input')
-    keyInput.type = 'text'; keyInput.value = key; keyInput.readOnly = true; keyInput.dataset.keyInput = '1'; keyInput.style.flex = '1'
-    const badge = document.createElement('span'); badge.className = 'attr-required-badge'; badge.textContent = 'required'
-    row.append(keyInput, valInput, badge)
-    list.appendChild(row)
+  // Preserve current values of required rows too, in case the user is
+  // switching categories back and forth without meaning to lose input.
+  const existingRequired = {}
+  list.querySelectorAll('.attr-row[data-required]').forEach(row => {
+    const key = row.dataset.configKey
+    if (!key) return
+    existingRequired[key] = readAttrRowValue(row)
   })
-  existing.forEach(({ key, val }) => addAttrRow(key, val))
+
+  list.innerHTML = ''
+
+  keysConfig.forEach(cfg => {
+    const existingVal = existingRequired[cfg.key] ?? ''
+    list.appendChild(buildRequiredAttrRow(cfg, existingVal))
+  })
+
+  existingExtras
+    .filter(e => e.key && !keysConfig.some(c => c.key === e.key))
+    .forEach(({ key, val }) => addAttrRow(key, val))
+}
+
+/** Reads the current value out of a required attr row, regardless of type. */
+function readAttrRowValue(row) {
+  const type = row.dataset.type
+  if (type === 'quantity') {
+    const numInput = row.querySelector('input[data-num-input]')
+    return numInput ? numInput.value : ''
+  }
+  // enum (<select>) and string (<input>) both expose data-val-input directly
+  const input = row.querySelector('[data-val-input]')
+  return input ? input.value : ''
+}
+
+/** Builds one required-characteristic row for the given type config. */
+function buildRequiredAttrRow(cfg, existingVal) {
+  const row = document.createElement('div')
+  row.className = 'attr-row'
+  row.dataset.required  = '1'
+  row.dataset.type       = cfg.type || 'string'
+  row.dataset.configKey  = cfg.key
+
+  const keyInput = document.createElement('input')
+  keyInput.type = 'text'
+  keyInput.value = cfg.key
+  keyInput.readOnly = true
+  keyInput.dataset.keyInput = '1'
+  keyInput.style.flex = '1'
+
+  let valueEl
+
+  if (cfg.type === 'enum') {
+    const select = document.createElement('select')
+    select.dataset.valInput = '1'
+    select.className = 'attr-typed-select'
+    select.style.flex = '1.5'
+
+    const blank = document.createElement('option')
+    blank.value = ''
+    blank.textContent = '— Select —'
+    select.appendChild(blank)
+
+    ;(cfg.options || []).forEach(opt => {
+      const o = document.createElement('option')
+      o.value = opt
+      o.textContent = opt
+      if (opt === existingVal) o.selected = true
+      select.appendChild(o)
+    })
+    valueEl = select
+
+  } else if (cfg.type === 'quantity') {
+    const wrap = document.createElement('div')
+    wrap.className = 'attr-quantity-wrap'
+    wrap.style.flex = '1.5'
+    wrap.dataset.valInput = '1'   // marker so generic lookups still find this row
+
+    const numInput = document.createElement('input')
+    numInput.type = 'number'
+    numInput.step = 'any'
+    numInput.placeholder = 'Amount'
+    numInput.dataset.numInput = '1'
+    // existingVal may be "5 g" (already-saved) or just "5" (mid-edit) — take the numeric part
+    numInput.value = String(existingVal).trim().split(/\s+/)[0] || ''
+
+    const unit = document.createElement('span')
+    unit.className = 'attr-quantity-unit'
+    unit.textContent = cfg.defaultUnit || ''
+
+    wrap.appendChild(numInput)
+    wrap.appendChild(unit)
+    valueEl = wrap
+
+  } else {
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.placeholder = 'Value'
+    input.dataset.valInput = '1'
+    input.value = existingVal
+    input.style.flex = '1.5'
+    valueEl = input
+  }
+
+  const badge = document.createElement('span')
+  badge.className = 'attr-required-badge'
+  badge.textContent = 'required'
+
+  row.append(keyInput, valueEl, badge)
+  return row
 }
 
 function openAddModal(prefillCatId) {
@@ -509,19 +609,19 @@ function openEditModal(id) {
   populateCatSelect(it.categoryId)
   hideNewCatRow()
   renderTagChips()
-  const al      = document.getElementById('attrs-list'); al.innerHTML = ''
-  const cat     = catById(it.categoryId)
-  const reqKeys = (cat && cat.requiredKeys) || []
-  reqKeys.forEach(key => {
-    const existing = (it.attributes || []).find(a => a.key === key)
-    const row = document.createElement('div'); row.className = 'attr-row'; row.dataset.required = '1'
-    const keyInput = document.createElement('input'); keyInput.type='text'; keyInput.value=key; keyInput.readOnly=true; keyInput.dataset.keyInput='1'; keyInput.style.flex='1'
-    const valInput = document.createElement('input'); valInput.type='text'; valInput.placeholder='Value'; valInput.value=existing?existing.value:''; valInput.dataset.valInput='1'; valInput.style.flex='1.5'
-    const badge = document.createElement('span'); badge.className='attr-required-badge'; badge.textContent='required'
-    row.append(keyInput, valInput, badge)
-    al.appendChild(row)
+
+  const al        = document.getElementById('attrs-list'); al.innerHTML = ''
+  const cat        = catById(it.categoryId)
+  const keysConfig = (cat && cat.requiredKeysConfig) || []
+
+  keysConfig.forEach(cfg => {
+    const existing = (it.attributes || []).find(a => a.key === cfg.key)
+    al.appendChild(buildRequiredAttrRow(cfg, existing ? existing.value : ''))
   })
-  ;(it.attributes || []).filter(a => !reqKeys.includes(a.key)).forEach(a => addAttrRow(a.key, a.value))
+  ;(it.attributes || [])
+    .filter(a => !keysConfig.some(c => c.key === a.key))
+    .forEach(a => addAttrRow(a.key, a.value))
+
   document.getElementById('modal-overlay').style.display = 'flex'
   setTimeout(() => document.getElementById('field-name').focus(), 80)
 }
@@ -541,7 +641,7 @@ function hideNewCatRow() {
 }
 async function confirmNewCat() {
   const name = document.getElementById('new-cat-input').value.trim(); if (!name) return
-  const cat = { id: genId(), name, requiredKeys: [] }
+  const cat = { id: genId(), name, requiredKeysConfig: [] }
   try {
     const saved = await upsertCategory(cat)
     categories.push(saved)
@@ -554,37 +654,9 @@ async function confirmNewCat() {
   } catch (e) { showToast('Error saving category') }
 }
 
-// Compresses an image client-side (resize + re-encode as JPEG) before it
-// ever reaches uploadImage()/Supabase, so storage isn't full of untouched
-// multi-megabyte phone photos.
-function compressImage(file, maxWidth = 800, quality = 0.75) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = e => {
-      const img = new Image()
-      img.onload = () => {
-        const scale  = Math.min(1, maxWidth / img.width)
-        const canvas = document.createElement('canvas')
-        canvas.width  = img.width * scale
-        canvas.height = img.height * scale
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-        canvas.toBlob(
-          blob => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
-          'image/jpeg',
-          quality
-        )
-      }
-      img.onerror = reject
-      img.src = e.target.result
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
-async function handleImageUpload(e) {
+function handleImageUpload(e) {
   const file = e.target.files[0]; if (!file) return
-  currentImageFile = await compressImage(file)
+  currentImageFile = file
   const reader = new FileReader()
   reader.onload = ev => {
     currentImageUrl = ev.target.result
@@ -593,7 +665,7 @@ async function handleImageUpload(e) {
     document.getElementById('btn-clear-img').style.display = 'inline-flex'
     document.getElementById('img-upload-inner').style.display = 'none'
   }
-  reader.readAsDataURL(currentImageFile)
+  reader.readAsDataURL(file)
 }
 
 function clearImage() {
@@ -639,22 +711,72 @@ async function saveItem() {
   const name = document.getElementById('field-name').value.trim()
   if (!name) { document.getElementById('field-name').focus(); showToast('Name is required'); return }
 
+  const catId      = document.getElementById('field-cat').value || null
+  const cat         = catById(catId)
+  const keysConfig  = (cat && cat.requiredKeysConfig) || []
+
+  // ── Validate required rows, type-aware ──────────────────────
   const reqRows = [...document.querySelectorAll('#attrs-list .attr-row[data-required]')]
   let valid = true
-  reqRows.forEach(row => {
-    const vi = row.querySelector('[data-val-input]')
-    if (!vi.value.trim()) { vi.classList.add('error'); valid = false } else vi.classList.remove('error')
-  })
-  if (!valid) { showToast('Fill in all required characteristics'); return }
 
-  const catId = document.getElementById('field-cat').value || null
+  reqRows.forEach(row => {
+    const configKey = row.dataset.configKey
+    const config    = keysConfig.find(c => c.key === configKey)
+    const rawValue  = readAttrRowValue(row)
+    const trimmed   = String(rawValue ?? '').trim()
+
+    // The element we toggle .error on: number input for quantity, else the
+    // element itself (select or input) carrying data-val-input.
+    const errorTarget = row.dataset.type === 'quantity'
+      ? row.querySelector('input[data-num-input]')
+      : row.querySelector('[data-val-input]')
+
+    if (!trimmed) {
+      errorTarget?.classList.add('error')
+      valid = false
+      return
+    }
+
+    const result = validateAttribute(trimmed, config)
+    if (!result.valid) {
+      errorTarget?.classList.add('error')
+      valid = false
+      return
+    }
+
+    errorTarget?.classList.remove('error')
+  })
+
+  if (!valid) { showToast('Fill in all required characteristics correctly'); return }
+
   const desc  = document.getElementById('field-desc').value.trim()
   const qty   = document.getElementById('field-qty').value
   const loc   = document.getElementById('field-loc').value.trim()
+
+  // ── Collect all attribute rows (required + free-form extras) ──
   const attrs = [...document.querySelectorAll('#attrs-list .attr-row')].reduce((acc, row) => {
-    const k = row.querySelector('[data-key-input]').value.trim()
-    const v = row.querySelector('[data-val-input]').value.trim()
-    if (k) acc.push({ key: k, value: v, required: !!row.dataset.required })
+    const keyInput = row.querySelector('[data-key-input]')
+    if (!keyInput) return acc
+    const key = keyInput.value.trim()
+    if (!key) return acc
+
+    const isRequired = !!row.dataset.required
+    const type        = row.dataset.type || 'string'
+
+    let value
+    if (isRequired) {
+      value = String(readAttrRowValue(row) ?? '').trim()
+      // Append the category's default unit for quantity types, e.g. "5" → "5 g"
+      if (type === 'quantity') {
+        const config = keysConfig.find(c => c.key === key)
+        if (config?.defaultUnit && value) value = `${value} ${config.defaultUnit}`
+      }
+    } else {
+      const vi = row.querySelector('[data-val-input]')
+      value = vi ? vi.value.trim() : ''
+    }
+
+    acc.push({ key, value, type, required: isRequired })
     return acc
   }, [])
 
@@ -751,14 +873,20 @@ function renderCatModal() {
   if (!categories.length) {
     body.innerHTML = `<div class="empty" style="padding:24px 0"><i class="ti ti-folder-off" aria-hidden="true"></i><div class="empty-title">No categories yet</div><div class="empty-sub">Create one below.</div></div>${addRow}`
   } else {
-    body.innerHTML = categories.map(c => `
+    body.innerHTML = categories.map(c => {
+      const configs = c.requiredKeysConfig || []
+      const reqSummary = configs.length
+        ? configs.map(cfg => `${cfg.key} <span class="cat-manage-type-tag">${typeLabel(cfg.type)}</span>`).join(', ')
+        : 'No required characteristics'
+      return `
       <div class="cat-manage-row">
         <div>
           <div class="cat-manage-name"><i class="ti ti-folder" style="font-size:13px;margin-right:4px" aria-hidden="true"></i>${c.name}</div>
-          <div class="cat-manage-reqs">${(c.requiredKeys || []).length ? 'Required: ' + c.requiredKeys.join(', ') : 'No required characteristics'}</div>
+          <div class="cat-manage-reqs">${configs.length ? 'Required: ' : ''}${reqSummary}</div>
         </div>
         <button class="btn btn-sm" data-edit-cat="${c.id}"><i class="ti ti-edit" aria-hidden="true"></i> Edit</button>
-      </div>`).join('') + addRow
+      </div>`
+    }).join('') + addRow
   }
   document.getElementById('btn-quick-create-cat').addEventListener('click', quickCreateCat)
   body.querySelectorAll('[data-edit-cat]').forEach(btn =>
@@ -766,10 +894,16 @@ function renderCatModal() {
   )
 }
 
+function typeLabel(type) {
+  if (type === 'quantity') return 'Quantity'
+  if (type === 'enum') return 'Preset'
+  return 'Text'
+}
+
 async function quickCreateCat() {
   const name = (document.getElementById('quick-cat-input').value || '').trim(); if (!name) return
   try {
-    const saved = await upsertCategory({ id: genId(), name, requiredKeys: [] })
+    const saved = await upsertCategory({ id: genId(), name, requiredKeysConfig: [] })
     categories.push(saved)
     renderCatModal()
     showToast('Category created')
@@ -777,33 +911,121 @@ async function quickCreateCat() {
 }
 
 // ── Edit single category modal ────────────────────────────────
+//
+// editingReqKeysConfig holds the working copy of the category's typed
+// characteristic list while the modal is open:
+//   { key: string, type: 'string'|'quantity'|'enum', options?: string[], defaultUnit?: string }
+
 function openEditCat(id) {
   const cat = catById(id); if (!cat) return
-  editingCatId = id; editingReqKeys = [...(cat.requiredKeys || [])]
+  editingCatId = id
+  editingReqKeysConfig = JSON.parse(JSON.stringify(cat.requiredKeysConfig || []))
   document.getElementById('edit-cat-title').textContent = 'Edit: ' + cat.name
   document.getElementById('edit-cat-name').value = cat.name
-  renderReqChips()
+  renderReqKeysConfig()
   document.getElementById('edit-cat-overlay').style.display = 'flex'
 }
-function closeEditCat() { document.getElementById('edit-cat-overlay').style.display = 'none'; editingCatId = null }
-function addReqKey() {
-  const val = (document.getElementById('req-key-input').value || '').trim()
-  if (val && !editingReqKeys.includes(val)) { editingReqKeys.push(val); renderReqChips() }
-  document.getElementById('req-key-input').value = ''
+function closeEditCat() {
+  document.getElementById('edit-cat-overlay').style.display = 'none'
+  editingCatId = null
+  editingReqKeysConfig = []
 }
-function removeReqKey(key) { editingReqKeys = editingReqKeys.filter(k => k !== key); renderReqChips() }
-function renderReqChips() {
-  document.getElementById('req-chips').innerHTML = editingReqKeys.map(k =>
-    `<span class="req-chip">${k}<button type="button" data-remove-req="${k}" aria-label="Remove">×</button></span>`
-  ).join('')
-  document.querySelectorAll('[data-remove-req]').forEach(btn =>
-    btn.addEventListener('click', () => removeReqKey(btn.dataset.removeReq))
+
+function renderReqKeysConfig() {
+  const list = document.getElementById('req-keys-config-list')
+
+  if (!editingReqKeysConfig.length) {
+    list.innerHTML = `<div class="req-keys-empty">No required characteristics yet. Add one below.</div>`
+  } else {
+    list.innerHTML = editingReqKeysConfig.map((cfg, idx) => `
+      <div class="req-key-config-row" data-config-idx="${idx}">
+        <div class="req-key-config-main">
+          <input type="text" class="req-key-input" data-idx="${idx}"
+                 value="${cfg.key}" placeholder="e.g. Inner Diameter">
+          <select class="req-type-select" data-idx="${idx}">
+            <option value="string"   ${cfg.type === 'string'   ? 'selected' : ''}>Text</option>
+            <option value="quantity" ${cfg.type === 'quantity' ? 'selected' : ''}>Quantity</option>
+            <option value="enum"     ${cfg.type === 'enum'     ? 'selected' : ''}>Preset list</option>
+          </select>
+          <button type="button" class="btn-icon" data-remove-idx="${idx}" aria-label="Remove">
+            <i class="ti ti-trash" style="font-size:13px" aria-hidden="true"></i>
+          </button>
+        </div>
+        ${cfg.type === 'enum' ? `
+          <div class="req-type-panel">
+            <label>Preset options <span style="font-weight:400;color:var(--color-text-tertiary)">(one per line)</span></label>
+            <textarea class="enum-options-input" data-idx="${idx}"
+                      placeholder="0.25&#10;0.5">${(cfg.options || []).join('\n')}</textarea>
+          </div>` : ''}
+        ${cfg.type === 'quantity' ? `
+          <div class="req-type-panel">
+            <label>Default unit <span style="font-weight:400;color:var(--color-text-tertiary)">(optional, e.g. mm, g, in)</span></label>
+            <input type="text" class="quantity-unit-input" data-idx="${idx}"
+                   value="${cfg.defaultUnit || ''}" placeholder="e.g. mm">
+          </div>` : ''}
+      </div>
+    `).join('')
+  }
+
+  list.querySelectorAll('.req-key-input').forEach(input =>
+    input.addEventListener('input', () => {
+      editingReqKeysConfig[parseInt(input.dataset.idx, 10)].key = input.value
+    })
+  )
+  list.querySelectorAll('.req-type-select').forEach(select =>
+    select.addEventListener('change', () => {
+      const idx = parseInt(select.dataset.idx, 10)
+      const cfg = editingReqKeysConfig[idx]
+      cfg.type = select.value
+      if (select.value === 'enum') {
+        cfg.options = cfg.options || []
+        delete cfg.defaultUnit
+      } else if (select.value === 'quantity') {
+        cfg.defaultUnit = cfg.defaultUnit || ''
+        delete cfg.options
+      } else {
+        delete cfg.options
+        delete cfg.defaultUnit
+      }
+      renderReqKeysConfig()
+    })
+  )
+  list.querySelectorAll('.enum-options-input').forEach(ta =>
+    ta.addEventListener('input', () => {
+      editingReqKeysConfig[parseInt(ta.dataset.idx, 10)].options =
+        ta.value.split('\n').map(s => s.trim()).filter(Boolean)
+    })
+  )
+  list.querySelectorAll('.quantity-unit-input').forEach(input =>
+    input.addEventListener('input', () => {
+      editingReqKeysConfig[parseInt(input.dataset.idx, 10)].defaultUnit = input.value.trim()
+    })
+  )
+  list.querySelectorAll('[data-remove-idx]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      editingReqKeysConfig.splice(parseInt(btn.dataset.removeIdx, 10), 1)
+      renderReqKeysConfig()
+    })
   )
 }
+
+function addReqKeyConfig() {
+  editingReqKeysConfig.push({ key: '', type: 'string' })
+  renderReqKeysConfig()
+  const inputs = document.querySelectorAll('.req-key-input')
+  inputs[inputs.length - 1]?.focus()
+}
+
 async function saveEditCat() {
   const name = document.getElementById('edit-cat-name').value.trim(); if (!name) return
   const idx  = categories.findIndex(c => c.id === editingCatId); if (idx < 0) return
-  const updated = { ...categories[idx], name, requiredKeys: [...editingReqKeys] }
+
+  // Drop any rows the user left blank rather than blocking save on them
+  const cleanConfigs = editingReqKeysConfig
+    .map(cfg => ({ ...cfg, key: cfg.key.trim() }))
+    .filter(cfg => cfg.key)
+
+  const updated = { ...categories[idx], name, requiredKeysConfig: cleanConfigs }
   try {
     const saved = await upsertCategory(updated)
     categories[idx] = saved

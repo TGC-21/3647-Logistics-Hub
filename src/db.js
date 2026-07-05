@@ -195,13 +195,122 @@ export async function fetchChildParts(childId) {
   return data.map(dbPartToLocal)
 }
 
+// ── Typed characteristic helpers ──────────────────────────────
+//
+// A category's `requiredKeysConfig` is an array of characteristic
+// definitions, each shaped like:
+//   { key: "Inner Diameter", type: "enum", options: ["0.25", "0.5"] }
+//   { key: "Material",       type: "string" }
+//   { key: "Weight",         type: "quantity", defaultUnit: "g" }
+//
+// `type` is one of: 'string' | 'quantity' | 'enum'.
+//
+// `requiredKeys` (a plain string array) is kept in sync alongside
+// `requiredKeysConfig` for any old code/queries that only care about names.
+
+/**
+ * Back-fills `requiredKeysConfig` for categories saved before this feature
+ * existed — they only have `requiredKeys` (plain names), so each becomes a
+ * "string" typed characteristic. No-op if config already exists.
+ */
+export function migrateRequiredKeysIfNeeded(cat) {
+  if (cat.requiredKeysConfig && cat.requiredKeysConfig.length > 0) {
+    return cat
+  }
+  cat.requiredKeysConfig = (cat.requiredKeys || []).map(key => ({
+    key,
+    type: 'string',
+    options: [],
+    defaultUnit: '',
+  }))
+  return cat
+}
+
+/**
+ * Validate a single raw attribute value against its characteristic config.
+ * Returns { valid, error? }.
+ */
+export function validateAttribute(value, config) {
+  if (!config) return { valid: true }
+  const trimmed = String(value ?? '').trim()
+
+  if (config.type === 'enum') {
+    if (!config.options || config.options.length === 0) return { valid: true }
+    return config.options.includes(trimmed)
+      ? { valid: true }
+      : { valid: false, error: `Must be one of: ${config.options.join(', ')}` }
+  }
+
+  if (config.type === 'quantity') {
+    const numMatch = trimmed.match(/^-?[\d.]+/)
+    if (!numMatch || isNaN(parseFloat(numMatch[0]))) {
+      return { valid: false, error: 'Must be a number' }
+    }
+    return { valid: true }
+  }
+
+  return { valid: true }
+}
+
+/**
+ * Validate a full attributes array against a category's required
+ * characteristic configs. Returns { valid, errors } where errors is keyed
+ * by characteristic name.
+ */
+export function validateRequiredAttributes(attributes, requiredKeysConfig) {
+  const errors = {}
+  if (!requiredKeysConfig || requiredKeysConfig.length === 0) {
+    return { valid: true, errors }
+  }
+
+  const byKey = {}
+  ;(attributes || []).forEach(a => { byKey[a.key] = a.value })
+
+  requiredKeysConfig.forEach(config => {
+    const value = byKey[config.key]
+    if (!value || !String(value).trim()) {
+      errors[config.key] = 'Required'
+      return
+    }
+    const result = validateAttribute(value, config)
+    if (!result.valid) errors[config.key] = result.error || 'Invalid value'
+  })
+
+  return { valid: Object.keys(errors).length === 0, errors }
+}
+
+/**
+ * Format a stored attribute value for display — mainly appends a
+ * characteristic's default unit to bare quantity values (e.g. "5" → "5 g").
+ */
+export function formatAttribute(value, config) {
+  const str = String(value ?? '')
+  if (!config || config.type !== 'quantity') return str
+  if (!config.defaultUnit || str.includes(' ') || str === '') return str
+  return `${str} ${config.defaultUnit}`
+}
+
 // ── Mapping helpers ───────────────────────────────────────────
 
 function dbCatToLocal(row) {
-  return { id: row.id, name: row.name, requiredKeys: row.required_keys ?? [] }
+  const cat = {
+    id:                 row.id,
+    name:               row.name,
+    requiredKeys:       row.required_keys ?? [],
+    requiredKeysConfig: row.required_keys_config ?? [],
+  }
+  return migrateRequiredKeysIfNeeded(cat)
 }
 function localCatToDb(cat) {
-  return { id: cat.id, name: cat.name, required_keys: cat.requiredKeys ?? [] }
+  // requiredKeys is always derived from requiredKeysConfig so the two
+  // never drift apart — requiredKeysConfig is the single source of truth.
+  const requiredKeys = (cat.requiredKeysConfig || []).map(c => c.key).filter(Boolean)
+  return {
+    id:                    cat.id,
+    name:                  cat.name,
+    required_keys:         requiredKeys,
+    required_keys_config:  cat.requiredKeysConfig ?? [],
+  }
 }
 
 function dbItemToLocal(row) {

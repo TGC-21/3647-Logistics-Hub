@@ -220,7 +220,7 @@
 
 <!-- ── Edit Single Category Modal ─────────────────────────── -->
 <div class="overlay" id="edit-cat-overlay" style="display:none">
-  <div class="modal" style="max-width:440px">
+  <div class="modal" style="max-width:520px">
     <div class="modal-header">
       <div class="modal-title" id="edit-cat-title">Edit category</div>
       <button class="btn-icon" id="btn-close-edit-cat"><i class="ti ti-x" aria-hidden="true"></i></button>
@@ -231,15 +231,15 @@
         <input type="text" id="edit-cat-name">
       </div>
       <div class="field">
-        <label>Required characteristics <span style="font-weight:400;color:var(--color-text-tertiary)">(press Enter)</span></label>
-        <div style="display:flex;gap:5px">
-          <input type="text" id="req-key-input" placeholder="e.g. Thread size"
-            style="flex:1;padding:6px 9px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);font-size:13px;background:var(--color-background-primary);color:var(--color-text-primary)">
-          <button class="btn btn-sm" id="btn-add-req-key"><i class="ti ti-plus" aria-hidden="true"></i> Add</button>
-        </div>
-        <div class="req-chip-row" id="req-chips"></div>
+        <label>Required characteristics <span style="font-weight:400;color:var(--color-text-tertiary)">(name + type)</span></label>
+        <div id="req-keys-config-list"></div>
+        <button class="btn btn-sm" id="btn-add-req-key-config" style="align-self:flex-start;margin-top:2px">
+          <i class="ti ti-plus" aria-hidden="true"></i> Add characteristic
+        </button>
         <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
-          These fields will be required when adding a component in this category.
+          <strong>Text</strong> — any free-form value. <strong>Quantity</strong> — a number, optionally with a
+          default unit. <strong>Preset list</strong> — a dropdown limited to the options you define
+          (e.g. bearing inner diameter: 0.25 or 0.5).
         </p>
       </div>
     </div>
