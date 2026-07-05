@@ -531,6 +531,7 @@
   color: var(--color-accent);
   font-style: italic;
 }
+.asm-child-row:hover .asm-child-open-hint { display: inline; }
 
 /* ── Inventory link modal ─────────────────────────────────── */
 .inv-link-subtitle { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
@@ -598,4 +599,3 @@
   background: none; border: none; cursor: pointer;
   color: var(--color-accent); font-size: 12px; line-height: 1;
 }
-.asm-child-row:hover .asm-child-open-hint { display: inline; }
