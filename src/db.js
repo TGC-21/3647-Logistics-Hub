@@ -40,7 +40,7 @@ export async function deleteCategory(id) {
 
 // ── Components (internal config — not shown directly in UI) ──
 
-async function fetchComponents() {
+export async function fetchComponents() {
   const { data, error } = await supabase
     .from('components')
     .select('*')
