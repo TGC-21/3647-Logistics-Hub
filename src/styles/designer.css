@@ -617,20 +617,11 @@
 }
 .inv-link-linked-badge:hover { background: var(--color-accent-mid); }
 
-.inv-unbacked-warning {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-warning);
-  background: var(--color-warning-light);
-  padding: 3px 8px;
-  border-radius: 8px;
-  margin-top: 4px;
-  margin-left: 4px;
+.qty-collected-readout {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
-.inv-unbacked-warning i { font-size: 11px; }
 
 .inv-linked-detail {
   margin-top: 6px;

@@ -56,11 +56,11 @@ const PART_NAME_DICTIONARY = {
   nut:     ['Fasteners', 'Hardware'],
   washer:  ['Fasteners', 'Hardware'],
   rivet:   ['Fasteners', 'Hardware'],
-  gear:    ['Gears', 'Drivetrain'],
-  sprocket:['Sprocket', 'Drivetrain'],
-  pulley:  ['Drivetrain'],
-  belt:    ['Drivetrain'],
-  chain:   ['Drivetrain'],
+  gear:    ['Gears'],
+  sprocket:['Sprocket'],
+  pulley:  ['Pulley'],
+  belt:    ['Belt'],
+  chain:   ['Chain'],
   bearing: ['Bearings', 'Hardware'],
   motor:   ['Motors', 'Electronics'],
   servo:   ['Motors', 'Electronics'],
@@ -95,20 +95,11 @@ function partsProgress(parts) {
 }
 
 function computePartStatus(p) {
-  if (p.quantityCollected >= p.quantityNeeded) return 'complete'
-  if (p.quantityCollected > 0) return 'partial'
+  const linked = (p.linkedInstanceIds || []).length
+  if (linked >= p.quantityNeeded) return 'complete'
+  if (linked > 0) return 'partial'
   return 'pending'
 }
-
-/** True when the part has fewer linked inventory instances than its
- *  quantityCollected implies — i.e. someone incremented the qty stepper
- *  manually beyond what's actually backed by inventory. Purely informational;
- *  doesn't block anything. */
-function hasUnbackedQuantity(p) {
-  const linked = (p.linkedInstanceIds || []).length
-  return linked > 0 && linked < p.quantityCollected
-}
-
 
 function statusLabel(s) {
   if (s === 'complete') return '<span class="asm-badge asm-badge--complete"><i class="ti ti-check"></i> Complete</span>'
@@ -616,8 +607,6 @@ async function renderChildDetail() {
   const tbody = document.getElementById('child-parts-tbody')
   if (tbody) {
     tbody.addEventListener('click', async e => {
-      const incBtn = e.target.closest('[data-qty-inc]')
-      const decBtn = e.target.closest('[data-qty-dec]')
       const linkBtn = e.target.closest('[data-part-link]')
       const viewLinkedBtn = e.target.closest('[data-view-linked]')
       const delBtn = e.target.closest('[data-child-part-del]')
@@ -625,20 +614,6 @@ async function renderChildDetail() {
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
-
-      if (!incBtn && !decBtn) return
-      const partId = (incBtn || decBtn).dataset.qtyInc || (incBtn || decBtn).dataset.qtyDec
-      const delta  = incBtn ? +1 : -1
-      const part   = currentChildParts.find(p => p.id === partId)
-      if (!part) return
-      const newQty    = Math.max(0, Math.min(part.quantityNeeded, part.quantityCollected + delta))
-      const newStatus = newQty >= part.quantityNeeded ? 'complete' : newQty > 0 ? 'partial' : 'pending'
-      try {
-        const updated = await upsertAssemblyPart({ ...part, quantityCollected: newQty, status: newStatus })
-        const idx = currentChildParts.findIndex(p => p.id === partId)
-        if (idx > -1) currentChildParts[idx] = updated
-        renderChildDetail()
-      } catch (e) { toastFn('Error updating quantity') }
     })
   }
 }
@@ -658,31 +633,20 @@ function childPartRowHTML(p) {
        </button>`
     : ''
 
-  const unbackedWarning = hasUnbackedQuantity(p)
-    ? `<div class="inv-unbacked-warning" title="Collected quantity exceeds linked inventory items">
-        <i class="ti ti-alert-triangle" aria-hidden="true"></i> ${p.quantityCollected - linkedCount} unbacked
-       </div>`
-    : ''
-
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name">${p.partName}</div>
       ${linkedBadge}
-      ${unbackedWarning}
       <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
     <td style="text-align:center">
-      <div class="qty-stepper">
-        <button class="qty-btn" data-qty-dec="${p.id}" ${p.quantityCollected <= 0 ? 'disabled' : ''}>−</button>
-        <span class="qty-val">${p.quantityCollected}</span>
-        <button class="qty-btn" data-qty-inc="${p.id}" ${p.quantityCollected >= p.quantityNeeded ? 'disabled' : ''}>+</button>
-      </div>
+      <span class = "qty-collected-readout">${linkedCount} / ${p.quantityNeeded}</span>
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory"><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedCount >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
   </tr>`
@@ -702,33 +666,22 @@ function partRowHTML(p) {
         <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
        </button>`
     : ''
-  const unbackedWarning = hasUnbackedQuantity(p)
-    ? `<div class="inv-unbacked-warning" title="Collected quantity exceeds linked inventory items">
-        <i class="ti ti-alert-triangle" aria-hidden="true"></i> ${p.quantityCollected - linkedCount} unbacked
-       </div>`
-    : ''
-
 
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name">${p.partName}</div>
       ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
       ${linkedBadge}
-      ${unbackedWarning}
       <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
     <td style="text-align:center">
-      <div class="qty-stepper">
-        <button class="qty-btn" data-qty-dec="${p.id}" ${p.quantityCollected <= 0 ? 'disabled' : ''}>−</button>
-        <span class="qty-val">${p.quantityCollected}</span>
-        <button class="qty-btn" data-qty-inc="${p.id}" ${p.quantityCollected >= p.quantityNeeded ? 'disabled' : ''}>+</button>
-      </div>
+      <span class="qty-collected-readout">${linkedCount} / ${p.quantityNeeded}</span>
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory"><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedCount >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
@@ -740,11 +693,6 @@ function bindPartRowEvents() {
   if (!tbody) return
 
   tbody.addEventListener('click', async e => {
-    const incBtn = e.target.closest('[data-qty-inc]')
-    if (incBtn) { await adjustQty(incBtn.dataset.qtyInc, +1); return }
-
-    const decBtn = e.target.closest('[data-qty-dec]')
-    if (decBtn) { await adjustQty(decBtn.dataset.qtyDec, -1); return }
 
     const linkBtn = e.target.closest('[data-part-link]')
     if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, false); return }
@@ -758,20 +706,6 @@ function bindPartRowEvents() {
     const delBtn = e.target.closest('[data-part-del]')
     if (delBtn) { await deletePart(delBtn.dataset.partDel); return }
   })
-}
-
-async function adjustQty(partId, delta) {
-  const part = currentParts.find(p => p.id === partId)
-  if (!part) return
-  const newQty = Math.max(0, Math.min(part.quantityNeeded, part.quantityCollected + delta))
-  const newStatus = newQty >= part.quantityNeeded ? 'complete' : newQty > 0 ? 'partial' : 'pending'
-  try {
-    const updated = await upsertAssemblyPart({ ...part, quantityCollected: newQty, status: newStatus })
-    const idx = currentParts.findIndex(p => p.id === partId)
-    if (idx > -1) currentParts[idx] = updated
-    await syncAssemblyStatus()
-    renderAssemblyDetail()
-  } catch (e) { toastFn('Error updating quantity') }
 }
 
 async function syncAssemblyStatus() {
@@ -962,10 +896,12 @@ async function savePart() {
     partName,
     partNumber:        document.getElementById('part-field-number').value.trim(),
     quantityNeeded:    parseInt(document.getElementById('part-field-qty').value, 10) || 1,
-    quantityCollected: existing?.quantityCollected ?? 0,
+    quantityCollected: existing?.linkedInstanceIds?.length ?? 0,
     notes:             document.getElementById('part-field-notes').value.trim(),
     source:            existing?.source || 'manual',
     onshapeReference:  existing?.onshapeReference || null,
+    linkedInstanceIds: existing?.linkedInstanceIds || [],
+    componentId:       existing?.componentId || null,
   }
   payload.status = computePartStatus(payload)
 
@@ -1316,6 +1252,17 @@ function renderInventoryLinkResults() {
   const part = currentInvLinkPart()
   const linkedIds = new Set(part?.linkedInstanceIds || [])
 
+  const atCap = part ? (part.linkedInstanceIds || []).length >= part.quantityNeeded : false
+
+  if (atCap) {
+    el.innerHTML = `<div class="onshape-state" style="padding:24px 0">
+      <i class="ti ti-circle-check" aria-hidden="true"></i>
+      <div class="onshape-state-title">Quantity needed is met</div>
+      <div class="onshape-state-sub">${part.quantityNeeded} of ${part.quantityNeeded} linked. Unlink an item first if you need to swap it.</div>
+    </div>`
+    return
+  }
+
   if (!invLinkResults.length) {
     el.innerHTML = `<div class="onshape-state">
       <i class="ti ti-package-off" aria-hidden="true"></i>
@@ -1361,6 +1308,14 @@ async function linkInstanceToPart(instanceId, componentName, componentId) {
   const part = currentInvLinkPart()
   if (!part) return
 
+    // Enforce the cap: never let linked count exceed quantityNeeded.
+  const currentLinked = part.linkedInstanceIds || []
+  if (currentLinked.length >= part.quantityNeeded) {
+    toastFn(`Already have ${part.quantityNeeded} linked — quantity needed is met.`)
+    return
+  }
+
+
   const assemblyName = invLinkIsChildPart
     ? (document.getElementById('content-title')?.textContent || 'Assembly')
     : (assemblyById(currentAssemblyId)?.name || 'Assembly')
@@ -1368,11 +1323,12 @@ async function linkInstanceToPart(instanceId, componentName, componentId) {
   try {
     await reserveInstance(instanceId, assemblyName)
 
+    const newLinkedIds = [...currentLinked, instanceId]
     const updatedPart = {
       ...part,
       componentId:       part.componentId || componentId,
-      linkedInstanceIds: [...(part.linkedInstanceIds || []), instanceId],
-      quantityCollected: Math.min(part.quantityNeeded, part.quantityCollected + 1),
+      linkedInstanceIds: newLinkedIds,
+      quantityCollected: newLinkedIds.length,
     }
     updatedPart.status = computePartStatus(updatedPart)
 
@@ -1390,7 +1346,9 @@ async function linkInstanceToPart(instanceId, componentName, componentId) {
     }
 
     toastFn(`Linked ${componentName} to "${part.partName}"`)
-    loadAndSearchInventory(invLinkQuery)  // refresh available counts
+    document.getElementById('inv-link-subtitle').textContent =
+      `For: ${saved.partName} (${newLinkedIds.length}/${saved.quantityNeeded} linked)`
+    loadAndSearchInventory(invLinkQuery)  // refresh available counts + button states
   } catch (e) {
     console.error(e)
     toastFn('Error linking inventory item')
@@ -1414,7 +1372,7 @@ async function unlinkInstanceFromPart(partId, instanceId, isChildPart) {
       ...part,
       linkedInstanceIds: remaining,
       componentId:       remaining.length ? part.componentId : null,
-      quantityCollected: Math.max(0, part.quantityCollected - 1),
+      quantityCollected: remaining.length,
     }
     updatedPart.status = computePartStatus(updatedPart)
 
