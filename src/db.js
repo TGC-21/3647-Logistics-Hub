@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-
+import { buildComponentSignature } from './componentMatch'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
@@ -38,50 +38,90 @@ export async function deleteCategory(id) {
   if (error) throw error
 }
 
-// ── Components ───────────────────────────────────────────────
+// ── Components (internal config — not shown directly in UI) ──
 
-// ── Components ───────────────────────────────────────────────
-// NOTE: quantity/location no longer live here — they're derived from
-// inventory_instances (fetchInventoryInstances / fetchInstanceCounts).
-
-export async function fetchComponents() {
+async function fetchComponents() {
   const { data, error } = await supabase
     .from('components')
     .select('*')
-    .order('created_at', { ascending: false })
   if (error) throw error
-  return data.map(dbItemToLocal)
+  return data.map(dbComponentToLocal)
 }
 
-export async function upsertComponent(item) {
+async function fetchComponentById(id) {
+  const { data, error } = await supabase.from('components').select('*').eq('id', id).single()
+  if (error) throw error
+  return dbComponentToLocal(data)
+}
+
+/** Manual edit of a component's fallback display info ("component view"). */
+export async function updateComponentFallback(componentId, { name, description, image }) {
   const { data, error } = await supabase
     .from('components')
-    .upsert(localItemToDb(item))
+    .update({
+      fallback_name:        name ?? '',
+      fallback_description: description ?? '',
+      fallback_image_url:   image ?? null,
+    })
+    .eq('id', componentId)
     .select()
     .single()
   if (error) throw error
-  return dbItemToLocal(data)
+  return dbComponentToLocal(data)
 }
 
-export async function deleteComponent(id) {
-  const { error } = await supabase.from('components').delete().eq('id', id)
-  if (error) throw error
-}
+/**
+ * Finds an existing component matching (categoryId, attrs) per the
+ * category's requiredKeyConfig typing rules, or creates a new one.
+ * `fallback` seeds fallback_name/description/image ONLY on create.
+ * `attrs` must be { key: value } — convert from the {key,value} array
+ * shape (e.g. via Object.fromEntries) before calling.
+*/
 
-// ── Inventory Instances ──────────────────────────────────────
-// One row = one physical item of a given component. Location + status
-// live here so a component "type" can have items scattered across bins,
-// assemblies, or in-use locations simultaneously.
+export async function findOrCreateComponent({ categoryId, fields, attrs, fallback, genId }) {
+  const signature = buildComponentSignature(categoryId, fields, attrs)
 
-export async function fetchInventoryInstances(componentId) {
-  const { data, error } = await supabase
-    .from('inventory_instances')
+  const { data: candidates, error } = await supabase
+    .from('components')
     .select('*')
-    .eq('component_id', componentId)
-    .order('created_at', { ascending: true })
+    .eq('category_id', categoryId)
   if (error) throw error
-  return data.map(dbInstanceToLocal)
+
+  const match = (candidates ?? []).find(c =>
+    buildComponentSignature(categoryId, fields, attrsArrayToMap(attrsFromDb(c.attributes))) === signature
+  )
+  if (match) return dbComponentToLocal(match)
+
+  const { data, error: insErr } = await supabase
+    .from('components')
+    .insert({
+      id:                   genId(),
+      category_id:          categoryId,
+      attributes:           attrsToDb(attrs),
+      fallback_name:        fallback?.name ?? '',
+      fallback_description: fallback?.description ?? '',
+      fallback_image_url:   fallback?.image ?? null,
+    })
+    .select()
+    .single()
+  if (insErr) throw insErr
+  return dbComponentToLocal(data)
 }
+
+/** Deletes a component IF it has zero remaining instances. Call after
+ *  removing/re-parenting an instance away from it. */
+export async function deleteComponentIfOrphaned(componentId) {
+  const { count, error: countErr } = await supabase
+    .from('inventory_instances')
+    .select('id', { count: 'exact', head: true })
+    .eq('component_id', componentId)
+  if (countErr) throw countErr
+  if (count > 0) return false
+  const { error } = await supabase.from('components').delete().eq('id', componentId)
+  if (error) throw error
+  return true
+}
+
 
 /** Only instances free to be linked to an assembly. */
 export async function fetchAvailableInstances(componentId) {
@@ -94,6 +134,57 @@ export async function fetchAvailableInstances(componentId) {
   if (error) throw error
   return data.map(dbInstanceToLocal)
 }
+
+// ── Inventory instances (what the UI treats as "the component") ──
+// One row = one physical pile of a component, in one location. Carries
+// its own optional name/description/image overrides plus the reservation
+// state used when an assembly part claims it (status/linked location).
+
+/** All instances, joined with their component's category/attributes/
+ *  fallback display info — this is what the Inventory grid renders. */
+export async function fetchInventoryInstances() {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+
+  const componentIds = [...new Set(data.map(r => r.component_id))]
+  const { data: comps, error: compErr } = await supabase
+    .from('components')
+    .select('*')
+    .in('id', componentIds.length ? componentIds : ['__none__'])
+  if (compErr) throw compErr
+  const compById = Object.fromEntries((comps ?? []).map(c => [c.id, dbComponentToLocal(c)]))
+
+  return data.map(row => dbInstanceToLocal(row, compById[row.component_id]))
+}
+
+/** All instances belonging to ONE component — used by the Designer's
+ *  "link inventory to this assembly part" picker. */
+export async function fetchInstancesForComponent(componentId) {
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('*')
+    .eq('component_id', componentId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  const component = await fetchComponentById(componentId)
+  return data.map(row => dbInstanceToLocal(row, component))
+}
+
+/** Only instances free to be linked to an assembly. */
+ export async function fetchAvailableInstances(componentId) {
+   const { data, error } = await supabase
+     .from('inventory_instances')
+     .select('*')
+     .eq('component_id', componentId)
+     .eq('status', 'available')
+     .order('created_at', { ascending: true })
+   if (error) throw error
+  const component = await fetchComponentById(componentId)
+  return data.map(row => dbInstanceToLocal(row, component))
+ }
 
 /** Aggregate counts per component — used to show "qty on hand" without
  *  pulling every instance row (e.g. for the inventory grid cards). */
@@ -119,7 +210,7 @@ export async function upsertInventoryInstance(instance) {
     .select()
     .single()
   if (error) throw error
-  return dbInstanceToLocal(data)
+  return dbInstanceToLocal(data, instance.component)
 }
 
 export async function deleteInventoryInstance(id) {
@@ -167,27 +258,6 @@ export async function releaseInstances(instanceIds) {
     .update({ status: 'available', location: '' })
     .in('id', instanceIds)
   if (error) throw error
-}
-
-
-function dbInstanceToLocal(row) {
-  return {
-    id:          row.id,
-    componentId: row.component_id,
-    location:    row.location ?? '',
-    status:      row.status ?? 'available',
-    notes:       row.notes ?? '',
-    createdAt:   row.created_at,
-  }
-}
-function localInstanceToDb(inst) {
-  return {
-    id:           inst.id,
-    component_id: inst.componentId,
-    location:     inst.location ?? '',
-    status:       inst.status ?? 'available',
-    notes:        inst.notes ?? '',
-  }
 }
 
 // ── Image storage ─────────────────────────────────────────────
@@ -509,10 +579,10 @@ export function formatAttribute(value, config) {
 
 function dbCatToLocal(row) {
   const cat = {
-    id:                 row.id,
-    name:               row.name,
-    requiredKeys:       row.required_keys ?? [],
-    requiredKeysConfig: row.required_keys_config ?? [],
+    id: row.id,
+    name: row.name,
+    requiredKeys: row.required_keys ?? [],
+    requiredFields: row.required_fields ?? [],   // [{ key, type, options? }]
   }
   return migrateRequiredKeysIfNeeded(cat)
 }
@@ -525,30 +595,71 @@ function localCatToDb(cat) {
     name:                  cat.name,
     required_keys:         requiredKeys,
     required_keys_config:  cat.requiredKeysConfig ?? [],
+    required_fields: cat.requiredFields ?? [],
   }
 }
 
-function dbItemToLocal(row) {
+function attrsFromDb(jsonb) {
+    // stored as [{ key, value }] in the DB, kept as an array on the local
+  // component object since the instance-edit UI does .find(a => a.key===…).
+  return jsonb ?? []
+}
+/** Converts the array shape above into { key: value } for signature
+ *  matching (findOrCreateComponent expects a plain map). */
+function attrsArrayToMap(attrsArray) {
+  return (attrsArray ?? []).reduce((m, a) => { m[a.key] = a.value; return m }, {})
+}
+function attrsToDb(attrsObj) {
+  // Accepts either a { key: value } map or an array already in DB shape.
+  if (Array.isArray(attrsObj)) return attrsObj.map(({ key, value }) => ({ key, value }))
+  return Object.entries(attrsObj ?? {}).map(([key, value]) => ({ key, value }))
+}
+
+export { attrsArrayToMap }
+
+function dbComponentToLocal(row) {
   return {
     id:          row.id,
-    name:        row.name,
-    description: row.description ?? '',
     categoryId:  row.category_id ?? null,
-    image:       row.image_url ?? null,
-    tags:        row.tags ?? [],
-    attributes:  row.attributes ?? [],
+    attributes:  attrsFromDb(row.attributes),
+    fallbackName:        row.fallback_name ?? '',
+    fallbackDescription: row.fallback_description ?? '',
+    fallbackImage:       row.fallback_image_url ?? null,
     createdAt:   row.created_at,
   }
 }
-function localItemToDb(item) {
+
+function dbInstanceToLocal(row, component) {
   return {
-    id:          item.id,
-    name:        item.name,
-    description: item.description ?? '',
-    category_id: item.categoryId ?? null,
-    image_url:   item.image ?? null,
-    tags:        item.tags ?? [],
-    attributes:  item.attributes ?? [],
+    id:          row.id,
+    componentId: row.component_id,
+    // Instance-level overrides fall back to the component's config values
+    name:        row.name || component?.fallbackName || '',
+    description: row.description ?? component?.fallbackDescription ?? '',
+    image:       row.image_url ?? component?.fallbackImage ?? null,
+    location:    row.location ?? '',
+    quantity:    row.quantity ?? 1,
+    tags:        row.tags ?? [],
+    status:      row.status ?? 'available',
+    notes:       row.notes ?? '',
+    categoryId:  component?.categoryId ?? null,
+    attributes:  component?.attributes ?? [],
+    createdAt:   row.created_at,
+  }
+}
+
+function localInstanceToDb(inst) {
+  return {
+    id:           inst.id,
+    component_id: inst.componentId,
+    name:         inst.name || null,
+    description:  inst.description || null,
+    image_url:    inst.image || null,
+    location:     inst.location ?? '',
+    quantity:     inst.quantity ?? 1,
+    tags:         inst.tags ?? [],
+    status:       inst.status ?? 'available',
+    notes:        inst.notes ?? '',
   }
 }
 

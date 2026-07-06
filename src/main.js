@@ -1,10 +1,12 @@
 import './style.css'
 import {
-  fetchCategories, fetchComponents,
+  fetchCategories,
   upsertCategory,  deleteCategory,
-  upsertComponent, deleteComponent,
   uploadImage,     deleteImage,
-  validateAttribute, reconcileOrphanedInstances
+  validateAttribute, reconcileOrphanedInstances,
+  fetchInventoryInstances, upsertInventoryInstance, deleteInventoryInstance,
+  findOrCreateComponent, deleteComponentIfOrphaned, updateComponentFallback,
+  attrsArrayToMap,
 } from './db.js'
 import {
   designerBoot,        setToast,
@@ -70,7 +72,7 @@ async function boot() {
   }
 
   try {
-    [categories, items] = await Promise.all([fetchCategories(), fetchComponents()])
+    [categories, items] = await Promise.all([fetchCategories(), fetchInventoryInstances()])
     await designerBoot()
   } catch (e) {
     console.error(e)
@@ -409,6 +411,16 @@ function bindStaticEvents() {
   document.getElementById('btn-cancel-new-cat').addEventListener('click', cancelNewCat)
   document.getElementById('btn-confirm-new-cat').addEventListener('click', confirmNewCat)
   document.getElementById('btn-add-attr').addEventListener('click', () => addAttrRow())
+  document.getElementById('btn-view-component').addEventListener('click', () => {
+    const it = editingId ? items.find(x => x.id === editingId) : null
+    if (!it) { showToast('Save this instance once before editing its component defaults'); return }
+    openComponentView(it.componentId)
+  })
+  document.getElementById('btn-close-component-view').addEventListener('click', () =>
+    document.getElementById('component-view-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-component-view').addEventListener('click', () =>
+    document.getElementById('component-view-overlay').style.display = 'none')
+  document.getElementById('btn-save-component-view').addEventListener('click', saveComponentFallback)
   document.getElementById('btn-save-item').addEventListener('click', saveItem)
 
   // Tags input
@@ -823,10 +835,32 @@ async function saveItem() {
       await deleteImage(id)
     }
 
-    const item = { id, name, description: desc, categoryId: catId, quantity: qty, location: loc,
-                   image: imageUrl, tags: [...editingTags], attributes: attrs }
-    const saved = await upsertComponent(item)
+    const priorComponentId = editingId ? items.find(x => x.id === editingId)?.componentId : null
 
+    // Resolve or fork the (category, attributes) config this instance now
+    // belongs to. On first creation of a config, seed its fallback display
+    // info from this instance — later instances of the same config can
+    // rely on that fallback unless they set their own name/desc/image.
+    const component = await findOrCreateComponent({
+      categoryId: catId,
+      fields:     keysConfig,
+      attrs:      attrsArrayToMap(attrs),
+      fallback:   { name, description: desc, image: imageUrl },
+      genId,
+    })
+
+    const saved = await upsertInventoryInstance({
+      id, componentId: component.id, name, description: desc,
+      image: imageUrl, location: loc, quantity: parseInt(qty, 10) || 0,
+      tags: [...editingTags], component,
+    })
+
+    // If editing re-parented this instance to a different (forked or
+    // pre-existing) component, clean up the old one if now unreferenced.
+    if (priorComponentId && priorComponentId !== component.id) {
+      await deleteComponentIfOrphaned(priorComponentId)
+    }
+   
     if (editingId) {
       const idx = items.findIndex(x => x.id === editingId)
       if (idx > -1) items[idx] = saved
@@ -881,7 +915,8 @@ async function deleteFromDetail() {
   const it = items.find(x => x.id === detailId)
   if (!it || !confirm(`Delete "${it.name}"? This cannot be undone.`)) return
   try {
-    await deleteComponent(detailId)
+    await deleteInventoryInstance(detailId)
+    await deleteComponentIfOrphaned(it.componentId)
     if (it.image) await deleteImage(detailId)
     items = items.filter(x => x.id !== detailId)
     closeDetail(); render(); showToast('Component deleted')
@@ -1072,6 +1107,34 @@ async function deleteCat() {
     categories = categories.filter(c => c.id !== editingCatId)
     closeEditCat(); renderCatModal(); render(); showToast('Category deleted')
   } catch (e) { showToast('Error deleting category') }
+}
+
+// ── Component view (edit shared fallback name/description/image) ──
+let viewingComponentId = null
+
+function openComponentView(componentId) {
+  if (!componentId) return
+  viewingComponentId = componentId
+  const anyInstance = items.find(i => i.componentId === componentId)
+  document.getElementById('component-view-name').value = anyInstance?.name || ''
+  document.getElementById('component-view-desc').value = anyInstance?.description || ''
+  const preview = document.getElementById('component-view-image-preview')
+  preview.src = anyInstance?.image || ''
+  preview.style.display = anyInstance?.image ? 'block' : 'none'
+  document.getElementById('component-view-overlay').style.display = 'flex'
+}
+
+async function saveComponentFallback() {
+  const name  = document.getElementById('component-view-name').value.trim()
+  const desc  = document.getElementById('component-view-desc').value.trim()
+  const image = document.getElementById('component-view-image-preview').src || null
+  try {
+    await updateComponentFallback(viewingComponentId, { name, description: desc, image })
+    items = await fetchInventoryInstances()
+    document.getElementById('component-view-overlay').style.display = 'none'
+    render()
+    showToast('Component defaults updated')
+  } catch (e) { showToast('Error updating component defaults') }
 }
 
 // ── Start ─────────────────────────────────────────────────────

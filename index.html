@@ -128,6 +128,9 @@
       <div class="field">
         <label>Category</label>
         <select id="field-cat"></select>
+          <button class="btn btn-sm" id="btn-view-component" type="button" style="align-self:flex-start;margin-top:4px">
+          <i class="ti ti-adjustments" aria-hidden="true"></i> Edit component defaults
+          </button>
         <div class="new-cat-row" id="new-cat-row" style="display:none">
           <input type="text" id="new-cat-input" placeholder="New category name…">
           <button class="btn btn-sm" id="btn-cancel-new-cat">Cancel</button>
@@ -398,6 +401,38 @@
     </div>
     <div class="modal-footer">
       <button class="btn" id="btn-close-inv-link-2">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Component View Modal (edit shared fallback name/description/image) ── -->
+<div class="overlay" id="component-view-overlay" style="display:none">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <div class="modal-title">Component defaults</div>
+      <button class="btn-icon" id="btn-close-component-view"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--color-text-tertiary)">
+        Used as fallback values for any instance of this exact category + characteristics
+        combination that doesn't set its own name/description/image.
+      </p>
+      <div class="field">
+        <label>Fallback name</label>
+        <input type="text" id="component-view-name">
+      </div>
+      <div class="field">
+        <label>Fallback description</label>
+        <textarea id="component-view-desc"></textarea>
+      </div>
+      <div class="field">
+        <label>Fallback image</label>
+        <img id="component-view-image-preview" class="img-preview" style="display:none" alt="Preview">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-cancel-component-view">Cancel</button>
+      <button class="btn btn-primary" id="btn-save-component-view">Save</button>
     </div>
   </div>
 </div>
