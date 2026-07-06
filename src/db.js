@@ -569,7 +569,7 @@ function dbCatToLocal(row) {
     id: row.id,
     name: row.name,
     requiredKeys: row.required_keys ?? [],
-    requiredFields: row.required_fields ?? [],   // [{ key, type, options? }]
+    requiredKeysConfig: row.required_keys_config ?? [],   // [{ key, type, options? }]
   }
   return migrateRequiredKeysIfNeeded(cat)
 }
@@ -582,7 +582,6 @@ function localCatToDb(cat) {
     name:                  cat.name,
     required_keys:         requiredKeys,
     required_keys_config:  cat.requiredKeysConfig ?? [],
-    required_fields: cat.requiredFields ?? [],
   }
 }
 

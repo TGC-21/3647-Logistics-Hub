@@ -13,10 +13,19 @@ create extension if not exists "uuid-ossp";
 --   'preset'   — chosen from `options` (compared by exact option value)
 --   'string'   — free text (compared trimmed + case-insensitive)
 -- Shape: [{ key: 'Thread size', type: 'preset', options: ['M3','M4'] }, ...]
+-- required_keys_config defines the typed characteristics a component in
+-- this category must have. Types:
+--   'quantity' — numeric (compared as a number)
+--   'enum'     — chosen from `options` (compared by exact option value)
+--   'string'   — free text (compared trimmed + case-insensitive)
+-- Shape: [{ key: 'Thread size', type: 'enum', options: ['M3','M4'] }, ...]
+-- required_keys is a flat name list kept in sync with required_keys_config
+-- for any old code/queries that only need the plain characteristic names.
 create table categories (
   id              text primary key,
   name            text not null,
-  required_fields jsonb not null default '[]',
+  required_keys        text[] not null default '{}',
+  required_keys_config jsonb   not null default '[]',
   created_at      timestamptz not null default now()
 );
 
@@ -25,6 +34,7 @@ create table categories (
 -- attribute values. It's found-or-created whenever an inventory instance
 -- is created or edited, keyed by (category_id, attributes) using the
 -- category's required_fields typing rules for comparison. A component is
+-- category's required_keys_config typing rules for comparison. A component is
 -- deleted automatically once its last instance is removed.
 --
 -- fallback_name / fallback_description / fallback_image_url are shown on
@@ -44,7 +54,9 @@ create index idx_components_category on components(category_id);
 -- ── Inventory instances (what users actually see, create, and edit) ──
 -- Each row is one physical pile of a component sitting in one location.
 -- Name/description/image are optional per-instance overrides of the
--- parent component's fallback values.
+-- parent component's fallback values. status/location track whether this
+-- pile is free or has been claimed by an assembly part (see reserveInstance
+-- / unreserveInstance in db.js).
 create table inventory_instances (
   id            text primary key,
   component_id  text not null references components(id) on delete cascade,
@@ -54,6 +66,8 @@ create table inventory_instances (
   location      text not null default '',
   quantity      integer not null default 1,
   tags          text[] not null default '{}',
+  status        text not null default 'available',  -- available | in_assembly
+  notes         text,
   created_at    timestamptz not null default now()
 );
 create index idx_inventory_instances_component on inventory_instances(component_id);
@@ -105,7 +119,10 @@ create index idx_assembly_children_parent_child    on assembly_children(parent_c
 -- ── Assembly parts ────────────────────────────────────────────
 -- A line item an assembly (or subassembly node) needs. Independent of
 -- Inventory stock — tracking "how many have I collected" here is separate
--- from how many physically exist in inventory_instances. Belongs to
+-- from how many physically exist in inventory_instances, EXCEPT when a
+-- part has actually reserved specific inventory: component_id identifies
+-- which component this part draws from, and linked_instance_ids lists the
+-- specific inventory_instances rows currently reserved for it. Belongs to
 -- exactly one owner: a root assembly OR a subassembly node.
 create table assembly_parts (
   id                  text primary key,
@@ -119,6 +136,8 @@ create table assembly_parts (
   source              text not null default 'manual',   -- manual | csv | onshape
   notes               text,
   onshape_reference   jsonb,
+  component_id        text references components(id) on delete set null,
+  linked_instance_ids text[] not null default '{}',
   created_at          timestamptz not null default now(),
   constraint assembly_parts_exactly_one_owner check (
     (assembly_id is not null and assembly_child_id is null) or
@@ -127,6 +146,7 @@ create table assembly_parts (
 );
 create index idx_assembly_parts_assembly       on assembly_parts(assembly_id);
 create index idx_assembly_parts_assembly_child on assembly_parts(assembly_child_id);
+create index idx_assembly_parts_component      on assembly_parts(component_id);
 
 -- ── Storage bucket for component images ──────────────────────
 insert into storage.buckets (id, name, public)
