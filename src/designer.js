@@ -1254,8 +1254,11 @@ function renderInventoryLinkResults() {
   const part = currentInvLinkPart()
   const linkedIds = new Set(part?.linkedInstanceIds || [])
 
-  const atCap = part ? (part.linkedInstanceIds || []).length >= part.quantityNeeded : false
-
+  // quantityCollected already reflects the SUM of linked instance
+  // quantities (see linkInstanceToPart), not a row count — so comparing
+  // it directly against quantityNeeded gives the correct remaining cap.
+  const remainingNeeded = part ? Math.max(0, part.quantityNeeded - (part.quantityCollected || 0)) : 0
+  const atCap = part ? remainingNeeded <= 0 : false
   if (atCap) {
     el.innerHTML = `<div class="onshape-state" style="padding:24px 0">
       <i class="ti ti-circle-check" aria-hidden="true"></i>
@@ -1274,27 +1277,45 @@ function renderInventoryLinkResults() {
     return
   }
 
-  el.innerHTML = invLinkResults.map(({ component, instances }) => `
+  el.innerHTML = invLinkResults.map(({ component, instances }) => {
+    const totalAvailable = instances.reduce((s, i) => s + (i.quantity || 0), 0)
+    return `
     <div class="inv-link-comp-card">
       <div class="inv-link-comp-header">
         <span class="inv-link-comp-name">${component.fallbackName || 'Unnamed component'}</span>
-        <span class="inv-link-comp-count">${instances.length} available</span>
+        <span class="inv-link-comp-count">${totalAvailable} available</span>
       </div>
       ${instances.map(inst => `
         <div class="inv-link-instance-row">
           <span class="inv-link-instance-loc">
-            <i class="ti ti-map-pin" aria-hidden="true"></i> ${inst.name || component.fallbackName || 'Unnamed'} — ${inst.location || 'No location set'}
+            <i class="ti ti-map-pin" aria-hidden="true"></i>
+            ${inst.name || component.fallbackName || 'Unnamed'} — ${inst.location || 'No location set'}
+            <span class="inv-link-instance-pile-qty">(${inst.quantity} here)</span>
           </span>
+          <input
+            type="number"
+            class="inv-link-qty-input"
+            data-qty-for="${inst.id}"
+            min="1"
+            max="${Math.min(inst.quantity, remainingNeeded)}"
+            value="1"
+            style="width:52px"
+          >
           <button class="btn btn-sm btn-primary" data-add-instance="${inst.id}" data-comp-name="${component.fallbackName || 'component'}">
             <i class="ti ti-plus" aria-hidden="true"></i> Add to assembly
           </button>
         </div>
       `).join('')}
     </div>
-  `).join('')
+  `
+  }).join('')
 
   el.querySelectorAll('[data-add-instance]').forEach(btn =>
-    btn.addEventListener('click', () => linkInstanceToPart(btn.dataset.addInstance, btn.dataset.compName, btn.dataset.componentId))
+    btn.addEventListener('click', () => {
+      const qtyInput = el.querySelector(`[data-qty-for="${btn.dataset.addInstance}"]`)
+      const requestedQty = Math.max(1, parseInt(qtyInput?.value, 10) || 1)
+      linkInstanceToPart(btn.dataset.addInstance, btn.dataset.compName, btn.dataset.componentId, requestedQty)
+    })
   )
 
   // Attach component id via closure lookup since dataset can't hold it cleanly per-row
@@ -1306,14 +1327,20 @@ function renderInventoryLinkResults() {
   })
 }
 
-async function linkInstanceToPart(instanceId, componentName, componentId) {
+async function linkInstanceToPart(instanceId, componentName, componentId, requestedQty = 1) {
   const part = currentInvLinkPart()
   if (!part) return
 
-    // Enforce the cap: never let linked count exceed quantityNeeded.
-  const currentLinked = part.linkedInstanceIds || []
-  if (currentLinked.length >= part.quantityNeeded) {
+  // Enforce the cap: never let linked quantity exceed quantityNeeded.
+  const currentLinked   = part.linkedInstanceIds || []
+  const alreadyLinked   = part.quantityCollected || 0
+  const remainingNeeded = part.quantityNeeded - alreadyLinked
+  if (remainingNeeded <= 0) {
     toastFn(`Already have ${part.quantityNeeded} linked — quantity needed is met.`)
+    return
+  }
+  const qty = Math.min(requestedQty, remainingNeeded)
+  if (qty <= 0) {
     return
   }
 
@@ -1323,14 +1350,18 @@ async function linkInstanceToPart(instanceId, componentName, componentId) {
     : (assemblyById(currentAssemblyId)?.name || 'Assembly')
 
   try {
-    await reserveInstance(instanceId, assemblyName)
+    // reserveInstance forks `qty` units off the source pile into a new,
+    // dedicated row and returns THAT row — link the fork's id, not the
+    // source instanceId, since the source may no longer exist if this
+    // reservation emptied it entirely.
+    const fork = await reserveInstance(instanceId, qty, assemblyName)
 
-    const newLinkedIds = [...currentLinked, instanceId]
+    const newLinkedIds = [...currentLinked, fork.id]
     const updatedPart = {
       ...part,
       componentId:       part.componentId || componentId,
       linkedInstanceIds: newLinkedIds,
-      quantityCollected: newLinkedIds.length,
+      quantityCollected: alreadyLinked + qty,
     }
     updatedPart.status = computePartStatus(updatedPart)
 
@@ -1347,13 +1378,19 @@ async function linkInstanceToPart(instanceId, componentName, componentId) {
       renderAssemblyDetail()
     }
 
-    toastFn(`Linked ${componentName} to "${part.partName}"`)
+    toastFn(`Linked ${qty} x ${componentName} to "${part.partName}"`)
     document.getElementById('inv-link-subtitle').textContent =
       `For: ${saved.partName} (${newLinkedIds.length}/${saved.quantityNeeded} linked)`
     loadAndSearchInventory(invLinkQuery)  // refresh available counts + button states
   } catch (e) {
     console.error(e)
-    toastFn('Error linking inventory item')
+    // The RPC throws if the pile has fewer than `qty` available (e.g. a
+    // concurrent reservation beat this one to it) — surface that clearly
+    // rather than a generic error, and refresh so stale quantities clear.
+    toastFn(e.message?.includes('available') ? e.message : 'Error linking inventory item')
+    loadAndSearchInventory(invLinkQuery)
+  } finally {
+
   }
 }
 
@@ -1368,13 +1405,18 @@ async function unlinkInstanceFromPart(partId, instanceId, isChildPart) {
 
   try {
     await unreserveInstance(instanceId, '')
+     // Need the forked row's own quantity to subtract the right amount
+    // from quantityCollected — a single linked instance can represent
+    // more than 1 unit now.
+    const unlinkedRow = await fetchInstancesByIds([instanceId]).then(rows => rows[0])
+    const unlinkedQty  = unlinkedRow?.quantity || 1
 
     const remaining = (part.linkedInstanceIds || []).filter(id => id !== instanceId)
     const updatedPart = {
       ...part,
       linkedInstanceIds: remaining,
       componentId:       remaining.length ? part.componentId : null,
-      quantityCollected: remaining.length,
+      quantityCollected: Math.max(0, (part.quantityCollected || 0) - unlinkedQty),
     }
     updatedPart.status = computePartStatus(updatedPart)
 

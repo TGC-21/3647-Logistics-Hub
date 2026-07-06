@@ -205,23 +205,33 @@ export async function deleteInventoryInstance(id) {
   if (error) throw error
 }
 
-/** Marks an instance as claimed by an assembly part and updates its
- *  location. Does NOT touch assembly_parts — the caller is responsible
- *  for pushing the instance id into that part's linked_instance_ids. */
-export async function reserveInstance(instanceId, location) {
-  const { data, error } = await supabase
-    .from('inventory_instances')
-    .update({ status: 'in_assembly', location })
-    .eq('id', instanceId)
-    .select()
-    .single()
+/**
+ * Forks `quantity` units off an existing inventory instance into a new,
+ * dedicated 'in_assembly' row, via a single atomic RPC call (no read-then-
+ * write race). Does NOT touch assembly_parts — the caller is responsible
+ * for pushing the RETURNED fork's id into that part's linked_instance_ids
+ * (not the original instanceId, which may no longer exist if this
+ * reservation emptied it).
+ *
+ * Throws if `quantity` exceeds what's currently available on that row.
+ */
+export async function reserveInstance(instanceId, quantity, location) {
+  const { data, error } = await supabase.rpc('reserve_inventory_units', {
+    p_instance_id: instanceId,
+    p_quantity:    quantity,
+    p_location:    location,
+  })
   if (error) throw error
   return dbInstanceToLocal(data)
 }
 
 /** Reverses reserveInstance — instance goes back to available. Location
  *  is left as-is by default (caller can pass a resetLocation to clear it,
- *  e.g. back to its original bin). */
+ *  e.g. back to its original bin). Operates on the specific forked row —
+ *  it is NOT merged back into the pile it was split from. Repeated
+ *  link/unlink cycles will fragment inventory into several quantity-1 (or
+ *  quantity-N) rows over time; merging instances back together is a
+ *  separate, not-yet-built feature. */
 export async function unreserveInstance(instanceId, resetLocation = null) {
   const patch = { status: 'available' }
   if (resetLocation !== null) patch.location = resetLocation

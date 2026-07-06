@@ -148,6 +148,63 @@ create index idx_assembly_parts_assembly       on assembly_parts(assembly_id);
 create index idx_assembly_parts_assembly_child on assembly_parts(assembly_child_id);
 create index idx_assembly_parts_component      on assembly_parts(component_id);
 
+-- ── Reservation: fork N units off an inventory instance ──────
+-- Atomically splits `requested_qty` units off an existing inventory
+-- instance into a brand-new row marked 'in_assembly', so a pile can be
+-- partially reserved without a read-then-write race. Locks the source
+-- row for the duration of the transaction (`for update`), so two
+-- concurrent reservations against the same pile can't both succeed off
+-- a stale read.
+--
+-- Behavior:
+--   • Fails with an exception if fewer than requested_qty are available
+--     (no silent partial reservation).
+--   • If the reservation exactly empties the source pile, the source row
+--     is deleted — no ghost 0-quantity instances left behind. This is
+--     purely "don't leave an empty row"; it says nothing about whether
+--     the component itself is orphaned, since the newly-created fork
+--     below is itself a live instance of that same component.
+--   • Returns the newly-created forked row.
+create or replace function reserve_inventory_units(
+  p_instance_id   text,
+  p_quantity      integer,
+  p_location      text
+) returns inventory_instances
+language plpgsql
+as $$
+declare
+  src        inventory_instances;
+  new_row    inventory_instances;
+begin
+  select * into src from inventory_instances where id = p_instance_id for update;
+
+  if src is null then
+    raise exception 'Inventory instance % not found', p_instance_id;
+  end if;
+
+  if src.quantity < p_quantity then
+    raise exception 'Only % available, % requested', src.quantity, p_quantity;
+  end if;
+
+  if src.quantity = p_quantity then
+    delete from inventory_instances where id = p_instance_id;
+  else
+    update inventory_instances set quantity = quantity - p_quantity where id = p_instance_id;
+  end if;
+
+  insert into inventory_instances (
+    id, component_id, name, description, image_url, location, quantity, tags, status, notes
+  ) values (
+    src.id || '-fork-' || substr(md5(random()::text), 1, 8),
+    src.component_id, src.name, src.description, src.image_url,
+    p_location, p_quantity, src.tags, 'in_assembly', src.notes
+  )
+  returning * into new_row;
+
+  return new_row;
+end;
+$$;
+
 -- ── Storage bucket for component images ──────────────────────
 insert into storage.buckets (id, name, public)
 values ('component-images', 'component-images', true)
