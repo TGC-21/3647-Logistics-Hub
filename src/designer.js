@@ -1216,10 +1216,12 @@ async function loadAndSearchInventory(query) {
     }
 
     const q = query.trim().toLowerCase()
+    // Components no longer carry `name`/`tags` directly — those live on
+    // inventory_instances now. Match against the component's fallback
+    // name, which is the closest thing a component has to a display name.
     const matches = q
       ? invLinkAllComponents.filter(c =>
-          c.name.toLowerCase().includes(q) ||
-          (c.tags || []).some(t => t.toLowerCase().includes(q)))
+        (c.fallbackName || '').toLowerCase().includes(q))
       : invLinkAllComponents
 
     // Fetch available instances per matching component in parallel
@@ -1275,15 +1277,15 @@ function renderInventoryLinkResults() {
   el.innerHTML = invLinkResults.map(({ component, instances }) => `
     <div class="inv-link-comp-card">
       <div class="inv-link-comp-header">
-        <span class="inv-link-comp-name">${component.name}</span>
+        <span class="inv-link-comp-name">${component.fallbackName || 'Unnamed component'}</span>
         <span class="inv-link-comp-count">${instances.length} available</span>
       </div>
       ${instances.map(inst => `
         <div class="inv-link-instance-row">
           <span class="inv-link-instance-loc">
-            <i class="ti ti-map-pin" aria-hidden="true"></i> ${inst.location || 'No location set'}
+            <i class="ti ti-map-pin" aria-hidden="true"></i> ${inst.name || component.fallbackName || 'Unnamed'} — ${inst.location || 'No location set'}
           </span>
-          <button class="btn btn-sm btn-primary" data-add-instance="${inst.id}" data-comp-name="${component.name}">
+          <button class="btn btn-sm btn-primary" data-add-instance="${inst.id}" data-comp-name="${component.fallbackName || 'component'}">
             <i class="ti ti-plus" aria-hidden="true"></i> Add to assembly
           </button>
         </div>
