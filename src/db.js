@@ -122,19 +122,6 @@ export async function deleteComponentIfOrphaned(componentId) {
   return true
 }
 
-
-/** Only instances free to be linked to an assembly. */
-export async function fetchAvailableInstances(componentId) {
-  const { data, error } = await supabase
-    .from('inventory_instances')
-    .select('*')
-    .eq('component_id', componentId)
-    .eq('status', 'available')
-    .order('created_at', { ascending: true })
-  if (error) throw error
-  return data.map(dbInstanceToLocal)
-}
-
 // ── Inventory instances (what the UI treats as "the component") ──
 // One row = one physical pile of a component, in one location. Carries
 // its own optional name/description/image overrides plus the reservation
