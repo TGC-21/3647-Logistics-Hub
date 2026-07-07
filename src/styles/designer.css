@@ -192,6 +192,28 @@
 .parts-table tbody tr:last-child td { border-bottom: none; }
 .parts-table tbody tr:hover td { background: var(--color-background-secondary); }
 
+/* ── Part name cell with link inventory button ──────────────── */
+.part-name-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  justify-content: space-between;
+}
+.part-name-cell > div { flex: 1; min-width: 0; }
+.btn-link-inventory {
+  color: var(--color-accent);
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  padding: 4px;
+  transition: background 0.1s, color 0.1s;
+}
+.btn-link-inventory:hover {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+
 .part-name    { font-weight: 500; font-size: 13px; }
 .part-notes   { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
 .part-number  { font-size: 11px; color: var(--color-text-tertiary); font-family: 'SF Mono', 'Menlo', monospace; background: var(--color-background-secondary); padding: 1px 5px; border-radius: 4px; }
