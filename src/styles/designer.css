@@ -192,6 +192,7 @@
 .parts-table tbody tr:last-child td { border-bottom: none; }
 .parts-table tbody tr:hover td { background: var(--color-background-secondary); }
 
+
 /* ── Part name cell with link inventory button ──────────────── */
 .part-name-cell {
   display: flex;
@@ -212,7 +213,6 @@
   background: var(--color-accent-light);
   color: var(--color-accent);
 }
-
 
 .part-name    { font-weight: 500; font-size: 13px; }
 .part-notes   { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }

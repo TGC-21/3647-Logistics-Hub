@@ -638,7 +638,16 @@ function childPartRowHTML(p) {
 
   return `<tr data-part-id="${p.id}">
     <td>
-      <div class="part-name">${p.partName}</div>
+      <div class="part-name-cell">
+        <div>
+          <div class="part-name">${p.partName}</div>
+        </div>
+        <button class="btn-icon btn-link-inventory" data-part-link="${p.id}" aria-label="Link to inventory" title="Link to inventory component">
+          <i class="ti ti-link" style="font-size:14px"></i>
+        </button>
+      </div>
+    </td>
+    <td>
       ${linkedBadge}
       <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
@@ -682,6 +691,8 @@ function partRowHTML(p) {
           <i class="ti ti-link" style="font-size:14px"></i>
         </button>
       </div>
+    </td>
+    <td>
       ${linkedBadge}
       <div class="inv-linked-detail" id="linked-detail-${p.id}" style="display:none"></div>
     </td>
