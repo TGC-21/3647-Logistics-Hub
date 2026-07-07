@@ -95,9 +95,11 @@ function partsProgress(parts) {
 }
 
 function computePartStatus(p) {
-  const linked = (p.linkedInstanceIds || []).length
-  if (linked >= p.quantityNeeded) return 'complete'
-  if (linked > 0) return 'partial'
+  // quantityCollected is the SUM of linked instance quantities, not a row
+  // count — one forked instance can represent more than 1 unit.
+  const collected = p.quantityCollected || 0
+  if (collected >= p.quantityNeeded) return 'complete'
+  if (collected > 0) return 'partial'
   return 'pending'
 }
 
@@ -626,10 +628,11 @@ function childPartRowHTML(p) {
     pending:  '<span class="part-badge part-badge--pending">Pending</span>',
   }[status]
 
-  const linkedCount = (p.linkedInstanceIds || []).length
-  const linkedBadge = linkedCount
+  const collectedQty = p.quantityCollected || 0
+  const linkedPiles   = (p.linkedInstanceIds || []).length
+  const linkedBadge = linkedPiles
     ? `<button class="inv-link-linked-badge" data-view-linked="${p.id}" type="button">
-        <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
+        <i class="ti ti-link" aria-hidden="true"></i> ${linkedPiles} linked
        </button>`
     : ''
 
@@ -642,11 +645,11 @@ function childPartRowHTML(p) {
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
     <td style="text-align:center">
-      <span class = "qty-collected-readout">${linkedCount} / ${p.quantityNeeded}</span>
+      <span class="qty-collected-readout">${collectedQty} / ${p.quantityNeeded}</span>
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedCount >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${collectedQty >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
   </tr>`
@@ -660,10 +663,11 @@ function partRowHTML(p) {
     pending:  '<span class="part-badge part-badge--pending">Pending</span>',
   }[status]
 
-  const linkedCount = (p.linkedInstanceIds || []).length
-  const linkedBadge = linkedCount
+  const collectedQty = p.quantityCollected || 0
+  const linkedPiles   = (p.linkedInstanceIds || []).length
+  const linkedBadge = linkedPiles
     ? `<button class="inv-link-linked-badge" data-view-linked="${p.id}" type="button">
-        <i class="ti ti-link" aria-hidden="true"></i> ${linkedCount} linked
+        <i class="ti ti-link" aria-hidden="true"></i> ${linkedPiles} linked
        </button>`
     : ''
 
@@ -896,8 +900,9 @@ async function savePart() {
     partName,
     partNumber:        document.getElementById('part-field-number').value.trim(),
     quantityNeeded:    parseInt(document.getElementById('part-field-qty').value, 10) || 1,
-    quantityCollected: existing?.linkedInstanceIds?.length ?? 0,
-    notes:             document.getElementById('part-field-notes').value.trim(),
+    // Preserve the real collected amount — it's a sum of linked instance
+    // quantities, not something to recompute from row count on every edit.
+    quantityCollected: existing?.quantityCollected ?? 0,    notes:             document.getElementById('part-field-notes').value.trim(),
     source:            existing?.source || 'manual',
     onshapeReference:  existing?.onshapeReference || null,
     linkedInstanceIds: existing?.linkedInstanceIds || [],
@@ -1380,7 +1385,7 @@ async function linkInstanceToPart(instanceId, componentName, componentId, reques
 
     toastFn(`Linked ${qty} x ${componentName} to "${part.partName}"`)
     document.getElementById('inv-link-subtitle').textContent =
-      `For: ${saved.partName} (${newLinkedIds.length}/${saved.quantityNeeded} linked)`
+      `For: ${saved.partName} (${saved.quantityCollected}/${saved.quantityNeeded} linked)`
     loadAndSearchInventory(invLinkQuery)  // refresh available counts + button states
   } catch (e) {
     console.error(e)
