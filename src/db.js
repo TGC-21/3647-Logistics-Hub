@@ -48,6 +48,59 @@ export async function fetchComponents() {
   return data.map(dbComponentToLocal)
 }
 
+/**
+ * All components, each carrying its category's name + requiredKeysConfig
+ * inline — built for the Send-to-Fabricate "establish component" search
+ * step, which needs to render/filter by category and attributes without
+ * a second round-trip per row. Unlike fetchInventoryInstances' component
+ * join, this returns EVERY component regardless of whether it currently
+ * has any inventory_instances — fabrication needs to match/create a
+ * component before any physical stock exists.
+ */
+export async function fetchComponentsForFabricatePicker() {
+  const [{ data: comps, error: compErr }, { data: cats, error: catErr }] = await Promise.all([
+    supabase.from('components').select('*'),
+    supabase.from('categories').select('*'),
+  ])
+  if (compErr) throw compErr
+  if (catErr) throw catErr
+
+  const catById = Object.fromEntries((cats ?? []).map(c => [c.id, dbCatToLocal(c)]))
+
+  return (comps ?? []).map(row => {
+    const component = dbComponentToLocal(row)
+    const category   = catById[component.categoryId] || null
+    return { ...component, categoryName: category?.name || 'Uncategorized', category }
+  })
+}
+
+/**
+ * Per-component instance counts restricted to a specific set of ids —
+ * thin wrapper around the same query fetchInstanceCounts runs, but
+ * scoped so the Designer parts table can cheaply ask "does part X's
+ * linked component actually have any stock?" without pulling counts
+ * for the entire catalog on every render.
+ */
+export async function fetchInstanceCountsForComponents(componentIds) {
+  const ids = [...new Set((componentIds ?? []).filter(Boolean))]
+  if (!ids.length) return {}
+
+  const { data, error } = await supabase
+    .from('inventory_instances')
+    .select('component_id, status')
+    .in('component_id', ids)
+  if (error) throw error
+
+  const counts = {}
+  for (const id of ids) counts[id] = { total: 0, available: 0 }
+  for (const row of data) {
+    counts[row.component_id].total++
+    if (row.status === 'available') counts[row.component_id].available++
+  }
+  return counts
+}
+
+
 async function fetchComponentById(id) {
   const { data, error } = await supabase.from('components').select('*').eq('id', id).single()
   if (error) throw error
