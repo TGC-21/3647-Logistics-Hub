@@ -296,9 +296,9 @@ function jobRowHTML(job, showBatchAssign) {
     actions.push(`<button class="btn-icon" data-job-archive="${job.id}" aria-label="Archive"><i class="ti ti-archive" style="font-size:13px"></i></button>`)
   }
 
-  const requestedCell = job.status === 'queued'
-    ? `<input type="number" min="1" value="${job.quantityRequested}" data-job-qty="${job.id}" style="width:52px;text-align:center">`
-    : `${job.quantityRequested}`
+  // const requestedCell = job.status === 'queued'
+  //   ? `<input type="number" min="1" value="${job.quantityRequested}" data-job-qty="${job.id}" style="width:52px;text-align:center">`
+  //   : `${job.quantityRequested}`
 
   const progressCell = (job.status === 'committed' || job.status === 'in_progress')
     ? `<div class="job-progress-input">
@@ -310,7 +310,7 @@ function jobRowHTML(job, showBatchAssign) {
   return `<tr data-job-id="${job.id}">
     <td><div class="part-name">${partName}</div></td>
     <td><span class="part-number">${contextLabel(part)}</span></td>
-    <td style="text-align:center">${requestedCell}</td>
+    <td style="text-align:center">${job.quantityRequested}</td>
     <td style="text-align:center">${job.quantityMachined} / ${job.quantityRequested}${progressCell}</td>
     <td>${statusBadge}</td>
     ${showBatchAssign ? `<td>${batchSelectHTML(job)}</td>` : ''}
