@@ -1478,6 +1478,7 @@ function fabShowNewCatRow() {
   document.getElementById('btn-fab-create-component-confirm').innerHTML =
     '<i class="ti ti-check" aria-hidden="true"></i> Save category'
   setTimeout(() => document.getElementById('fab-new-cat-input').focus(), 60)
+}
 
 function fabHideNewCatRow() {
   document.getElementById('fab-new-cat-row').style.display = 'none'
@@ -1489,7 +1490,7 @@ function fabHideNewCatRow() {
     '<i class="ti ti-check" aria-hidden="true"></i> Create component'
   fabNewCatMode = false
 }
-}
+
 
 // Typed required-characteristics editor for a brand-new category — mirrors
 // main.js's renderReqKeysConfig()/addReqKeyConfig() exactly (same CSS
