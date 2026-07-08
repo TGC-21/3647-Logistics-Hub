@@ -2496,6 +2496,7 @@ export function bindDesignerEvents() {
   document.getElementById('inv-link-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeInventoryLinkModal()
   })
+
   let invLinkSearchTimer
   document.getElementById('inv-link-search-input').addEventListener('input', e => {
     invLinkQuery = e.target.value
