@@ -742,7 +742,7 @@ function partRowHTML(p, job = null) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedCount >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedPiles >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
@@ -2433,24 +2433,29 @@ export function bindDesignerEvents() {
   document.getElementById('fab-job-modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeSendToFabricateModal()
   })
+
   document.getElementById('btn-fab-create-new-component').addEventListener('click', () => {
     fabStep = 'create'
     fabSelectedCategoryId = ''
     renderFabModalStep()
   })
+
   document.getElementById('btn-fab-back').addEventListener('click', () => {
     fabStep = 'search'
     renderFabModalStep()
   })
+
   document.getElementById('fab-field-cat').addEventListener('change', e => {
     fabSelectedCategoryId = e.target.value
     fabRefreshRequiredAttrs(fabSelectedCategoryId)
   })
+
   document.getElementById('btn-fab-new-cat').addEventListener('click', fabShowNewCatRow)
   document.getElementById('btn-fab-cancel-new-cat').addEventListener('click', fabHideNewCatRow)
   document.getElementById('fab-new-cat-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); fabConfirmNewCategory() }
   })
+
   document.getElementById('btn-fab-add-req-key-config').addEventListener('click', fabAddReqKeyConfig)
   document.getElementById('btn-fab-create-component-confirm').addEventListener('click', () => {
     fabNewCatMode ? fabConfirmNewCategory() : confirmFabEstablishComponent()
