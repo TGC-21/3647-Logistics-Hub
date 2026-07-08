@@ -24,6 +24,9 @@
       <button class="mode-btn" id="btn-mode-designer">
         <i class="ti ti-tools" aria-hidden="true"></i> Designer
       </button>
+      <button class ="mode-btn" id="btn-mode-fabricate">
+        <i class="ti ti-settings-automation" aria-hidden="true"></i> Fabricate
+      </button>
     </div>
 
     <div class="topbar-search" id="topbar-search-wrap">
@@ -44,6 +47,11 @@
     <div class="topbar-actions" id="designer-actions" style="display:none">
       <button class="btn" id="btn-new-from-onshape"><i class="ti ti-cube" aria-hidden="true"></i><span> New from Onshape</span></button>
       <button class="btn btn-primary" id="btn-new-assembly"><i class="ti ti-plus" aria-hidden="true"></i><span> New assembly</span></button>
+    </div>
+
+    <div class="topbar-actions" id="fabricate-actions" style="display:none">
+      <label class="fab-history-toggle"><input type="checkbox" id="chk-fab-history"> <span>Show archived</span></label>
+      <button class="btn btn-primary" id="btn-new-batch"><i class="ti ti-plus" aria-hidden="true"></i><span> New Batch</span></button>
     </div>
   </div>
 
@@ -104,6 +112,10 @@
     <button class="tab-btn" id="tab-btn-designer" aria-label="Designer">
       <i class="ti ti-tools" aria-hidden="true"></i>
       <span>Designer</span>
+    </button>
+    <button class="tab-btn" id="tab-btn-fabricate" aria-label="Fabricate">
+      <i class="ti ti-settings-automation" aria-hidden="true"></i>
+      <span>Fabricate</span>
     </button>
   </nav>
 
@@ -433,6 +445,102 @@
     <div class="modal-footer">
       <button class="btn" id="btn-cancel-component-view">Cancel</button>
       <button class="btn btn-primary" id="btn-save-component-view">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Send to Fabricate Modal ─────────────────────────────── -->
+<div class="overlay" id="fab-job-modal-overlay" style="display:none">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Send to Fabricate</div>
+        <div style="font-size:12px;color:var(--color-text-tertiary)" id="fab-job-modal-subtitle"></div>
+      </div>
+      <button class="btn-icon" id="btn-close-fab-job-modal"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Quantity to promise</label>
+        <input type="number" id="fab-job-field-qty" min="1" value="1">
+      </div>
+      <p style="font-size:12px;color:var(--color-text-tertiary)">
+        Creates an unclaimed job in Fabricate. Once machined units are logged, they'll
+        automatically become inventory and count toward this part.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-cancel-fab-job">Cancel</button>
+      <button class="btn btn-primary" id="btn-confirm-fab-job">
+        <i class="ti ti-tool" aria-hidden="true"></i> Send to Fabricate
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fabrication Batch Create / Edit Modal ──────────────────── -->
+<div class="overlay" id="batch-modal-overlay" style="display:none">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <div class="modal-title" id="batch-modal-title">New batch</div>
+      <button class="btn-icon" id="btn-close-batch-modal"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Batch name <span class="required-star">*</span></label>
+        <input type="text" id="batch-field-name" placeholder="e.g. Lathe — 7/6 afternoon">
+      </div>
+      <div class="field">
+        <label>Fab method <span class="required-star">*</span></label>
+        <input type="text" id="batch-field-method" list="batch-method-options" placeholder="e.g. Lathe, CNC, Mill">
+        <datalist id="batch-method-options">
+          <option value="Lathe"></option>
+          <option value="CNC"></option>
+          <option value="Mill"></option>
+          <option value="3D Print"></option>
+          <option value="Laser cut"></option>
+          <option value="Waterjet"></option>
+        </datalist>
+      </div>
+      <div class="field">
+        <label>Notes</label>
+        <textarea id="batch-field-notes" placeholder="Setup notes, stock material, etc."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="btn-delete-batch" style="display:none"><i class="ti ti-trash" aria-hidden="true"></i> Delete batch</button>
+      <div style="flex:1"></div>
+      <button class="btn" id="btn-cancel-batch">Cancel</button>
+      <button class="btn btn-primary" id="btn-save-batch">
+        <i class="ti ti-check" aria-hidden="true"></i> Save
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Claim Job Modal ─────────────────────────────────────── -->
+<div class="overlay" id="claim-job-overlay" style="display:none">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <div class="modal-title">Claim job</div>
+      <button class="btn-icon" id="btn-close-claim-job"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--color-text-tertiary)" id="claim-job-subtitle"></p>
+      <div class="field">
+        <label>Your name <span class="required-star">*</span></label>
+        <input type="text" id="claim-job-field-name" placeholder="e.g. Sam">
+        <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
+          Freezes the requested quantity to you — release it later if you can't finish it.
+          (This will become a real sign-in once accounts ship.)
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-cancel-claim-job">Cancel</button>
+      <button class="btn btn-primary" id="btn-confirm-claim-job">
+        <i class="ti ti-hand-stop" aria-hidden="true"></i> Claim
+      </button>
     </div>
   </div>
 </div>

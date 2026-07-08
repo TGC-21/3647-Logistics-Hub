@@ -16,7 +16,7 @@
 }
 .btn:hover       { background: var(--color-background-secondary); }
 .btn-primary     { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
-.btn-primary:hover { background: #0C447C; border-color: #0C447C; }
+.btn-primary:hover { background: #7c0c0c; border-color: #7c0c0c; }
 .btn-danger      { color: var(--color-danger); border-color: #F0959580; }
 .btn-danger:hover { background: var(--color-danger-light); }
 .btn-sm          { padding: 4px 10px; font-size: 12px; }

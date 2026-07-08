@@ -205,6 +205,145 @@ begin
 end;
 $$;
 
+-- ── Fabrication batches ───────────────────────────────────────
+-- A batch is a group of jobs going on the same machine/setup in one run
+-- (e.g. "Lathe — 7/6 afternoon"). fab_method lives here, not on jobs or
+-- instances — it describes the run, not any single promised part, and a
+-- finished inventory_instance doesn't need to remember how it was made.
+-- status is intentionally NOT stored here — it's derived client-side from
+-- the batch's jobs (queued if none started, in_progress if any job has
+-- progress, complete once every non-archived job is complete), same
+-- pattern as assemblies' derivedAssemblyStatus.
+create table fabrication_batches (
+  id          text primary key,
+  name        text not null,
+  fab_method  text not null,   -- 'Lathe' | 'CNC' | 'Mill' | ... free text, user-defined
+  notes       text,
+  created_at  timestamptz not null default now()
+);
+
+-- ── Fabrication jobs ──────────────────────────────────────────
+-- A job is a promise to machine `quantity_requested` units of whatever
+-- component the linked assembly_part resolves to. At most one ACTIVE job
+-- per assembly_part at a time (see the partial unique index below) — if
+-- a job doesn't cover the full remaining gap and more is needed later,
+-- that's a second job created afterward, not an edit to this one, so the
+-- uniqueness constraint must ignore archived rows or it'd block that.
+--
+-- Lifecycle: queued → committed → in_progress → complete → archived.
+--   queued      — unclaimed, fully editable (requested qty, batch, deletable)
+--   committed   — claimed_by is set; quantity_requested and the
+--                 assembly_part link are now frozen. Batch reassignment
+--                 remains allowed even once committed (scheduling, not
+--                 the promise itself, so it stays flexible).
+--   in_progress — quantity_machined > 0 and < quantity_requested
+--   complete    — quantity_machined >= quantity_requested
+--   archived    — terminal, hidden from the active Fabricate view but
+--                 kept as history (never hard-deleted)
+--
+-- claimed_by is a free-text name for now ("type your name"); it becomes
+-- a real user id once login ships — same column, different population.
+create table fabrication_jobs (
+  id                  text primary key,
+  batch_id            text references fabrication_batches(id) on delete set null,
+  assembly_part_id    text not null references assembly_parts(id) on delete cascade,
+  quantity_requested  integer not null default 1,
+  quantity_machined   integer not null default 0,
+  status              text not null default 'queued',
+  claimed_by          text,
+  claimed_at          timestamptz,
+  notes               text,
+  created_at          timestamptz not null default now(),
+  constraint fabrication_jobs_status_valid check (
+    status in ('queued', 'committed', 'in_progress', 'complete', 'archived')
+  ),
+  constraint fabrication_jobs_machined_not_over check (
+    quantity_machined >= 0 and quantity_machined <= quantity_requested
+  )
+);
+create index idx_fabrication_jobs_batch on fabrication_jobs(batch_id);
+
+-- Only one ACTIVE (non-archived) job may exist per assembly_part at a
+-- time. A plain unique constraint on assembly_part_id would also block a
+-- legitimate second job created after the first one archives — a partial
+-- index is what actually captures the rule.
+create unique index fabrication_jobs_one_active_per_part
+  on fabrication_jobs (assembly_part_id)
+  where status <> 'archived';
+
+-- ── Record machined units: the Fabricate → Inventory handoff ──
+-- Atomically, for `p_quantity` newly-finished units on a job:
+--   1. creates a fresh inventory_instances row for the job's component
+--      (status 'in_assembly', no location yet — machined output needs a
+--      physical location assigned by whoever puts it away)
+--   2. appends that new instance's id to the linked assembly_part's
+--      linked_instance_ids, and bumps its quantity_collected — this is
+--      the mechanism that shifts units from "promised" to "collected"
+--   3. advances the job's quantity_machined and status
+-- Locks the job row for the duration (`for update`) so concurrent calls
+-- against the same job can't double-count. Mirrors reserve_inventory_units
+-- in shape/spirit.
+create or replace function record_machined_units(
+  p_job_id   text,
+  p_quantity integer
+) returns fabrication_jobs
+language plpgsql
+as $$
+declare
+  job          fabrication_jobs;
+  part         assembly_parts;
+  new_instance inventory_instances;
+  new_machined integer;
+begin
+  if p_quantity <= 0 then
+    raise exception 'Quantity must be positive';
+  end if;
+
+  select * into job from fabrication_jobs where id = p_job_id for update;
+  if job is null then
+    raise exception 'Fabrication job % not found', p_job_id;
+  end if;
+  if job.status = 'archived' then
+    raise exception 'Cannot record progress on an archived job';
+  end if;
+
+  new_machined := job.quantity_machined + p_quantity;
+  if new_machined > job.quantity_requested then
+    raise exception 'Only % unit(s) remaining on this job, % requested',
+      job.quantity_requested - job.quantity_machined, p_quantity;
+  end if;
+
+  select * into part from assembly_parts where id = job.assembly_part_id for update;
+  if part is null then
+    raise exception 'Linked assembly part not found for job %', p_job_id;
+  end if;
+  if part.component_id is null then
+    raise exception 'Assembly part has no linked component — cannot create inventory instance';
+  end if;
+
+  insert into inventory_instances (
+    id, component_id, location, quantity, status
+  ) values (
+    p_job_id || '-fab-' || substr(md5(random()::text), 1, 8),
+    part.component_id, '', p_quantity, 'in_assembly'
+  )
+  returning * into new_instance;
+
+  update assembly_parts
+    set linked_instance_ids = linked_instance_ids || new_instance.id,
+        quantity_collected  = quantity_collected + p_quantity
+    where id = part.id;
+
+  update fabrication_jobs
+    set quantity_machined = new_machined,
+        status = case when new_machined >= job.quantity_requested then 'complete' else 'in_progress' end
+    where id = p_job_id
+    returning * into job;
+
+  return job;
+end;
+$$;
+
 -- ── Storage bucket for component images ──────────────────────
 insert into storage.buckets (id, name, public)
 values ('component-images', 'component-images', true)
@@ -217,6 +356,8 @@ alter table inventory_instances enable row level security;
 alter table assemblies          enable row level security;
 alter table assembly_children   enable row level security;
 alter table assembly_parts      enable row level security;
+alter table fabrication_batches enable row level security;
+alter table fabrication_jobs    enable row level security;
 
 -- Categories
 create policy "Public read categories"   on categories for select using (true);
@@ -253,6 +394,18 @@ create policy "Public read assembly_parts"   on assembly_parts for select using 
 create policy "Public insert assembly_parts" on assembly_parts for insert with check (true);
 create policy "Public update assembly_parts" on assembly_parts for update using (true);
 create policy "Public delete assembly_parts" on assembly_parts for delete using (true);
+
+-- Fabrication batches
+create policy "Public read fabrication_batches"   on fabrication_batches for select using (true);
+create policy "Public insert fabrication_batches" on fabrication_batches for insert with check (true);
+create policy "Public update fabrication_batches" on fabrication_batches for update using (true);
+create policy "Public delete fabrication_batches" on fabrication_batches for delete using (true);
+
+-- Fabrication jobs
+create policy "Public read fabrication_jobs"   on fabrication_jobs for select using (true);
+create policy "Public insert fabrication_jobs" on fabrication_jobs for insert with check (true);
+create policy "Public update fabrication_jobs" on fabrication_jobs for update using (true);
+create policy "Public delete fabrication_jobs" on fabrication_jobs for delete using (true);
 
 -- Storage
 create policy "Public image uploads"

@@ -6,12 +6,16 @@ import {
   fetchComponents, fetchAvailableInstances, reserveInstance, unreserveInstance,
   fetchInstancesByIds, updateInstanceLocation,
   releaseInstances, fetchAllLinkedInstanceIdsForAssembly,
+  fetchActiveJobsForParts, createFabricationJob,
 } from './db.js'
+
+import { registerNewJob } from './fabricate.js'
 
 // ── State ─────────────────────────────────────────────────────
 let assemblies        = []
 let currentAssemblyId = null
 let currentParts      = []
+let currentPartJobs = {} //assembly_part id -> active fabrication job, for the currently open root assembly
 let currentChildren   = []   // assembly_children rows for the current assembly
 let navigationStack   = []   // [{id, name}] trail from root → current (root assemblies only)
 let editingAssemblyId = null
@@ -291,6 +295,7 @@ async function renderAssemblyDetail() {
       fetchAssemblyParts(currentAssemblyId),
       fetchAssemblyChildren(currentAssemblyId),
     ])
+    currentPartJobs = await fetchActiveJobsForParts(currentParts.map(p => p.id))
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading assembly</div></div>`
     return
@@ -394,7 +399,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-                ${currentParts.map(partRowHTML).join('')}
+                ${currentParts.map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -481,6 +486,7 @@ async function renderAssemblyDetail() {
 // collection tracking still works, since that's independent per-part state.
 let currentChildParts    = []
 let currentChildChildren = []
+let currentChildPartJobs = {}
 
 async function renderChildDetail() {
   const title = document.getElementById('content-title')
@@ -496,6 +502,7 @@ async function renderChildDetail() {
       fetchChildParts(viewingChildId),
       fetchChildrenOfChild(viewingChildId),
     ])
+    currentChildPartJobs = await fetchActiveJobsForParts(currentChildParts.map(p => p.id))
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading subassembly</div></div>`
     return
@@ -554,6 +561,7 @@ async function renderChildDetail() {
               <thead>
                 <tr>
                   <th>Part name</th>
+                  <th>Linked Part(s)</th>
                   <th>Part #</th>
                   <th style="text-align:center">Needed</th>
                   <th style="text-align:center">Collected</th>
@@ -562,7 +570,7 @@ async function renderChildDetail() {
                 </tr>
               </thead>
               <tbody id="child-parts-tbody">
-                ${currentChildParts.map(childPartRowHTML).join('')}
+                ${currentChildParts.map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -612,15 +620,31 @@ async function renderChildDetail() {
       const linkBtn = e.target.closest('[data-part-link]')
       const viewLinkedBtn = e.target.closest('[data-view-linked]')
       const delBtn = e.target.closest('[data-child-part-del]')
+      const fabBtn = e.target.closest('[data-child-part-fab]')
 
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
+      if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.childPartFab, true); return }
     })
   }
 }
 
-function childPartRowHTML(p) {
+/** Small status pill for a part row's linked fabricatino job, if any. */
+function fabJobBadgeHTML(job) {
+  if (!job) return ''
+  const label = {
+    queued:      'Queued for fab',
+    commited:    `Claimed${job.claimedBy ? ' by ' + job.claimedBy : ''}`,
+    in_progress: `Machining ${job.quantityMachined}/${job.quantityRequested}`,
+    complete:    'Fab complete',
+  }[job.status] || job.status
+  return `<span class="fab-job-badge fab-job-badge--${job.status}"title="Fabrication job: ${job.quantityRequested} requested">
+    <i class="ti ti-tool" aria-hidden="true"></i> ${label}
+    </span>`
+  }
+
+function childPartRowHTML(p, job = null) {
   const status = computePartStatus(p)
   const statusBadge = {
     complete: '<span class="part-badge part-badge--complete">Complete</span>',
@@ -636,11 +660,18 @@ function childPartRowHTML(p) {
        </button>`
     : ''
 
+  // promised = whatever this part's active job still owes beyond what
+  // it's already machined - those units aren't "collected" yet, but
+  // they're not un-accounted-for either.
+  const promisedQty = job ? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
+  const gapRemaining = p.quantityNeeded - collectedQty - promisedQty
+  const canSendToFab = !job && gapRemaining > 0 && !!p.componentId
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name-cell">
         <div>
           <div class="part-name">${p.partName}</div>
+          ${fabJobBadgeHTML(job)}
         </div>
         <button class="btn-icon btn-link-inventory" data-part-link="${p.id}" aria-label="Link to inventory" title="Link to inventory component">
           <i class="ti ti-link" style="font-size:14px"></i>
@@ -654,17 +685,18 @@ function childPartRowHTML(p) {
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
     <td style="text-align:center">
-      <span class="qty-collected-readout">${collectedQty} / ${p.quantityNeeded}</span>
+      <span class="qty-collected-readout">${collectedQty}${promisedQty ? ` <span class="qty-promised">+${promisedQty} promised</span>` : ''} / ${p.quantityNeeded}</span>
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
       <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${collectedQty >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Link an inventory item first to establish the component'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
   </tr>`
 }
 
-function partRowHTML(p) {
+function partRowHTML(p, job = null) {
   const status = computePartStatus(p)
   const statusBadge = {
     complete: '<span class="part-badge part-badge--complete">Complete</span>',
@@ -679,6 +711,10 @@ function partRowHTML(p) {
         <i class="ti ti-link" aria-hidden="true"></i> ${linkedPiles} linked
        </button>`
     : ''
+
+  const promisedQty = job? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
+  const gapRemaining = p.quantityNeeded - collectedQty - promisedQty
+  const canSendToFab = !job && gapRemaining > 0 && !!p.componentId
 
   return `<tr data-part-id="${p.id}">
     <td>
@@ -686,6 +722,7 @@ function partRowHTML(p) {
         <div>
           <div class="part-name">${p.partName}</div>
           ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
+          ${fabJobBadgeHTML(job)}
         </div>
         <button class="btn-icon btn-link-inventory" data-part-link="${p.id}" aria-label="Link to inventory" title="Link to inventory component">
           <i class="ti ti-link" style="font-size:14px"></i>
@@ -699,11 +736,12 @@ function partRowHTML(p) {
     <td><span class="part-number">${p.partNumber || '—'}</span></td>
     <td style="text-align:center">${p.quantityNeeded}</td>
     <td style="text-align:center">
-      <span class="qty-collected-readout">${linkedCount} / ${p.quantityNeeded}</span>
+      <span class="qty-collected-readout">${collectedQty}${promisedQty ? ` <span class="qty-promised">+${promisedQty} promised</span>` : ''} / ${p.quantityNeeded}</span>
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
       <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedCount >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Link an inventory item first to establish the component'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
     </td>
@@ -727,6 +765,9 @@ function bindPartRowEvents() {
 
     const delBtn = e.target.closest('[data-part-del]')
     if (delBtn) { await deletePart(delBtn.dataset.partDel); return }
+
+    const fabBtn = e.target.closest('[data-part-fab]')
+    if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.partFab, false); return }
   })
 }
 
@@ -1207,6 +1248,79 @@ function currentInvLinkPart() {
   return invLinkIsChildPart
     ? currentChildParts.find(p => p.id === invLinkPartId)
     : currentParts.find(p => p.id === invLinkPartId)
+}
+
+// ── Send to Fabricate ────────────────────────────────────────
+// Creates a fabrication_jobs row promising to machine the remaining gap
+// (needed − collected) for one assembly_part. Requires the part already
+// be resolved to a catalog component (p.componentId) — in practice that
+// means at least one unit has already been linked via Inventory first
+// (see linkInstanceToPart above, which is what sets componentId). A part
+// with zero units linked so far has no established component to promise
+// against, so the button stays disabled until that link exists.
+let fabJobPartId      = null
+let fabJobIsChildPart = false
+
+function currentFabJobPart() {
+  return fabJobIsChildPart
+    ? currentChildParts.find(p => p.id === fabJobPartId)
+    : currentParts.find(p => p.id === fabJobPartId)
+}
+
+function openSendToFabricateModal(partId, isChildPart = false) {
+  fabJobPartId      = partId
+  fabJobIsChildPart = isChildPart
+  const part = currentFabJobPart()
+  if (!part) return
+
+  const gap = Math.max(0, part.quantityNeeded - (part.quantityCollected || 0))
+  document.getElementById('fab-job-modal-subtitle').textContent =
+    `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
+  document.getElementById('fab-job-field-qty').value = gap
+  document.getElementById('fab-job-field-qty').max   = gap
+  document.getElementById('fab-job-modal-overlay').style.display = 'flex'
+  setTimeout(() => document.getElementById('fab-job-field-qty').focus(), 80)
+}
+
+function closeSendToFabricateModal() {
+  document.getElementById('fab-job-modal-overlay').style.display = 'none'
+  fabJobPartId = null
+}
+
+async function confirmSendToFabricate() {
+  const part = currentFabJobPart()
+  if (!part) return
+
+  const gap = Math.max(0, part.quantityNeeded - (part.quantityCollected || 0))
+  const qty = Math.max(1, Math.min(gap, parseInt(document.getElementById('fab-job-field-qty').value, 10) || 1))
+
+  const btn = document.getElementById('btn-confirm-fab-job')
+  btn.disabled = true; btn.textContent = 'Creating…'
+
+  try {
+    const job = await createFabricationJob({
+      assemblyPartId:    part.id,
+      quantityRequested: qty,
+      batchId:           null,
+      genId,
+    })
+    registerNewJob(job)
+    if (fabJobIsChildPart) {
+      currentChildPartJobs[part.id] = job
+      renderChildDetail()
+    } else {
+      currentPartJobs[part.id] = job
+      renderAssemblyDetail()
+    }
+    closeSendToFabricateModal()
+    toastFn(`Sent ${qty} × "${part.partName}" to Fabricate`)
+  } catch (e) {
+    console.error(e)
+    toastFn(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error creating fabrication job')
+  } finally {
+    btn.disabled = false
+    btn.innerHTML = '<i class="ti ti-tool" aria-hidden="true"></i> Send to Fabricate'
+  }
 }
 
 function renderInventoryLinkSuggestion(partName) {
@@ -1881,6 +1995,14 @@ async function confirmImportParts() {
 // ── Bind all designer events ──────────────────────────────────
 export function bindDesignerEvents() {
   // (nav-all click is owned by main.js — it checks designerMode and delegates here)
+
+  // Send to Fabricate modal
+  document.getElementById('btn-close-fab-job-modal').addEventListener('click', closeSendToFabricateModal)
+  document.getElementById('btn-cancel-fab-job').addEventListener('click', closeSendToFabricateModal)
+  document.getElementById('btn-confirm-fab-job').addEventListener('click', confirmSendToFabricate)
+  document.getElementById('fab-job-modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeSendToFabricateModal()
+  })
 
   // Assembly modal
   document.getElementById('btn-close-asm-modal').addEventListener('click', closeAssemblyModal)

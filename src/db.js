@@ -339,6 +339,239 @@ export async function deleteAssemblyPart(id) {
   if (error) throw error
 }
 
+/** Single assembly_part by id — used to refresh one row's collected/
+ *  promised numbers after recordMachinedUnits() without refetching the
+ *  whole assembly. */
+export async function fetchAssemblyPartById(id) {
+  const { data, error } = await supabase
+    .from('assembly_parts')
+    .select('*')
+    .eq('id', id)
+    .single()
+  if (error) throw error
+  return dbPartToLocal(data)
+}
+
+/** Bulk version of fetchAssemblyPartById — one query for many parts, used
+ *  by the Fabricate tab to render job rows (part name, needed qty, etc.)
+ *  without a round trip per job. Returns a map keyed by id. */
+export async function fetchAssemblyPartsByIds(ids) {
+  if (!ids || !ids.length) return {}
+  const { data, error } = await supabase
+    .from('assembly_parts')
+    .select('*')
+    .in('id', ids)
+  if (error) throw error
+  return Object.fromEntries(data.map(row => [row.id, dbPartToLocal(row)]))
+}
+
+// ── Fabrication (Fabricate workflow: batches & jobs) ───────────
+// A batch groups jobs going on the same machine/setup. A job is a promise
+// to machine N units for exactly one assembly_part — see schema.sql for
+// the full lifecycle (queued → committed → in_progress → complete →
+// archived) and the constraints backing it (one active job per part,
+// quantity_machined <= quantity_requested).
+
+export async function fetchFabricationBatches() {
+  const { data, error } = await supabase
+    .from('fabrication_batches')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data.map(dbBatchToLocal)
+}
+
+export async function upsertFabricationBatch(batch) {
+  const { data, error } = await supabase
+    .from('fabrication_batches')
+    .upsert(localBatchToDb(batch))
+    .select()
+    .single()
+  if (error) throw error
+  return dbBatchToLocal(data)
+}
+
+/** Deleting a batch only un-groups its jobs (batch_id → null, via the FK's
+ *  on delete set null) — it never deletes or archives the jobs themselves. */
+export async function deleteFabricationBatch(id) {
+  const { error } = await supabase.from('fabrication_batches').delete().eq('id', id)
+  if (error) throw error
+}
+
+/** All jobs, across every batch — the raw material the Fabricate tab
+ *  groups into "unbatched queue" + "by batch" sections client-side. */
+export async function fetchAllFabricationJobs() {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .select('*')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data.map(dbJobToLocal)
+}
+
+export async function fetchFabricationJobsForBatch(batchId) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .select('*')
+    .eq('batch_id', batchId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data.map(dbJobToLocal)
+}
+
+/** The active (non-archived) job for one assembly_part, or null. Used to
+ *  gate "Send to Fabricate" (hidden once a job exists) and to show
+ *  collected/promised on the assembly detail parts table. */
+export async function fetchActiveJobForPart(assemblyPartId) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .select('*')
+    .eq('assembly_part_id', assemblyPartId)
+    .neq('status', 'archived')
+    .maybeSingle()
+  if (error) throw error
+  return data ? dbJobToLocal(data) : null
+}
+
+/** Bulk version of the above — one query instead of N — for rendering an
+ *  assembly's whole parts table without a per-row round trip. Returns a
+ *  map keyed by assembly_part_id. */
+export async function fetchActiveJobsForParts(assemblyPartIds) {
+  if (!assemblyPartIds || !assemblyPartIds.length) return {}
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .select('*')
+    .in('assembly_part_id', assemblyPartIds)
+    .neq('status', 'archived')
+  if (error) throw error
+  return Object.fromEntries(data.map(row => [row.assembly_part_id, dbJobToLocal(row)]))
+}
+
+/**
+ * Creates a new queued job promising `quantityRequested` units for
+ * `assemblyPartId`. Throws (via the DB's partial unique index) if that
+ * part already has an active job — callers should check
+ * fetchActiveJobForPart first to show a friendlier error than a raw
+ * constraint violation.
+ */
+export async function createFabricationJob({ assemblyPartId, quantityRequested, batchId, genId }) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .insert({
+      id:                 genId(),
+      assembly_part_id:   assemblyPartId,
+      quantity_requested: quantityRequested,
+      batch_id:           batchId || null,
+      status:             'queued',
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return dbJobToLocal(data)
+}
+
+/** Batch reassignment is allowed at any (non-archived) status — it's
+ *  scheduling, not the commitment itself. */
+export async function moveJobToBatch(jobId, batchId) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .update({ batch_id: batchId || null })
+    .eq('id', jobId)
+    .neq('status', 'archived')
+    .select()
+    .single()
+  if (error) throw error
+  return dbJobToLocal(data)
+}
+
+/** Only a queued job can have its requested quantity edited or be
+ *  deleted outright — once committed, the promise is frozen. */
+export async function updateQueuedJobQuantity(jobId, quantityRequested) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .update({ quantity_requested: quantityRequested })
+    .eq('id', jobId)
+    .eq('status', 'queued')
+    .select()
+    .single()
+  if (error) throw error
+  return dbJobToLocal(data)
+}
+
+export async function deleteQueuedFabricationJob(jobId) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .delete()
+    .eq('id', jobId)
+    .eq('status', 'queued')
+    .select()
+  if (error) throw error
+  if (!data.length) throw new Error('Only an unclaimed (queued) job can be deleted — archive it instead.')
+}
+
+/** Claim a job: queued → committed. Guards against a double-claim race by
+ *  only succeeding if the row was still 'queued' at update time. */
+export async function claimFabricationJob(jobId, claimedBy) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .update({ status: 'committed', claimed_by: claimedBy, claimed_at: new Date().toISOString() })
+    .eq('id', jobId)
+    .eq('status', 'queued')
+    .select()
+  if (error) throw error
+  if (!data.length) throw new Error('This job was already claimed by someone else — refresh and try again.')
+  return dbJobToLocal(data[0])
+}
+
+/** Escape hatch — releases a claim back to the unclaimed queue. Allowed
+ *  from 'committed' or 'in_progress' (partial machining is kept; only the
++ *  claim itself is released) so a job never gets permanently stuck to
+ *  someone who can't finish it. */
+export async function releaseFabricationJobClaim(jobId) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .update({ status: 'queued', claimed_by: null, claimed_at: null })
+    .eq('id', jobId)
+    .in('status', ['committed', 'in_progress'])
+    .select()
+    .single()
+  if (error) throw error
+  return dbJobToLocal(data)
+}
+
+/**
+ * The core Fabricate → Inventory handoff. Records `quantity` newly
+ * finished units against a job via the record_machined_units() RPC,
+ * which atomically creates an inventory_instances row, bumps the linked
+ * assembly_part's quantity_collected + linked_instance_ids, and advances
+ * the job's own quantity_machined/status. Returns the updated job — the
+ * caller should also refetch the assembly_part (fetchAssemblyPartById)
+ * to refresh collected/promised in the UI.
+ */
+export async function recordMachinedUnits(jobId, quantity) {
+  const { data, error } = await supabase.rpc('record_machined_units', {
+    p_job_id:   jobId,
+    p_quantity: quantity,
+  })
+  if (error) throw error
+  return dbJobToLocal(data)
+}
+
+/** complete → archived. Terminal — archived jobs are hidden from the
+ *  active Fabricate view but never deleted (they're the audit trail of
+ *  what was promised and delivered). */
+export async function archiveFabricationJob(jobId) {
+  const { data, error } = await supabase
+    .from('fabrication_jobs')
+    .update({ status: 'archived' })
+    .eq('id', jobId)
+    .eq('status', 'complete')
+    .select()
+    .single()
+  if (error) throw error
+  return dbJobToLocal(data)
+}
+
 // ── Assembly children (subassemblies) ─────────────────────────
 // Subassemblies never live in `assemblies` — they're their own node type,
 // nested under either a root assembly or another subassembly node. All
@@ -658,6 +891,40 @@ function localInstanceToDb(inst) {
     notes:        inst.notes ?? '',
   }
 }
+
+function dbBatchToLocal(row) {
+  return {
+    id:        row.id,
+    name:      row.name,
+    fabMethod: row.fab_method,
+    notes:     row.notes ?? '',
+    createdAt: row.created_at,
+  }
+}
+function localBatchToDb(b) {
+  return {
+    id:         b.id,
+    name:       b.name,
+    fab_method: b.fabMethod,
+    notes:      b.notes ?? '',
+  }
+}
+
+function dbJobToLocal(row) {
+  return {
+    id:                row.id,
+    batchId:           row.batch_id ?? null,
+    assemblyPartId:    row.assembly_part_id,
+    quantityRequested: row.quantity_requested ?? 1,
+    quantityMachined:  row.quantity_machined ?? 0,
+    status:            row.status ?? 'queued',
+    claimedBy:         row.claimed_by ?? null,
+    claimedAt:         row.claimed_at ?? null,
+    notes:             row.notes ?? '',
+    createdAt:         row.created_at,
+  }
+}
+
 
 function dbAssemblyToLocal(row) {
   return {

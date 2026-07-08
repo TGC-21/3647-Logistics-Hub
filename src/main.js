@@ -16,6 +16,12 @@ import {
   bootIsolatedAssembly, bootIsolatedChild,
 } from './designer.js'
 
+import {
+  fabricateBoot,          setFabricateToast,
+  renderFabricateSidebar, renderFabricateContent,
+  bindFabricateEvents,    selectBatch,
+} from './fabricate.js'
+
 window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
@@ -30,11 +36,12 @@ let view          = { type: 'all', catId: null, tag: null }
 let openCats      = new Set()
 let editingCatId  = null
 let editingReqKeysConfig = []   // [{ key, type: 'string'|'quantity'|'enum', options?, defaultUnit? }]
-let designerMode  = false
+let appMode = 'inventory' //'inventory' | 'designer' | 'fabricate'
 
 // ── Boot ──────────────────────────────────────────────────────
 async function boot() {
   setToast(showToast)
+  setFabricateToast(showToast)
 
   // "?asm=<id>" opens a single ROOT assembly full-screen; "?child=<id>"
   // opens a single SUBASSEMBLY node full-screen. Both have no sidebar/other
@@ -45,7 +52,7 @@ async function boot() {
 
   if (isolatedChildId) {
     document.body.classList.add('isolated-view')
-    designerMode = true
+    appMode = 'designer'
     try {
       await bootIsolatedChild(isolatedChildId)
     } catch (e) {
@@ -59,7 +66,7 @@ async function boot() {
 
   if (isolatedAsmId) {
     document.body.classList.add('isolated-view')
-    designerMode = true
+    appMode = 'designer'
     try {
       await bootIsolatedAssembly(isolatedAsmId)
     } catch (e) {
@@ -74,6 +81,7 @@ async function boot() {
   try {
     [categories, items] = await Promise.all([fetchCategories(), fetchInventoryInstances()])
     await designerBoot()
+    await fabricateBoot()
   } catch (e) {
     console.error(e)
     showToast('Could not connect to database — check your .env file')
@@ -81,6 +89,7 @@ async function boot() {
   render()
   bindStaticEvents()
   bindDesignerEvents()
+  bindFabricateEvents()
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -98,38 +107,46 @@ function showToast(msg) {
 }
 
 // ── Mode switching ─────────────────────────────────────────────
-function setMode(mode) {
-  designerMode = mode === 'designer'
-  document.getElementById('btn-mode-inventory').classList.toggle('active', !designerMode)
-  document.getElementById('btn-mode-designer').classList.toggle('active', designerMode)
-  document.getElementById('inventory-actions').style.display  = designerMode ? 'none' : ''
-  document.getElementById('designer-actions').style.display   = designerMode ? '' : 'none'
-  document.getElementById('topbar-search-wrap').style.display = designerMode ? 'none' : ''
+function setMode(newMode) {
+  appMode = newMode // 'inventory' | 'designer' | 'fabricate'
+
+  document.getElementById('btn-mode-inventory').classList.toggle('active', appMode === 'inventory')
+  document.getElementById('btn-mode-designer').classList.toggle('active', appMode==='designer')
+  document.getElementById('btn-mode-fabricate').classList.toggle('active', appMode === 'fabricate')
+  document.getElementById('inventory-actions').computedStyleMap.display = appMode === 'inventory' ? '' : 'none'
+  document.getElementById('designer-actions').style.display = appMode === 'designer' ? '' : 'none'
+  document.getElementById('fabricate-actions').style.display = appMode === 'fabricate' ? '' : 'none'
+  document.getElementById('topbar-search-wrap').style.display = appMode === 'inventory' ? '' : 'none'
 
   // Mobile bottom tab bar + FAB mirror the same mode
   const tabComponents = document.getElementById('tab-btn-components')
   const tabDesigner    = document.getElementById('tab-btn-designer')
-  if (tabComponents && tabDesigner) {
-    tabComponents.classList.toggle('active', !designerMode)
-    tabDesigner.classList.toggle('active', designerMode)
+  const tabFabricate = document.getElementById('tab-btn-fabricate')
+  if (tabComponents && tabDesigner && tabFabricate){
+    tabComponents.classList.toggle('active', appMode === 'inventory')
+    tabDesigner.classList.toggle('active', appMode ==='designer')
+    tabFabricate.classList.toggle('active', appMode === 'fabricate')
   }
-  // Designer mode has its own two actions (New assembly / New from Onshape) surfaced
-  // elsewhere, so the generic "add" FAB only makes sense in inventory mode.
+  
+  // Designer/Fabricate each surface their own create actions elsewhere, so the generic 'add' FAB only makes sense in inventory mode.
   const fab = document.getElementById('mobile-fab')
-  if (fab) fab.classList.toggle('fab-hidden', designerMode)
+  if (fab) fab.classList.toggle('fab-hidden', appMode !== 'inventory')
 
-  // Lets mobile CSS reserve extra bottom padding when the designer action
-  // bar (pinned above the tab bar) is visible, so content isn't hidden behind it.
-  document.body.classList.toggle('designer-mode', designerMode)
+    // Lets mobile CSS reserve extra bottom padding when a mode's pinned action bar (above the tab bar) is visible, so content isn't hidden.
+    document.body.classList.toggle('designer-mode', appMode === 'designer')
+    document.body.classList.toggle('fabricate-mode', appMode === 'fabricate')
 
   render()
 }
 
 // ── Render ────────────────────────────────────────────────────
 function render() {
-  if (designerMode) {
+  if (appMode === 'designer') {
     renderDesignerSidebar()
     renderDesignerContent()
+  } else if (appMode === 'fabricate'){
+    renderFabricateSidebar()
+    renderFabricateContent()
   } else {
     renderSidebar()
     renderContent()
@@ -319,12 +336,14 @@ function bindStaticEvents() {
   // Mode toggle
   document.getElementById('btn-mode-inventory').addEventListener('click', () => setMode('inventory'))
   document.getElementById('btn-mode-designer').addEventListener('click', () => setMode('designer'))
+  document.getElementById('btn-mode-fabricate').addEventListener('click', () => setMode('fabricate'))
   document.getElementById('btn-new-assembly').addEventListener('click', () => openAssemblyModal())
   document.getElementById('btn-new-from-onshape').addEventListener('click', () => openOnshapeModal('link'))
 
   // ── Mobile bottom tab bar ──────────────────────────────────
   document.getElementById('tab-btn-components').addEventListener('click', () => setMode('inventory'))
   document.getElementById('tab-btn-designer').addEventListener('click', () => setMode('designer'))
+  document.getElementById('tab-btn-fabricate').addEventListener('click', () => setMode('fabricate'))
   document.getElementById('tab-btn-categories').addEventListener('click', () => {
     setMode('inventory')
     openSidebar()
@@ -332,8 +351,10 @@ function bindStaticEvents() {
 
   // ── Mobile floating action button ──────────────────────────
   // Mirrors whichever "primary create" action applies to the current mode.
+  // (Hidden outright outside inventory mode - see setMode - but Designer's
+  // and Fabricate's own action bars cover their create flows either way.)
   document.getElementById('mobile-fab').addEventListener('click', () => {
-    designerMode ? openAssemblyModal() : openAddModal()
+    appMode === 'designer' ? openAssemblyModal() : openAddModal()
   })
 
   // ── Mobile fullscreen search ────────────────────────────────
@@ -357,13 +378,14 @@ function bindStaticEvents() {
 
   // nav-all: route by mode
   document.getElementById('nav-all').addEventListener('click', () => {
-    if (designerMode) { selectAssembly(null); return }
+    if (appMode === 'designer') { selectAssembly(null); return }
+    if (appMode === 'fabricate') { selectBatch(null); return }
     setView('all', null, null)
   })
 
-  // Sidebar delegation (inventory only — designer items bind their own listeners)
+  // Sidebar delegation (inventory only — designer/fabricate items bind their own listeners)
   document.getElementById('sidebar').addEventListener('click', e => {
-    if (designerMode) return
+    if (appMode !== 'inventory') return
     const toggle = e.target.closest('[data-cat-toggle]')
     if (toggle) { toggleCat(toggle.dataset.catToggle); return }
     const viewCat = e.target.closest('[data-view-cat]')
@@ -374,7 +396,7 @@ function bindStaticEvents() {
 
   // Main area delegation (card clicks — inventory only)
   document.getElementById('main-area').addEventListener('click', e => {
-    if (designerMode) return
+    if (appMode !== 'inventory') return
     const card = e.target.closest('[data-open-detail]')
     if (card) openDetail(card.dataset.openDetail)
   })
