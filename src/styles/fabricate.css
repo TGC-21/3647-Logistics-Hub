@@ -61,6 +61,35 @@
 }
 .fab-history-toggle input { cursor: pointer; }
 
+/* ── Fabricate overview: batch cards + job cards ─────────────── */
+/* Both reuse .asm-card's base look (border, padding, hover) from
+   designer.css — these rules only add job/batch-specific affordances:
+   draggability cues and drop-target highlighting. */
+.fab-batch-card,
+.fab-job-card {
+  position: relative;
+}
+.fab-job-card {
+  cursor: grab;
+}
+.fab-job-card:active {
+  cursor: grabbing;
+}
+.fab-card-dragging {
+  opacity: 0.45;
+}
+.fab-card-drop-target {
+  border-color: var(--color-accent) !important;
+  background: var(--color-accent-light);
+  box-shadow: 0 0 0 2px var(--color-accent-mid);
+}
+
+/* ── Job detail overlay ───────────────────────────────────────── */
+#job-detail-body .field label {
+  margin-bottom: 2px;
+}
+
+
 /* ── Mobile: fabricate action bar pinned above the tab bar, same
    treatment as Designer's ───────────────────────────────────── */
 @media (max-width: 640px) {
