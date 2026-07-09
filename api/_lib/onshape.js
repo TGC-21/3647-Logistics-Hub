@@ -31,6 +31,25 @@ export async function onshapeGet(path) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+// Standard BOM column (header) ids. Unlike custom/category-scoped columns,
+// these map to Onshape's built-in part properties and have been observed
+// stable across documents/templates — same assumption CATEGORY_HEADER_ID
+// already relies on. Passed via `bomColumnIds` to ask Onshape to omit
+// everything else (material tables, full enum option lists, appearance,
+// weight, etc.) from the response entirely rather than serializing and
+// discarding it client-side in resolveRow().
+//
+// If a document's BOM template turns out to use different ids for these
+// standard fields, parts fetched with this restriction will silently come
+// back as "Unknown part" (nothing resolves to name/qty) even though rows
+// exist — that's the signal to widen or drop this list.
+const STANDARD_BOM_COLUMN_IDS = [
+  '57f3fb8efa3416c06701d60d', // Name
+  '57f3fb8efa3416c06701d60f', // Part number
+  '5ace8269c046ad612c65a0ba', // Quantity
+  CATEGORY_HEADER_ID_PLACEHOLDER, // Category — defined below, see note
+]
+
 /**
  * Fetches a BOM at `path`, with a fallback for elements that have never had
  * ANY BOM materialized: `generateIfAbsent=true` is supposed to generate one
@@ -41,9 +60,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
  * in the Onshape UI. Forcing the plain/default BOM shape first reliably
  * triggers generation; once generated, the originally-requested shape works.
  */
-async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, queryString) {
+async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, queryString, bomColumnIds) {
   const base = `/assemblies/d/${documentId}/${wvmType}/${workspaceId}/e/${elementId}/bom`
-  const path = `${base}?${queryString}`
+  const fullQuery = bomColumnIds?.length
+    ? `${queryString}&bomColumnIds=${bomColumnIds.join(',')}`
+    : queryString
+  const path = `${base}?${fullQuery}`
 
   try {
     return await onshapeGet(path)
@@ -52,6 +74,9 @@ async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId,
   }
 
   console.warn(`[onshape] BOM 404 for element ${elementId} — forcing default BOM generation, then retrying…`)
+  // The forcing call intentionally does NOT pass bomColumnIds — it exists
+  // purely to trigger generation, and its response is discarded either way,
+  // so there's no reason to ask Onshape to shape it.
   try {
     await onshapeGet(`${base}?generateIfAbsent=true`)
   } catch (e) {
@@ -82,8 +107,8 @@ async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId,
  * endpoint (`/w/`) for a version-only element 404s even though the ids
  * themselves are perfectly valid.
  */
-export async function fetchBom(documentId, workspaceId, elementId, wvmType = 'w') {
-  return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=false&multiLevel=false&generateIfAbsent=true')
+export async function fetchBom(documentId, workspaceId, elementId, wvmType = 'w', bomColumnIds = STANDARD_BOM_COLUMN_IDS) {
+  return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=false&multiLevel=false&generateIfAbsent=true', bomColumnIds)
 }
 
 // ── Onshape reference trimming ────────────────────────────────
@@ -220,13 +245,12 @@ export const MAX_CHILD_DEPTH = 5
  *
  * Returns { headers, directParts, subassemblies }
  */
-async function fetchIndentedBom(documentId, workspaceId, elementId, wvmType) {
-  return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true')
+async function fetchIndentedBom(documentId, workspaceId, elementId, wvmType, bomColumnIds) {
+  return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true', bomColumnIds)
 }
 
-export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType = 'w', rootOwnerId = null) {
-  const bomData = await fetchIndentedBom(documentId, workspaceId, elementId, wvmType)
-
+export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType = 'w', rootOwnerId = null, bomColumnIds = STANDARD_BOM_COLUMN_IDS) {
+  const bomData = await fetchIndentedBom(documentId, workspaceId, elementId, wvmType, bomColumnIds)
   const headers    = bomData.headers ?? []
   const headerById = {}
   headers.forEach(h => { headerById[h.id] = h.name?.toLowerCase() })
