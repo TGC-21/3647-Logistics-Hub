@@ -86,6 +86,33 @@ export async function fetchBom(documentId, workspaceId, elementId, wvmType = 'w'
   return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=false&multiLevel=false&generateIfAbsent=true')
 }
 
+// ── Onshape reference trimming ────────────────────────────────
+//
+// Onshape BOM rows carry a large amount of UI-only payload per row (full
+// material property tables, every enum dropdown's complete option list,
+// color/appearance objects, BOM-tree bookkeeping ids, etc.) that nothing
+// in Partshelf ever reads. The only piece with a real future consumer is
+// `itemSource` — SPACER_AUTO_DETECTION_ROADMAP.md keys its Part-Studio
+// grouping/caching off documentId+wvmType+wvmId+elementId+fullConfiguration,
+// and per-part identity off partId/partIdentity. Everything else in a raw
+// row is discarded before it ever reaches assembly_parts.onshape_reference.
+function pickOnshapeReference(row) {
+  const src = row?.itemSource || {}
+  return {
+    documentId:                   src.documentId ?? null,
+    wvmType:                      src.wvmType ?? null,
+    wvmId:                        src.wvmId ?? null,
+    elementId:                    src.elementId ?? null,
+    partId:                       src.partId ?? null,
+    partIdentity:                 src.partIdentity ?? null,
+    configuration:                src.configuration ?? null,
+    fullConfiguration:            src.fullConfiguration ?? null,
+    sourceElementMicroversionId:  src.sourceElementMicroversionId ?? null,
+    isStandardContent:            src.isStandardContent ?? false,
+  }
+}
+
+
 // ── Row value resolver ────────────────────────────────────────
 
 export function resolveRow(row, headerById) {
@@ -98,7 +125,12 @@ export function resolveRow(row, headerById) {
   const partName   = byName['name'] || byName['part name'] || byName['description'] || 'Unknown part'
   const partNumber = byName['part number'] || byName['part #'] || byName['pn'] || ''
   const quantity   = parseInt(byName['quantity'] || byName['qty'] || byName['count'] || '1', 10) || 1
-  return { partName: String(partName), partNumber: String(partNumber), quantity, raw: row }
+  return {
+    partName: String(partName),
+    partNumber: String(partNumber),
+    quantity,
+    raw: pickOnshapeReference(row),
+  }
 }
 
 // ── Flat parser ───────────────────────────────────────────────
