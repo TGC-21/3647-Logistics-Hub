@@ -63,7 +63,7 @@ const STANDARD_BOM_COLUMN_IDS = [
 async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, queryString, bomColumnIds) {
   const base = `/assemblies/d/${documentId}/${wvmType}/${workspaceId}/e/${elementId}/bom`
   const fullQuery = bomColumnIds?.length
-    ? `${queryString}&bomColumnIds=${bomColumnIds.join(',')}`
+    ? `${queryString}&${bomColumnIds.map(id => `bomColumnIds=${id}`).join('&')}`
     : queryString
   const path = `${base}?${fullQuery}`
 
