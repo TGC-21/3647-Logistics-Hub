@@ -43,11 +43,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 // standard fields, parts fetched with this restriction will silently come
 // back as "Unknown part" (nothing resolves to name/qty) even though rows
 // exist — that's the signal to widen or drop this list.
+const CATEGORY_HEADER_ID = '57f3fb8efa3416c06701d625'
+
 const STANDARD_BOM_COLUMN_IDS = [
   '57f3fb8efa3416c06701d60d', // Name
   '57f3fb8efa3416c06701d60f', // Part number
   '5ace8269c046ad612c65a0ba', // Quantity
-  CATEGORY_HEADER_ID_PLACEHOLDER, // Category — defined below, see note
+  CATEGORY_HEADER_ID, // Category — defined below, see note
 ]
 
 /**
@@ -180,7 +182,7 @@ export function parseBomRows(bomData) {
 // document owner to tell "our" subassemblies from vendor/COTS assemblies
 // (which get treated as plain parts).
 
-const CATEGORY_HEADER_ID = '57f3fb8efa3416c06701d625'
+
 
 function getCategoryInfo(row) {
   const val = row.headerIdToValue?.[CATEGORY_HEADER_ID]
