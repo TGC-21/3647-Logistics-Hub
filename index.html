@@ -534,6 +534,61 @@
   </div>
 </div>
 
+<!-- ── Fabrication Detection Confirm Modal ────────────────────── -->
+<!-- Splice this into index.html, e.g. right after #fab-job-modal-overlay -->
+<div class="overlay" id="fab-detect-confirm-overlay" style="display:none">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Confirm fabrication candidate</div>
+        <div style="font-size:12px;color:var(--color-text-tertiary)" id="fab-detect-subtitle"></div>
+      </div>
+      <button class="btn-icon" id="btn-close-fab-detect"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="fab-detect-warning-banner"></div>
+
+      <div class="field-row">
+        <div class="field">
+          <label>Spacer type</label>
+          <div id="fab-detect-spacer-type" style="font-size:13px;font-weight:600;padding:7px 0"></div>
+        </div>
+        <div class="field">
+          <label>Confidence</label>
+          <div id="fab-detect-confidence" style="padding:7px 0"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>OD (outer diameter, in) <span class="required-star">*</span></label>
+        <input type="number" step="any" id="fab-detect-field-od" placeholder="e.g. 0.375">
+      </div>
+
+      <div class="field" id="fab-detect-id-field">
+        <label id="fab-detect-id-label">ID (inner diameter, in) <span class="required-star">*</span></label>
+        <input type="number" step="any" id="fab-detect-field-id" placeholder="e.g. 0.196">
+      </div>
+
+      <div class="field">
+        <label>Length (in) <span class="required-star">*</span></label>
+        <input type="number" step="any" id="fab-detect-field-length" placeholder="e.g. 1.25">
+      </div>
+
+      <div class="field">
+        <label>Quantity to promise</label>
+        <input type="number" min="1" id="fab-detect-field-qty" value="1">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-fab-detect-ignore" style="margin-right:auto"><i class="ti ti-eye-off" aria-hidden="true"></i> Not a spacer</button>
+      <button class="btn" id="btn-cancel-fab-detect">Cancel</button>
+      <button class="btn btn-primary" id="btn-confirm-fab-detect">
+        <i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Fabrication Batch Create / Edit Modal ──────────────────── -->
 <div class="overlay" id="batch-modal-overlay" style="display:none">
   <div class="modal" style="max-width:440px">
