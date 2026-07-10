@@ -679,7 +679,9 @@ async function renderChildDetail() {
       const viewLinkedBtn = e.target.closest('[data-view-linked]')
       const delBtn = e.target.closest('[data-child-part-del]')
       const fabBtn = e.target.closest('[data-child-part-fab]')
-
+      const fabDetectBtn = e.target.closest('[data-child-part-fabdetect]')
+   
+      if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.childPartFabdetect, true); return }
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
@@ -750,7 +752,8 @@ function childPartRowHTML(p, job = null) {
       <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${collectedQty >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
-    </td>
+      ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected spacer"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
+      </td>
   </tr>`
 }
 
@@ -802,7 +805,8 @@ function partRowHTML(p, job = null) {
       <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
-    </td>
+      ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected spacer">     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
+      </td>
   </tr>`
 }
 
@@ -826,6 +830,9 @@ function bindPartRowEvents() {
 
     const fabBtn = e.target.closest('[data-part-fab]')
     if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.partFab, false); return }
+
+    const fabDetectBtn = e.target.closest('[data-part-fabdetect]')
+    if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.partFabdetect, false); return }
   })
 }
 
@@ -1810,6 +1817,183 @@ async function confirmSendToFabricate() {
   }
 }
 
+function currentFabDetectPart() {
+  return fabDetectIsChild
+    ? currentChildParts.find(p => p.id === fabDetectPartId)
+    : currentParts.find(p => p.id === fabDetectPartId)
+}
+
+function openFabDetectConfirmModal(partId, isChildPart = false) {
+  fabDetectPartId  = partId
+  fabDetectIsChild = isChildPart
+  const part = currentFabDetectPart()
+  if (!part) return
+  const meta = part.fabricationMetadata || {}
+
+  // If detection found an unambiguous single match, use its dimensions.
+  // If it found multiple candidateMatches (ambiguous Part Studio), default
+  // to the first — the user is expected to correct fields manually either
+  // way since v1 doesn't attempt to auto-disambiguate.
+  fabDetectMatch = meta.dimensions
+    ? meta
+    : (meta.candidateMatches && meta.candidateMatches[0]) || meta
+
+  const dims = fabDetectMatch.dimensions || {}
+  const spacerType = fabDetectMatch.spacerType || 'ROUND'
+  const isHex = spacerType === 'HEX' || spacerType === 'HEX375'
+
+  document.getElementById('fab-detect-subtitle').textContent =
+    `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
+  document.getElementById('fab-detect-spacer-type').textContent = spacerType
+  document.getElementById('fab-detect-confidence').innerHTML =
+    `<span class="part-badge part-badge--${fabDetectMatch.confidence === 'high' ? 'complete' : 'partial'}">${fabDetectMatch.confidence || 'unknown'}</span>`
+
+  document.getElementById('fab-detect-id-label').textContent =
+    isHex ? 'Across flats (in) *' : 'ID (inner diameter, in) *'
+
+  document.getElementById('fab-detect-field-od').value     = dims.od?.value ?? ''
+  document.getElementById('fab-detect-field-id').value     = isHex ? (dims.acrossFlats?.value ?? '') : (dims.id?.value ?? '')
+  document.getElementById('fab-detect-field-length').value = dims.length?.value ?? ''
+
+  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
+  document.getElementById('fab-detect-field-qty').value = gap
+  document.getElementById('fab-detect-field-qty').max   = gap
+
+  const warnings = meta.warnings || []
+  document.getElementById('fab-detect-warning-banner').innerHTML = warnings.length
+    ? `<div class="onshape-preview-warning"><i class="ti ti-alert-triangle" aria-hidden="true"></i><span>${warnings.join(' ')}</span></div>`
+    : ''
+
+  document.getElementById('fab-detect-confirm-overlay').style.display = 'flex'
+}
+
+function closeFabDetectConfirmModal() {
+  document.getElementById('fab-detect-confirm-overlay').style.display = 'none'
+  fabDetectPartId = null
+  fabDetectMatch  = null
+}
+
+/** Finds (or creates, once) the hard-coded "Spacer" category. */
+async function ensureSpacerCategory() {
+  let cats = await fetchCategories()
+  let cat = cats.find(c => c.name === SPACER_CATEGORY_NAME)
+  if (cat) return cat
+  cat = await upsertCategory({ id: genId(), name: SPACER_CATEGORY_NAME, requiredKeysConfig: SPACER_REQUIRED_KEYS_CONFIG })
+  return cat
+}
+
+async function confirmFabDetection() {
+  const part = currentFabDetectPart()
+  if (!part) return
+
+  const od     = parseFloat(document.getElementById('fab-detect-field-od').value)
+  const idOrAf = parseFloat(document.getElementById('fab-detect-field-id').value)
+  const length = parseFloat(document.getElementById('fab-detect-field-length').value)
+  const qty    = Math.max(1, parseInt(document.getElementById('fab-detect-field-qty').value, 10) || 1)
+
+  if (!Number.isFinite(od) || !Number.isFinite(idOrAf) || !Number.isFinite(length)) {
+    toastFn('OD, ID/across-flats, and Length are all required')
+    return
+  }
+
+  const meta = part.fabricationMetadata || {}
+  const spacerType = fabDetectMatch?.spacerType || 'ROUND'
+
+  // Original detected values (if any) are preserved; anything the user
+  // typed that differs from what detection found is recorded as an
+  // override — matches the roadmap's overrides shape.
+  const detectedDims = fabDetectMatch?.dimensions || {}
+  const overrides = {}
+  const detectedOd = detectedDims.od?.value
+  const detectedLen = detectedDims.length?.value
+  const detectedIdOrAf = spacerType === 'ROUND' ? detectedDims.id?.value : detectedDims.acrossFlats?.value
+  if (detectedOd !== od) overrides.od = { value: od, unit: 'in', reason: 'User confirmation edit' }
+  if (detectedLen !== length) overrides.length = { value: length, unit: 'in', reason: 'User confirmation edit' }
+  if (detectedIdOrAf !== idOrAf) overrides[spacerType === 'ROUND' ? 'id' : 'acrossFlats'] = { value: idOrAf, unit: 'in', reason: 'User confirmation edit' }
+
+  const btn = document.getElementById('btn-confirm-fab-detect')
+  btn.disabled = true; btn.textContent = 'Confirming…'
+
+  try {
+    const spacerCat = await ensureSpacerCategory()
+    const attrs = {
+      'Spacer Type':          spacerType,
+      'OD':                   String(od),
+      'ID or Across Flats':   String(idOrAf),
+      'Length':               String(length),
+    }
+    const component = await findOrCreateComponent({
+      categoryId: spacerCat.id,
+      fields:     spacerCat.requiredKeysConfig,
+      attrs,
+      fallback:   { name: part.partName, description: `Auto-detected ${spacerType.toLowerCase()} spacer`, image: null },
+      genId,
+    })
+
+    const updatedMeta = {
+      ...meta,
+      status: 'queued',
+      overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null),
+    }
+
+    const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
+
+    const job = await createFabricationJob({
+      assemblyPartId:    part.id,
+      quantityRequested: qty,
+      batchId:           null,
+      genId,
+    })
+    registerNewJob(job)
+
+    if (fabDetectIsChild) {
+      const idx = currentChildParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentChildParts[idx] = savedPart
+      currentChildPartJobs[part.id] = job
+      renderChildDetail()
+    } else {
+      const idx = currentParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentParts[idx] = savedPart
+      currentPartJobs[part.id] = job
+      renderAssemblyDetail()
+    }
+
+    closeFabDetectConfirmModal()
+    toastFn(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
+  } catch (e) {
+    console.error(e)
+    toastFn(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming spacer')
+  } finally {
+    btn.disabled = false
+    btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
+  }
+}
+
+/** "Not a spacer" — marks the row ignored so it stops showing the review
+ *  action, without creating any component or job. */
+async function ignoreFabDetection() {
+  const part = currentFabDetectPart()
+  if (!part) return
+  try {
+    const updatedMeta = { ...(part.fabricationMetadata || {}), status: 'ignored' }
+    const saved = await upsertAssemblyPart({ ...part, fabricationMetadata: updatedMeta })
+    if (fabDetectIsChild) {
+      const idx = currentChildParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentChildParts[idx] = saved
+      renderChildDetail()
+    } else {
+      const idx = currentParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentParts[idx] = saved
+      renderAssemblyDetail()
+    }
+    closeFabDetectConfirmModal()
+    toastFn('Marked as not a spacer')
+  } catch (e) {
+    console.error(e)
+    toastFn('Error updating part')
+  }
+}
+
 function renderInventoryLinkSuggestion(partName) {
   const el = document.getElementById('inv-link-suggestion')
   const suggestions = suggestCategoriesForPartName(partName)
@@ -2559,6 +2743,14 @@ export function bindDesignerEvents() {
     if (e.target === e.currentTarget) closeInventoryLinkModal()
   })
 
+  document.getElementById('btn-close-fab-detect').addEventListener('click', closeFabDetectConfirmModal)
+  document.getElementById('btn-cancel-fab-detect').addEventListener('click', closeFabDetectConfirmModal)
+  document.getElementById('btn-confirm-fab-detect').addEventListener('click', confirmFabDetection)
+  document.getElementById('btn-fab-detect-ignore').addEventListener('click', ignoreFabDetection)
+  document.getElementById('fab-detect-confirm-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeFabDetectConfirmModal()
+  })
+
   let invLinkSearchTimer
   document.getElementById('inv-link-search-input').addEventListener('input', e => {
     invLinkQuery = e.target.value
@@ -2649,3 +2841,35 @@ function renderLinkedDetail(partId, instances, isChildPart) {
     btn.addEventListener('click', () => unlinkInstanceFromPart(partId, btn.dataset.unlinkInstance, isChildPart))
   )
 }
+
+function fabDetectionBadgeHTML(p) {
+  const meta = p.fabricationMetadata
+  if (!meta || !meta.autoDetected) return ''
+  const map = {
+    detected:     ['fab-job-badge--complete',   'ti-cube-plus',    'Spacer detected'],
+    needs_review: ['fab-job-badge--committed',  'ti-help-circle',  'Needs review'],
+    confirmed:    ['fab-job-badge--in_progress','ti-clock',        'Confirmed'],
+    queued:       ['fab-job-badge--queued',     'ti-tool',         'Queued for fab'],
+    ignored:      ['fab-job-badge--queued',     'ti-eye-off',      'Not a spacer'],
+    failed:       ['fab-job-badge--committed',  'ti-alert-triangle','Detection failed'],
+  }
+  const [cls, icon, label] = map[meta.status] || ['fab-job-badge--queued', 'ti-cube', meta.status]
+  return `<span class="fab-job-badge ${cls}" title="${(meta.warnings || []).join(' ')}">
+    <i class="ti ${icon}" aria-hidden="true"></i> ${label}
+  </span>`
+}
+
+// A row gets the "Review spacer" action button whenever detection found
+// something that isn't already queued/ignored.
+function fabDetectActionable(p) {
+  const meta = p.fabricationMetadata
+  return !!meta?.autoDetected && ['detected', 'needs_review'].includes(meta.status)
+}
+
+// Add to the row's action cell (both partRowHTML and childPartRowHTML),
+// alongside the existing data-part-fab / data-child-part-fab button:
+//
+//   ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected spacer">
+//     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
+//
+// (use data-child-part-fabdetect for childPartRowHTML's row instead)
