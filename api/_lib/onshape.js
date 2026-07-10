@@ -289,12 +289,12 @@ export const MAX_CHILD_DEPTH = 5
 async function fetchIndentedBom(documentId, workspaceId, elementId, wvmType, bomColumnIds) {
   return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true', bomColumnIds)
 }
-+/**
-+ * Builds the dedupe key for a single Onshape element reference — same
-+ * source used both to skip refetching an identical subassembly (mirrored
-+ * arms, repeated gearboxes, etc.) and, per the auto-detection roadmap, to
-+ * group BOM rows by source Part Studio.
-+ */
+/**
+ * Builds the dedupe key for a single Onshape element reference — same
+ * source used both to skip refetching an identical subassembly (mirrored
+ * arms, repeated gearboxes, etc.) and, per the auto-detection roadmap, to
+ * group BOM rows by source Part Studio.
+ */
 function elementCacheKey(documentId, wvmType, workspaceId, elementId) {
   return `${documentId}::${wvmType}::${workspaceId}::${elementId}`
 }
