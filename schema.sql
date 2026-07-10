@@ -419,3 +419,23 @@ create policy "Public image reads"
 create policy "Public image deletes"
   on storage.objects for delete
   using (bucket_id = 'component-images');
+
+  -- ============================================================
+-- Migration: fabrication_metadata on assembly_parts
+-- Run this in: Supabase Dashboard → SQL Editor → New query
+--
+-- Adds a column for auto-detected fabrication candidates (see
+-- SPACER_AUTO_DETECTION_ROADMAP.md). Safe to run on an existing
+-- database — additive only, default keeps old rows valid.
+--
+-- For FRESH installs, this block has also been appended to the
+-- bottom of schema.sql so a from-scratch `schema.sql` run already
+-- includes it — running this migration afterward is a harmless no-op
+-- (`if not exists`).
+-- ============================================================
+
+alter table assembly_parts
+  add column if not exists fabrication_metadata jsonb not null default '{}';
+
+comment on column assembly_parts.fabrication_metadata is
+  'Auto-detection results for generated fabrication candidates (e.g. Spacer FeatureScript parts). Shape: { autoDetected, kind, status, confidence, source, dimensions, overrides, fabricationDraft, onshape, warnings }. status in (none, detected, needs_review, confirmed, queued, ignored, failed). Populated by POST /api/onshape-detect-fabrication, never written automatically during import/reimport.';

@@ -1023,6 +1023,7 @@ function dbPartToLocal(row) {
     componentId:       row.component_id ?? null,
     linkedInstanceIds: row.linked_instance_ids ?? [],
     createdAt:         row.created_at,
+    fabricationMetadata: row.fabrication_metadata ?? {},
   }
 }
 function localPartToDb(p) {
@@ -1040,6 +1041,7 @@ function localPartToDb(p) {
     onshape_reference:  p.onshapeReference ?? null,
     component_id:       p.componentId ?? null,
     linked_instance_ids: p.linkedInstanceIds ?? [],
+    fabrication_metadata: p.fabricationMetadata ?? {},
   }
 }
 function dbChildToLocal(row) {

@@ -52,6 +52,21 @@ let invLinkResults     = []     // [{ component, instances }] — components w/ 
 let invLinkAllComponents = []   // cached full component list for client-side search
 let invLinkLoading     = false
 
+let fabDetectRunning   = false   // true while POST /api/onshape-detect-fabrication is in flight
+let fabDetectPartId    = null    // assembly_parts.id currently shown in the confirm modal
+let fabDetectIsChild   = false
+let fabDetectMatch     = null    // the single resolved match object (only set when unambiguous)
+ 
+// Hard-coded category shape for auto-created Spacer components — no UI
+// to configure this in v1, matches the confirmation overlay's fields.
+const SPACER_CATEGORY_NAME = 'Spacer'
+const SPACER_REQUIRED_KEYS_CONFIG = [
+  { key: 'Spacer Type', type: 'enum', options: ['ROUND', 'HEX', 'HEX375'] },
+  { key: 'OD',           type: 'quantity', defaultUnit: 'in' },
+  { key: 'ID or Across Flats', type: 'quantity', defaultUnit: 'in' },
+  { key: 'Length',       type: 'quantity', defaultUnit: 'in' },
+]
+
 // ── Part name → category dictionary ─────────────────────────
 // Keys are lowercase keywords checked against words in a part's name.
 // Values are candidate category names to prioritize in search results.
@@ -76,7 +91,7 @@ const PART_NAME_DICTIONARY = {
   plate:   ['Structural'],
   tube:    ['Structural'],
   rod:     ['Structural'],
-  spacer:  ['Hardware'],
+  spacer:  ['Spacer'],
   standoff:['Hardware'],
 }
 
@@ -343,6 +358,14 @@ async function renderAssemblyDetail() {
     ? `<button class="btn btn-sm" id="btn-reimport-asm"><i class="ti ti-refresh" aria-hidden="true"></i><span> Re-import</span></button>`
     : ''
 
+   const detectFabBtn = isLinked
+     ? `<button class="btn btn-sm" id="btn-detect-fabrication">
+          <i class="ti ti-scan" aria-hidden="true"></i><span> Detect fabrication candidates</span>
+        </button>`
+     : ''
+
+// ...include ${detectFabBtn} next to ${reimportBtn} in the toolbar template...
+//
   const childrenHTML = currentChildren.length
     ? `<div class="asm-grid">
         ${currentChildren.map(c => {
@@ -422,6 +445,7 @@ async function renderAssemblyDetail() {
         <div style="flex:1"></div>
         ${reimportBtn}
         ${onshapeBtn}
+        ${detectFabBtn}
         <button class="btn btn-sm" id="btn-edit-asm"><i class="ti ti-edit" aria-hidden="true"></i><span> Edit</span></button>
         <button class="btn btn-danger btn-sm" id="btn-delete-asm"><i class="ti ti-trash" aria-hidden="true"></i></button>
       </div>
@@ -451,6 +475,8 @@ async function renderAssemblyDetail() {
   document.getElementById('btn-add-part')?.addEventListener('click', () => openPartModal())
   document.getElementById('btn-import-csv')?.addEventListener('click', openBomImportModal)
   document.getElementById('btn-import-onshape')?.addEventListener('click', () => openOnshapeModal('import'))
+  document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetection)
+
   if (isLinked) {
     document.getElementById('btn-reimport-asm').addEventListener('click', () => confirmReimport(assembly))
   }
@@ -477,6 +503,36 @@ async function renderAssemblyDetail() {
 
   bindPartRowEvents()
 
+}
+
+
+/** POSTs to /api/onshape-detect-fabrication for the current assembly, then
+ *  refetches parts so the new fabrication_metadata shows up on rows.
+ *  Button-triggered only — never called automatically during import. */
+async function runFabricationDetection() {
+  if (!currentAssemblyId || fabDetectRunning) return
+  fabDetectRunning = true
+  const btn = document.getElementById('btn-detect-fabrication')
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
+ 
+  try {
+    const res  = await fetch('/api/onshape-detect-fabrication', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ assemblyId: currentAssemblyId }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Detection failed')
+ 
+    currentParts = await fetchAssemblyParts(currentAssemblyId)
+    renderAssemblyDetail()
+    toastFn(data.message || 'Detection complete')
+  } catch (e) {
+    console.error(e)
+    toastFn(e.message || 'Error running fabrication detection')
+  } finally {
+    fabDetectRunning = false
+  }
 }
 
 // ── Subassembly node detail (isolated window only) ─────────────
