@@ -1,5 +1,11 @@
 const ONSHAPE_BASE = 'https://cad.onshape.com/api/v6'
 
+// Cap on concurrent in-flight requests to Onshape when fanning out across
+// sibling subassemblies (see seedSubassembliesConcurrently in onshape-bom.js).
+// Kept here so both this module and onshape-bom.js agree on one constant.
+export const MAX_ONSHAPE_CONCURRENCY = 5
+
+
 export function applyCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
@@ -9,27 +15,49 @@ export function applyCors(res) {
 export function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
+const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-export async function onshapeGet(path) {
+
+/**
+ * Retries a 429 (rate limited) with backoff before giving up — everything
+ * else (404, 5xx, etc.) is thrown immediately, unchanged from before. This
+ * matters more now than it used to: parallelizing sibling subassembly
+ * fetches (seedSubassembliesConcurrently) means several requests can land
+ * on Onshape at once, which is exactly the situation that trips a limiter.
+ */
+export async function onshapeGet(path, { retries = 3 } = {}) {
   const accessKey = process.env.ONSHAPE_ACCESS_KEY
   const secretKey = process.env.ONSHAPE_SECRET_KEY
   if (!accessKey || !secretKey) {
     throw new Error('ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY must be set.')
   }
   const credentials = Buffer.from(`${accessKey}:${secretKey}`).toString('base64')
-  const res = await fetch(`${ONSHAPE_BASE}${path}`, {
-    headers: { Authorization: `Basic ${credentials}`, Accept: 'application/json' },
-  })
-  if (!res.ok) {
+
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${ONSHAPE_BASE}${path}`, {
+      headers: { Authorization: `Basic ${credentials}`, Accept: 'application/json' },
+    })
+    if (res.ok) return res.json()
+
+    if (res.status === 429 && attempt < retries) {
+      // Honor Retry-After if Onshape sends one; otherwise back off
+      // exponentially (400ms, 800ms, 1600ms…) with a little jitter so a
+      // burst of parallel requests doesn't all retry in lockstep.
+      const retryAfterHeader = res.headers.get('retry-after')
+      const retryAfterMs     = retryAfterHeader ? parseFloat(retryAfterHeader) * 1000 : null
+      const backoffMs        = retryAfterMs ?? (400 * 2 ** attempt + Math.random() * 150)
+      console.warn(`[onshape] 429 rate limited on ${path} — retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${retries})`)
+      await sleep(backoffMs)
+      continue
+    }
+
     const text = await res.text()
     throw new Error(`Onshape API ${res.status}: ${text.slice(0, 400)}`)
   }
-  return res.json()
 }
 
 // ── BOM fetching ──────────────────────────────────────────────
 
-const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // Standard BOM column (header) ids. Unlike custom/category-scoped columns,
 // these map to Onshape's built-in part properties and have been observed
@@ -86,16 +114,27 @@ async function fetchBomWithFallback(documentId, wvmType, workspaceId, elementId,
     // no point retrying the shaped request, fall through to the final error.
   }
 
-  await sleep(800)
-  try {
-    return await onshapeGet(path)
-  } catch (e2) {
-    throw new Error(
-      `Could not load the BOM for element ${elementId} (document ${documentId}, ${wvmType} ${workspaceId}). ` +
-      `Onshape returned 404 even after forcing BOM generation — check that this element is an Assembly ` +
-      `(not a Part Studio/other tab), that the ${wvmType === 'v' ? 'version' : wvmType === 'm' ? 'microversion' : 'workspace'} id is current, and that you have access to it.`
-    )
+  // Poll with increasing delays instead of one flat 800ms wait — most
+  // generations finish well under that, so this returns as soon as the
+  // BOM is actually ready rather than always paying the worst-case delay.
+  const pollDelaysMs = [150, 300, 500, 800]
+  let lastErr
+  for (const delay of pollDelaysMs) {
+    await sleep(delay)
+    try {
+      return await onshapeGet(path)
+    } catch (e2) {
+      lastErr = e2
+      if (!/Onshape API 404/.test(e2.message)) throw e2
+    }
   }
+  
+  throw new Error(
+    `Could not load the BOM for element ${elementId} (document ${documentId}, ${wvmType} ${workspaceId}). ` +
+    `Onshape returned 404 even after forcing BOM generation — check that this element is an Assembly ` +
+    `(not a Part Studio/other tab), that the ${wvmType === 'v' ? 'version' : wvmType === 'm' ? 'microversion' : 'workspace'} id is current, and that you have access to it.` +
+    (lastErr ? ` (last error: ${lastErr.message})` : '')
+  )
 }
 
 /**
@@ -250,8 +289,44 @@ export const MAX_CHILD_DEPTH = 5
 async function fetchIndentedBom(documentId, workspaceId, elementId, wvmType, bomColumnIds) {
   return fetchBomWithFallback(documentId, wvmType, workspaceId, elementId, 'indented=true&multiLevel=false&generateIfAbsent=true', bomColumnIds)
 }
++/**
++ * Builds the dedupe key for a single Onshape element reference — same
++ * source used both to skip refetching an identical subassembly (mirrored
++ * arms, repeated gearboxes, etc.) and, per the auto-detection roadmap, to
++ * group BOM rows by source Part Studio.
++ */
+function elementCacheKey(documentId, wvmType, workspaceId, elementId) {
+  return `${documentId}::${wvmType}::${workspaceId}::${elementId}`
+}
 
-export async function resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType = 'w', rootOwnerId = null, bomColumnIds = STANDARD_BOM_COLUMN_IDS) {
+export async function resolveBomWithSubassemblies(
+  documentId, workspaceId, elementId, wvmType = 'w', rootOwnerId = null,
+  bomColumnIds = STANDARD_BOM_COLUMN_IDS,
+  // Shared across one whole import/re-import call tree (root call creates
+  // it, recursive calls from onshape-bom.js pass the same Map along) so
+  // that a subassembly instanced more than once anywhere in the tree —
+  // e.g. two identical gearboxes, a mirrored left/right arm — is fetched
+  // and resolved from Onshape exactly once, no matter how many BOM rows
+  // reference it.
+  resolveCache = new Map()
+) {
+  const cacheKey = elementCacheKey(documentId, wvmType, workspaceId, elementId)
+  if (resolveCache.has(cacheKey)) {
+    console.log(`[onshape] Reusing cached resolution for element ${elementId} (already fetched elsewhere in this tree)`)
+    return resolveCache.get(cacheKey)
+  }
+
+  // Store the in-flight promise itself (not just the eventual result) so
+  // that if two sibling rows both reference this same element and get
+  // processed concurrently (see seedSubassembliesConcurrently), the second
+  // one awaits the first's in-flight fetch instead of kicking off a
+  // duplicate request.
+  const promise = resolveBomWithSubassembliesUncached(documentId, workspaceId, elementId, wvmType, rootOwnerId, bomColumnIds, resolveCache)
+  resolveCache.set(cacheKey, promise)
+  return promise
+}
+
+async function resolveBomWithSubassembliesUncached(documentId, workspaceId, elementId, wvmType, rootOwnerId, bomColumnIds, resolveCache) {
   const bomData = await fetchIndentedBom(documentId, workspaceId, elementId, wvmType, bomColumnIds)
   const headers    = bomData.headers ?? []
   const headerById = {}

@@ -14,7 +14,7 @@ import { createClient } from '@supabase/supabase-js'
 import {
   fetchBom, parseBomRows,
   resolveBomWithSubassemblies, fetchDocumentOwnerId,
-  applyCors, genId, MAX_CHILD_DEPTH,
+  applyCors, genId, MAX_CHILD_DEPTH, MAX_ONSHAPE_CONCURRENCY
 } from './_lib/onshape.js'
 
 function getSupabase() {
@@ -91,11 +91,16 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
 
   let partCount, childCount
   try {
+    // One resolveCache shared across the ENTIRE import tree, root call
+    // included — dedupes repeated subassembly instances (see
+    // resolveBomWithSubassemblies's resolveCache param).
+    const resolveCache = new Map()
     ;({ partCount, childCount } = await seedAssemblyContents(supabase, {
       documentId, workspaceId, elementId, depth: 0, rootOwnerId,
       partsOwner:    { assembly_id: assemblyId },
       childrenOwner: { parent_assembly_id: assemblyId },
       progressByPartNumber: {},
+      resolveCache,
     }))
   } catch (e) {
     // Don't leave an empty orphan assembly behind if the BOM fetch failed.
@@ -121,7 +126,7 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
 
 async function seedAssemblyContents(supabase, {
   documentId, workspaceId, elementId, wvmType = 'w', depth, rootOwnerId,
-  partsOwner, childrenOwner, progressByPartNumber = {},
+  partsOwner, childrenOwner, progressByPartNumber = {}, resolveCache,
 }) {
   let directParts   = []
   let subassemblies = []
@@ -130,7 +135,7 @@ async function seedAssemblyContents(supabase, {
     // Category-header based resolver: classifies each row as a part or an
     // assembly, and — for assembly rows — as ours (recurse) vs. vendor/COTS
     // (logged as a part) by comparing document ids against the root document.
-    const resolved = await resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType, rootOwnerId)
+    const resolved = await resolveBomWithSubassemblies(documentId, workspaceId, elementId, wvmType, rootOwnerId, undefined, resolveCache)
     directParts   = resolved.directParts
     subassemblies = resolved.subassemblies
   } else {
@@ -164,43 +169,74 @@ async function seedAssemblyContents(supabase, {
   }
 
   // ── Recursively build subassembly nodes (assembly_children only) ──
-  let childCount = 0
-
-  for (const sub of subassemblies) {
-    const childId = genId()
-    const { error: childErr } = await supabase.from('assembly_children').insert({
-      id:                   childId,
-      ...childrenOwner,
-      name:                 sub.partName,
-      onshape_document_id:  sub.resolvedDocumentId,
-      onshape_workspace_id: sub.resolvedWorkspaceId,
-      onshape_wvm_type:     sub.resolvedWvmType || 'w',
-      onshape_element_id:   sub.resolvedElementId,
-      quantity:             sub.quantity,
-    })
-    if (childErr) throw new Error(`assembly_children insert: ${childErr.message}`)
-    childCount++
-
-    // Recurse into the subassembly's own contents — nested under IT, not
-    // under the root assembly, so the hierarchy stays intact. Crucially,
-    // pass along its actual branch type (workspace/version/microversion) —
-    // mirrored/released/frozen references are commonly 'v', not 'w'.
-    await seedAssemblyContents(supabase, {
-      documentId:  sub.resolvedDocumentId,
-      workspaceId: sub.resolvedWorkspaceId,
-      wvmType:     sub.resolvedWvmType || 'w',
-      elementId:   sub.resolvedElementId,
-      depth:       depth + 1,
-      rootOwnerId,
-      partsOwner:    { assembly_child_id: childId },
-      childrenOwner: { parent_child_id: childId },
-      progressByPartNumber: {},
-    })
-  }
+  // Siblings at this depth don't depend on each other, so resolve them
+  // concurrently (capped) instead of one full round trip at a time — a
+  // wide tree (e.g. 8 sibling subassemblies) now costs one "wave" of
+  // parallel requests per depth level instead of 8 sequential ones.
+  // resolveBomWithSubassemblies's own in-flight-promise caching (see
+  // onshape.js) still protects against two of these siblings turning out
+  // to reference the exact same underlying element.
+  const childCount = await seedSubassembliesConcurrently(supabase, subassemblies, {
+    depth, rootOwnerId, childrenOwner, resolveCache,
+  })
 
   return { partCount: directParts.length, childCount }
 }
 
+
+/**
+ * Inserts each subassembly's assembly_children row and recurses into its
+ * contents, running up to MAX_ONSHAPE_CONCURRENCY of these sibling
+ * branches in flight at once. A simple worker-pool pattern rather than a
+ * flat Promise.all(...) so a subassembly with 20 siblings doesn't fire 20
+ * simultaneous requests at Onshape — onshapeGet's own 429 backoff is a
+ * safety net, not a substitute for capping fan-out at the source.
+ */
+async function seedSubassembliesConcurrently(supabase, subassemblies, { depth, rootOwnerId, childrenOwner, resolveCache }) {
+  let childCount = 0
+  let cursor = 0
+
+  async function worker() {
+    while (cursor < subassemblies.length) {
+      const sub = subassemblies[cursor++]
+      const childId = genId()
+      const { error: childErr } = await supabase.from('assembly_children').insert({
+        id:                   childId,
+        ...childrenOwner,
+        name:                 sub.partName,
+        onshape_document_id:  sub.resolvedDocumentId,
+        onshape_workspace_id: sub.resolvedWorkspaceId,
+        onshape_wvm_type:     sub.resolvedWvmType || 'w',
+        onshape_element_id:   sub.resolvedElementId,
+        quantity:             sub.quantity,
+      })
+      if (childErr) throw new Error(`assembly_children insert: ${childErr.message}`)
+      childCount++
+
+      // Recurse into the subassembly's own contents — nested under IT, not
+      // under the root assembly, so the hierarchy stays intact. Crucially,
+      // pass along its actual branch type (workspace/version/microversion) —
+      // mirrored/released/frozen references are commonly 'v', not 'w'.
+      await seedAssemblyContents(supabase, {
+        documentId:  sub.resolvedDocumentId,
+        workspaceId: sub.resolvedWorkspaceId,
+        wvmType:     sub.resolvedWvmType || 'w',
+        elementId:   sub.resolvedElementId,
+        depth:       depth + 1,
+        rootOwnerId,
+        partsOwner:    { assembly_child_id: childId },
+        childrenOwner: { parent_child_id: childId },
+        progressByPartNumber: {},
+        resolveCache,
+      })
+    }
+  }
+
+  const workerCount = Math.min(MAX_ONSHAPE_CONCURRENCY, subassemblies.length)
+  await Promise.all(Array.from({ length: workerCount }, worker))
+
+  return childCount
+}
 // ── reimportAssembly ──────────────────────────────────────────
 // Rebuilds in place under the original assemblyId — no new record created.
 // Wiping the root's direct parts + top-level subassembly nodes is enough:
@@ -238,6 +274,7 @@ async function reimportAssembly(supabase, assemblyId) {
 
   // Rebuild under the EXISTING assemblyId — no new assembly record
   const rootOwnerId = await fetchDocumentOwnerId(asm.onshape_document_id)
+  const resolveCache = new Map()
   const { partCount, childCount } = await seedAssemblyContents(supabase, {
     documentId:  asm.onshape_document_id,
     workspaceId: asm.onshape_workspace_id,
@@ -247,6 +284,7 @@ async function reimportAssembly(supabase, assemblyId) {
     partsOwner:    { assembly_id: assemblyId },
     childrenOwner: { parent_assembly_id: assemblyId },
     progressByPartNumber,
+    resolveCache,
   })
 
   await supabase.from('assemblies').update({ status: 'draft' }).eq('id', assemblyId)
