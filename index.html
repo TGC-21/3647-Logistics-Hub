@@ -533,9 +533,6 @@
     </div>
   </div>
 </div>
-
-<!-- ── Fabrication Detection Confirm Modal ────────────────────── -->
-<!-- Splice this into index.html, e.g. right after #fab-job-modal-overlay -->
 <div class="overlay" id="fab-detect-confirm-overlay" style="display:none">
   <div class="modal" style="max-width:460px">
     <div class="modal-header">
@@ -547,6 +544,16 @@
     </div>
     <div class="modal-body">
       <div id="fab-detect-warning-banner"></div>
+
+      <div class="field" id="fab-detect-candidate-field" style="display:none">
+        <label>Which detected feature is this part? <span class="required-star">*</span></label>
+        <select id="fab-detect-candidate-select"></select>
+        <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
+          Multiple spacer features were found in this part's source Part Studio, and we can't
+          automatically tell which one this row corresponds to. Compare the dimensions below
+          against the physical part (or the feature in Onshape) and pick the correct match.
+        </p>
+      </div>
 
       <div class="field-row">
         <div class="field">
@@ -589,86 +596,6 @@
   </div>
 </div>
 
-<!-- ── Fabrication Batch Create / Edit Modal ──────────────────── -->
-<div class="overlay" id="batch-modal-overlay" style="display:none">
-  <div class="modal" style="max-width:440px">
-    <div class="modal-header">
-      <div class="modal-title" id="batch-modal-title">New batch</div>
-      <button class="btn-icon" id="btn-close-batch-modal"><i class="ti ti-x" aria-hidden="true"></i></button>
-    </div>
-    <div class="modal-body">
-      <div class="field">
-        <label>Batch name <span class="required-star">*</span></label>
-        <input type="text" id="batch-field-name" placeholder="e.g. Lathe — 7/6 afternoon">
-      </div>
-      <div class="field">
-        <label>Fab method <span class="required-star">*</span></label>
-        <input type="text" id="batch-field-method" list="batch-method-options" placeholder="e.g. Lathe, CNC, Mill">
-        <datalist id="batch-method-options">
-          <option value="Lathe"></option>
-          <option value="CNC"></option>
-          <option value="Mill"></option>
-          <option value="3D Print"></option>
-          <option value="Laser cut"></option>
-          <option value="Waterjet"></option>
-        </datalist>
-      </div>
-      <div class="field">
-        <label>Notes</label>
-        <textarea id="batch-field-notes" placeholder="Setup notes, stock material, etc."></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-danger" id="btn-delete-batch" style="display:none"><i class="ti ti-trash" aria-hidden="true"></i> Delete batch</button>
-      <div style="flex:1"></div>
-      <button class="btn" id="btn-cancel-batch">Cancel</button>
-      <button class="btn btn-primary" id="btn-save-batch">
-        <i class="ti ti-check" aria-hidden="true"></i> Save
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- ── Job Detail Overlay (Fabricate) ─────────────────────────── -->
-<div class="overlay" id="job-detail-overlay" style="display:none">
-  <div class="modal" style="max-width:460px">
-    <div class="modal-header">
-      <div class="modal-title" id="job-detail-title">Job</div>
-      <button class="btn-icon" id="btn-close-job-detail"><i class="ti ti-x" aria-hidden="true"></i></button>
-    </div>
-    <div class="modal-body" id="job-detail-body">
-      <!-- populated by fabricate.js -->
-    </div>
-  </div>
-</div>
-
-
-<!-- ── Claim Job Modal ─────────────────────────────────────── -->
-<div class="overlay" id="claim-job-overlay" style="display:none">
-  <div class="modal" style="max-width:380px">
-    <div class="modal-header">
-      <div class="modal-title">Claim job</div>
-      <button class="btn-icon" id="btn-close-claim-job"><i class="ti ti-x" aria-hidden="true"></i></button>
-    </div>
-    <div class="modal-body">
-      <p style="font-size:12px;color:var(--color-text-tertiary)" id="claim-job-subtitle"></p>
-      <div class="field">
-        <label>Your name <span class="required-star">*</span></label>
-        <input type="text" id="claim-job-field-name" placeholder="e.g. Sam">
-        <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
-          Freezes the requested quantity to you — release it later if you can't finish it.
-          (This will become a real sign-in once accounts ship.)
-        </p>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn" id="btn-cancel-claim-job">Cancel</button>
-      <button class="btn btn-primary" id="btn-confirm-claim-job">
-        <i class="ti ti-hand-stop" aria-hidden="true"></i> Claim
-      </button>
-    </div>
-  </div>
-</div>
 
 <script type="module" src="/src/main.js"></script>
 </body>

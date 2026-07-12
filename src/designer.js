@@ -56,7 +56,8 @@ let fabDetectRunning   = false   // true while POST /api/onshape-detect-fabricat
 let fabDetectPartId    = null    // assembly_parts.id currently shown in the confirm modal
 let fabDetectIsChild   = false
 let fabDetectMatch     = null    // the single resolved match object (only set when unambiguous)
- 
+let fabDetectCandidates = null 
+
 // Hard-coded category shape for auto-created Spacer components — no UI
 // to configure this in v1, matches the confirmation overlay's fields.
 const SPACER_CATEGORY_NAME = 'Spacer'
@@ -1822,57 +1823,103 @@ function currentFabDetectPart() {
     ? currentChildParts.find(p => p.id === fabDetectPartId)
     : currentParts.find(p => p.id === fabDetectPartId)
 }
-
+ 
 function openFabDetectConfirmModal(partId, isChildPart = false) {
   fabDetectPartId  = partId
   fabDetectIsChild = isChildPart
   const part = currentFabDetectPart()
   if (!part) return
   const meta = part.fabricationMetadata || {}
-
-  // If detection found an unambiguous single match, use its dimensions.
-  // If it found multiple candidateMatches (ambiguous Part Studio), default
-  // to the first — the user is expected to correct fields manually either
-  // way since v1 doesn't attempt to auto-disambiguate.
-  fabDetectMatch = meta.dimensions
-    ? meta
-    : (meta.candidateMatches && meta.candidateMatches[0]) || meta
-
-  const dims = fabDetectMatch.dimensions || {}
-  const spacerType = fabDetectMatch.spacerType || 'ROUND'
-  const isHex = spacerType === 'HEX' || spacerType === 'HEX375'
-
+ 
   document.getElementById('fab-detect-subtitle').textContent =
     `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
-  document.getElementById('fab-detect-spacer-type').textContent = spacerType
-  document.getElementById('fab-detect-confidence').innerHTML =
-    `<span class="part-badge part-badge--${fabDetectMatch.confidence === 'high' ? 'complete' : 'partial'}">${fabDetectMatch.confidence || 'unknown'}</span>`
-
-  document.getElementById('fab-detect-id-label').textContent =
-    isHex ? 'Across flats (in) *' : 'ID (inner diameter, in) *'
-
-  document.getElementById('fab-detect-field-od').value     = dims.od?.value ?? ''
-  document.getElementById('fab-detect-field-id').value     = isHex ? (dims.acrossFlats?.value ?? '') : (dims.id?.value ?? '')
-  document.getElementById('fab-detect-field-length').value = dims.length?.value ?? ''
-
-  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
-  document.getElementById('fab-detect-field-qty').value = gap
-  document.getElementById('fab-detect-field-qty').max   = gap
-
+ 
+  const candidateField  = document.getElementById('fab-detect-candidate-field')
+  const candidateSelect = document.getElementById('fab-detect-candidate-select')
+ 
+  if (meta.candidateMatches && meta.candidateMatches.length > 1) {
+    // Ambiguous — detection found multiple spacer features in this part's
+    // source Part Studio and can't tell which one this BOM row is.
+    // Previously this silently defaulted to candidateMatches[0] for every
+    // row in the group, which meant two genuinely different spacers could
+    // show identical dimensions. Now we show all candidates and require
+    // an explicit pick.
+    fabDetectCandidates = meta.candidateMatches
+    candidateField.style.display = ''
+    candidateSelect.innerHTML = fabDetectCandidates.map((m, i) => {
+      const d = m.dimensions || {}
+      const isHex = m.spacerType === 'HEX' || m.spacerType === 'HEX375'
+      const idOrAf = isHex ? d.acrossFlats?.value : d.id?.value
+      const summary = [
+        m.spacerType || '?',
+        d.od?.value != null ? `OD ${d.od.value}"` : 'OD ?',
+        idOrAf != null ? `${isHex ? 'AF' : 'ID'} ${idOrAf}"` : `${isHex ? 'AF' : 'ID'} ?`,
+        d.length?.value != null ? `L ${d.length.value}"` : 'L ?',
+        m.endType || '',
+      ].filter(Boolean).join(' · ')
+      return `<option value="${i}">Match ${i + 1}: ${summary}</option>`
+    }).join('')
+    candidateSelect.value = '0'
+    fabDetectMatch = fabDetectCandidates[0]
+  } else {
+    // Unambiguous — either a clean single match, or no candidateMatches
+    // at all (meta itself carries the dimensions directly).
+    fabDetectCandidates = null
+    candidateField.style.display = 'none'
+    fabDetectMatch = meta.dimensions ? meta : meta
+  }
+ 
+  populateFabDetectFields(part)
+ 
   const warnings = meta.warnings || []
   document.getElementById('fab-detect-warning-banner').innerHTML = warnings.length
     ? `<div class="onshape-preview-warning"><i class="ti ti-alert-triangle" aria-hidden="true"></i><span>${warnings.join(' ')}</span></div>`
     : ''
-
+ 
   document.getElementById('fab-detect-confirm-overlay').style.display = 'flex'
 }
-
+ 
+/** Fills the OD/ID/length/spacer-type/qty fields from whatever
+ *  fabDetectMatch currently points at. Called on modal open and again
+ *  whenever the candidate picker's selection changes. */
+function populateFabDetectFields(part) {
+  const dims = fabDetectMatch?.dimensions || {}
+  const spacerType = fabDetectMatch?.spacerType || 'ROUND'
+  const isHex = spacerType === 'HEX' || spacerType === 'HEX375'
+ 
+  document.getElementById('fab-detect-spacer-type').textContent = spacerType
+  document.getElementById('fab-detect-confidence').innerHTML =
+    `<span class="part-badge part-badge--${fabDetectMatch?.confidence === 'high' ? 'complete' : 'partial'}">${fabDetectMatch?.confidence || 'unknown'}</span>`
+ 
+  document.getElementById('fab-detect-id-label').textContent =
+    isHex ? 'Across flats (in) *' : 'ID (inner diameter, in) *'
+ 
+  document.getElementById('fab-detect-field-od').value     = dims.od?.value ?? ''
+  document.getElementById('fab-detect-field-id').value     = isHex ? (dims.acrossFlats?.value ?? '') : (dims.id?.value ?? '')
+  document.getElementById('fab-detect-field-length').value = dims.length?.value ?? ''
+ 
+  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
+  document.getElementById('fab-detect-field-qty').value = gap
+  document.getElementById('fab-detect-field-qty').max   = gap
+}
+ 
+/** Bound to the candidate <select>'s change event — swaps fabDetectMatch
+ *  to the newly picked candidate and refreshes the form fields. */
+function handleFabDetectCandidateChange() {
+  const idx = parseInt(document.getElementById('fab-detect-candidate-select').value, 10) || 0
+  if (!fabDetectCandidates || !fabDetectCandidates[idx]) return
+  fabDetectMatch = fabDetectCandidates[idx]
+  const part = currentFabDetectPart()
+  if (part) populateFabDetectFields(part)
+}
+ 
 function closeFabDetectConfirmModal() {
   document.getElementById('fab-detect-confirm-overlay').style.display = 'none'
   fabDetectPartId = null
   fabDetectMatch  = null
+  fabDetectCandidates = null
 }
-
+ 
 /** Finds (or creates, once) the hard-coded "Spacer" category. */
 async function ensureSpacerCategory() {
   let cats = await fetchCategories()
@@ -1881,24 +1928,24 @@ async function ensureSpacerCategory() {
   cat = await upsertCategory({ id: genId(), name: SPACER_CATEGORY_NAME, requiredKeysConfig: SPACER_REQUIRED_KEYS_CONFIG })
   return cat
 }
-
+ 
 async function confirmFabDetection() {
   const part = currentFabDetectPart()
   if (!part) return
-
+ 
   const od     = parseFloat(document.getElementById('fab-detect-field-od').value)
   const idOrAf = parseFloat(document.getElementById('fab-detect-field-id').value)
   const length = parseFloat(document.getElementById('fab-detect-field-length').value)
   const qty    = Math.max(1, parseInt(document.getElementById('fab-detect-field-qty').value, 10) || 1)
-
+ 
   if (!Number.isFinite(od) || !Number.isFinite(idOrAf) || !Number.isFinite(length)) {
     toastFn('OD, ID/across-flats, and Length are all required')
     return
   }
-
+ 
   const meta = part.fabricationMetadata || {}
   const spacerType = fabDetectMatch?.spacerType || 'ROUND'
-
+ 
   // Original detected values (if any) are preserved; anything the user
   // typed that differs from what detection found is recorded as an
   // override — matches the roadmap's overrides shape.
@@ -1910,10 +1957,10 @@ async function confirmFabDetection() {
   if (detectedOd !== od) overrides.od = { value: od, unit: 'in', reason: 'User confirmation edit' }
   if (detectedLen !== length) overrides.length = { value: length, unit: 'in', reason: 'User confirmation edit' }
   if (detectedIdOrAf !== idOrAf) overrides[spacerType === 'ROUND' ? 'id' : 'acrossFlats'] = { value: idOrAf, unit: 'in', reason: 'User confirmation edit' }
-
+ 
   const btn = document.getElementById('btn-confirm-fab-detect')
   btn.disabled = true; btn.textContent = 'Confirming…'
-
+ 
   try {
     const spacerCat = await ensureSpacerCategory()
     const attrs = {
@@ -1929,15 +1976,15 @@ async function confirmFabDetection() {
       fallback:   { name: part.partName, description: `Auto-detected ${spacerType.toLowerCase()} spacer`, image: null },
       genId,
     })
-
+ 
     const updatedMeta = {
       ...meta,
       status: 'queued',
       overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null),
     }
-
+ 
     const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
-
+ 
     const job = await createFabricationJob({
       assemblyPartId:    part.id,
       quantityRequested: qty,
@@ -1945,7 +1992,7 @@ async function confirmFabDetection() {
       genId,
     })
     registerNewJob(job)
-
+ 
     if (fabDetectIsChild) {
       const idx = currentChildParts.findIndex(p => p.id === part.id)
       if (idx > -1) currentChildParts[idx] = savedPart
@@ -1957,7 +2004,7 @@ async function confirmFabDetection() {
       currentPartJobs[part.id] = job
       renderAssemblyDetail()
     }
-
+ 
     closeFabDetectConfirmModal()
     toastFn(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
   } catch (e) {
@@ -1968,7 +2015,7 @@ async function confirmFabDetection() {
     btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
   }
 }
-
+ 
 /** "Not a spacer" — marks the row ignored so it stops showing the review
  *  action, without creating any component or job. */
 async function ignoreFabDetection() {
@@ -1993,6 +2040,7 @@ async function ignoreFabDetection() {
     toastFn('Error updating part')
   }
 }
+
 
 function renderInventoryLinkSuggestion(partName) {
   const el = document.getElementById('inv-link-suggestion')
@@ -2747,6 +2795,7 @@ export function bindDesignerEvents() {
   document.getElementById('btn-cancel-fab-detect').addEventListener('click', closeFabDetectConfirmModal)
   document.getElementById('btn-confirm-fab-detect').addEventListener('click', confirmFabDetection)
   document.getElementById('btn-fab-detect-ignore').addEventListener('click', ignoreFabDetection)
+  document.getElementById('fab-detect-candidate-select').addEventListener('change', handleFabDetectCandidateChange())
   document.getElementById('fab-detect-confirm-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeFabDetectConfirmModal()
   })
