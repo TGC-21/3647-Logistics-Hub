@@ -882,7 +882,6 @@ async function deleteChildPart(partId) {
   } catch (e) { console.error(e); toastFn('Error removing part') }
 }
 
-
 async function deleteCurrentAssembly() {
   const a = assemblyById(currentAssemblyId)
   if (!a || !confirm(`Delete assembly "${a.name}" and all its parts? This cannot be undone.`)) return
