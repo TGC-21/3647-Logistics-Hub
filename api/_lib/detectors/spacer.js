@@ -6,17 +6,23 @@
 // legacy parameter signature — no PARTSHELF_GENERATOR_ID marker exists
 // and none will be added.
 //
-// v1 scope (by design):
-//   • Only BLIND-end spacers reach status 'detected' — OD (externalDia),
-//     internal adder, and length are all directly readable as parameter
-//     `expression` strings from GET .../partstudios/.../features, no
-//     extra Onshape call needed.
-//   • UP_TO_FACE spacers, and ROUND spacers' true ID (which requires
-//     resolving the picked origin edge's radius via evalFeatureScript),
-//     are NOT computed in v1 — evalFeatureScript is intentionally
-//     deferred. These land as 'needs_review' with whatever we DO know
-//     (OD, spacer type, internal adder) so a human can fill in the rest
-//     in the confirmation overlay.
+// v1 scope:
+//   • BLIND-end spacers get OD (externalDia), internal adder, and length
+//     directly from parameter `expression` strings in
+//     GET .../partstudios/.../features — no extra Onshape call needed.
+//   • UP_TO_FACE length and ROUND spacers' true ID both require resolving
+//     real geometry (the origin edge's radius, and evDistance against the
+//     picked end face) that isn't in the plain parameter list. For these,
+//     inspectPartStudioFeatures() attaches an `evalRequest` (a small
+//     FeatureScript snippet + a { origin: [deterministicId], endFace?:
+//     [deterministicId] } map lifted straight from the feature's own
+//     parameters) that the caller (the detection endpoint) submits via
+//     evalFeatureScript() — see
+//     onshape-partstudio-features.js. applyEvalResult() then merges the
+//     resolved numbers back in and upgrades status/confidence once a
+//     match is fully known. If eval fails or its response can't be
+//     parsed, the row falls back to 'needs_review' with a warning rather
+//     than blocking.
 //   • HEX / HEX375 spacers never had a real "ID" concept — the profile
 //     size is a fixed wrench-size constant (0.5"/0.375" across flats)
 //     plus internalAdd/2, not derived from the origin edge at all. We
@@ -85,6 +91,117 @@ function matchesLegacySpacerSignature(feature) {
  * (the detection endpoint) is responsible for fetching the feature list
  * once per unique source Part Studio and passing it in here.
  */
+
+/**
+ * Builds a { script, queries } payload for evalFeatureScript(), re-deriving
+ * exactly the values the original Spacer FeatureScript computes internally
+ * (originCirc.radius for ID; evDistance against the end face for
+ * UP_TO_FACE length) — without forking that script. `queries` values are
+ * the query strings lifted straight off this feature's own origin/endFace
+ * parameters, so the geometry resolved is guaranteed to be the exact
+ * entities this exact feature instance picked.
+ *
+ * IMPORTANT: the eval endpoint parses `script` as a single FeatureScript
+ * EXPRESSION, not a full script file — confirmed via a live 400 response
+ * (BTFeatureScriptEvalResponse-1859 with PARSE notices) rejecting both a
+ * leading `FeatureScript 1120;` version pragma and an `import(...)`
+ * statement, since neither is valid at the start of / within a bare
+ * expression. No import is needed anyway: eval runs inside the target
+ * Part Studio's own already-resolved environment, so `evCurveDefinition`,
+ * `plane`, `evDistance`, and `inch` are already in scope. The script here
+ * is just the anonymous function literal itself, no pragma/import/semicolon
+ * wrapper.
+ *
+ * Returns null if nothing needs eval (BLIND + non-ROUND, fully known
+ * already) or if the required query parameter data isn't present.
+ */
+function buildEvalRequest(spacerType, endType, originParam, endFaceParam) {
+  const needsId     = spacerType === 'ROUND'
+  const needsLength = endType === 'UP_TO_FACE'
+  if (!needsId && !needsLength) return null
+
+  // The eval endpoint's `queries` map wants each entity referenced by its
+  // short `deterministicIds[0]` token (e.g. "JFB") — NOT the serialized
+  // `queryString` blob (query=qCompressed(...);) and NOT the full query
+  // object. Confirmed via live testing: a queryString-based request
+  // consistently resolved to zero matches (CANNOT_RESOLVE_ENTITIES /
+  // matchCount: 0) even against a query provably pointing at real,
+  // present geometry, while the bare deterministicIds[0] token resolved
+  // correctly on the first try.
+  const originId = originParam?.queries?.[0]?.deterministicIds?.[0]
+  if (!originId) return null
+
+  const queries = { origin: [originId] }
+  let canComputeLength = false
+
+  if (needsLength) {
+    const endFaceId = endFaceParam?.queries?.[0]?.deterministicIds?.[0]
+    if (endFaceId) {
+      queries.endFace = [endFaceId]
+      canComputeLength = true
+    }
+  }
+
+  const script = `function(context is Context, queries is map) returns map
+{
+    var originCirc = evCurveDefinition(context, { "edge" : queries.origin });
+    var face = plane(originCirc.coordSystem);
+    var result = {};
+    result["radius"] = originCirc.radius / inch;
+    ${canComputeLength ? `
+    result["length"] = evDistance(context, {
+        "side0" : queries.endFace,
+        "side1" : face,
+        "extendSide0" : true,
+        "extendSide1" : true
+    }).distance / inch;
+    ` : ''}
+    return result;
+}`
+
+  return { script, queries, needsId, needsLength: canComputeLength }
+}
+
+/**
+ * Merges a resolved evalFeatureScript result back into a match's
+ * dimensions, upgrading status/confidence to 'detected'/'high' once
+ * everything required for this spacer's type is known. Never downgrades —
+ * if eval only resolved part of what was missing (or failed entirely),
+ * the match stays 'needs_review' with an explanatory warning instead of
+ * silently pretending completeness.
+ */
+export function applyEvalResult(match, evalOutcome) {
+  const { radius, length, error } = evalOutcome
+  const warnings = [...match.warnings]
+  const dims = { ...match.dimensions }
+
+  if (error) {
+    warnings.push(`FeatureScript eval failed: ${error} — confirm dimensions manually.`)
+  } else {
+    if (match.spacerType === 'ROUND' && typeof radius === 'number') {
+      // Mirrors the FeatureScript: ID = 2*originCirc.radius + internalAdd
+      const internalAdd = dims.internalAdd?.value ?? 0
+      dims.id = { value: +(2 * radius + internalAdd).toFixed(4), unit: 'in' }
+    }
+    if (match.endType === 'UP_TO_FACE' && typeof length === 'number') {
+      dims.length = { value: +length.toFixed(4), unit: 'in' }
+    }
+  }
+
+  const hasOd     = !!dims.od
+  const hasLength = !!dims.length
+  const hasIdOrFlats = match.spacerType === 'ROUND' ? !!dims.id : !!dims.acrossFlats
+
+  const complete = hasOd && hasLength && hasIdOrFlats
+  return {
+    ...match,
+    dimensions: dims,
+    status:     complete ? 'detected' : 'needs_review',
+    confidence: complete ? 'high' : match.confidence,
+    warnings,
+  }
+}
+
 export function inspectPartStudioFeatures(featureListResponse) {
   const features = featureListResponse?.features || []
   const matches = []
@@ -118,7 +235,10 @@ export function inspectPartStudioFeatures(featureListResponse) {
         warnings.push('Could not parse one or more BLIND spacer parameters.')
       }
     } else if (endType === 'UP_TO_FACE') {
-      warnings.push('Up-to-face length requires evalFeatureScript, which v1 does not call — confirm length manually.')
+      // Length isn't known yet — buildEvalRequest below will ask Onshape
+      // to resolve it via evDistance. Status stays needs_review until the
+      // eval result comes back (applyEvalResult may upgrade it).
+      warnings.push('Up-to-face length requires FeatureScript evaluation — resolving via evalFeatureScript.')
     } else {
       warnings.push(`Unrecognized endType "${endType}".`)
     }
@@ -128,7 +248,10 @@ export function inspectPartStudioFeatures(featureListResponse) {
     let acrossFlats = null
 
     if (spacerType === 'ROUND') {
-      warnings.push('Round spacer ID requires evalFeatureScript (origin edge radius), which v1 does not call — confirm ID manually.')
+      // ID isn't known yet — buildEvalRequest below will ask Onshape to
+      // resolve originCirc.radius. Status stays needs_review until the
+      // eval result comes back (applyEvalResult may upgrade it).
+      warnings.push('Round spacer ID requires FeatureScript evaluation — resolving via evalFeatureScript.')
     } else if (spacerType === 'HEX' || spacerType === 'HEX375') {
       const base = HEX_ACROSS_FLATS_BASE_IN[spacerType]
       if (base != null && internalAdd) {
@@ -147,6 +270,14 @@ export function inspectPartStudioFeatures(featureListResponse) {
       status = 'needs_review'
     }
 
+    const evalRequest = buildEvalRequest(spacerType, endType, params.origin, params.endFace)
+    if (endType === 'UP_TO_FACE' && evalRequest && !evalRequest.needsLength) {
+      // UP_TO_FACE but endFace query data wasn't present on the parameter
+      // (shouldn't normally happen, but fail safe) — flag it rather than
+      // silently eval'ing only the radius and pretending length is known.
+      warnings.push('Could not resolve the end-face query for this feature — length still requires manual confirmation.')
+    }
+
     matches.push({
       featureId: feature.featureId,
       spacerType,
@@ -155,12 +286,13 @@ export function inspectPartStudioFeatures(featureListResponse) {
       status,
       dimensions: {
         od,
-        id,                 // always null in v1 (ROUND) — needs eval
+        id,                 // null until eval resolves it (ROUND only)
         acrossFlats,        // HEX/HEX375 only
-        length,             // only populated for BLIND
+        length,             // populated for BLIND directly; null for UP_TO_FACE until eval
         internalAdd,
       },
       warnings,
+      evalRequest,          // { script, queries } | null — consumed by the detection endpoint
     })
   }
 
@@ -173,4 +305,5 @@ export const spacerDetector = {
   candidateFilter,
   isFromRootDocument,
   inspectPartStudioFeatures,
+  applyEvalResult,
 }

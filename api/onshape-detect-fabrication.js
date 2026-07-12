@@ -13,7 +13,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { applyCors, MAX_ONSHAPE_CONCURRENCY } from './_lib/onshape.js'
-import { fetchPartStudioFeatures, partStudioCacheKey } from './_lib/onshape-partstudio-features.js'
+import { fetchPartStudioFeatures, partStudioCacheKey, evalFeatureScript, extractEvalNumber } from './_lib/onshape-partstudio-features.js'
 import { DETECTORS, candidateRowsForDetector } from './_lib/fabrication-detectors.js'
 
 function getSupabase() {
@@ -162,6 +162,31 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
           warnings.push(`Could not inspect Part Studio ${group.elementId}: ${e.message}`)
         }
 
+        // Resolve any match that needs real geometry (ROUND id / UP_TO_FACE
+        // length) via evalFeatureScript — one call per feature, run after
+        // the cheap parameter-only pass above so a fetch failure there
+        // doesn't block eval, and vice versa.
+        if (detector.applyEvalResult) {
+          matches = await Promise.all(matches.map(async m => {
+            if (!m.evalRequest) return m
+            try {
+              const evalRes = await evalFeatureScript(
+                group.documentId, group.wvmType, group.wvmId, group.elementId,
+                m.evalRequest.script, m.evalRequest.queries
+              )
+              const radius = m.evalRequest.needsId ? extractEvalNumber(evalRes, 'radius') : null
+              const length = m.evalRequest.needsLength ? extractEvalNumber(evalRes, 'length') : null
+              const outcome = (m.evalRequest.needsId && radius === null) || (m.evalRequest.needsLength && length === null)
+                ? { error: 'Could not locate expected value in eval response — response shape may differ from what was assumed.' }
+                : { radius, length }
+              return detector.applyEvalResult(m, outcome)
+            } catch (e) {
+              console.warn(`[onshape-detect-fabrication] evalFeatureScript failed for feature ${m.featureId}: ${e.message}`)
+              return detector.applyEvalResult(m, { error: e.message })
+            }
+          }))
+        }
+
         // Row-to-feature mapping: only confident when counts match 1:1.
         // Otherwise every row in this studio is flagged needs_review with
         // all candidate matches attached for manual selection — see
@@ -190,6 +215,8 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
               confidence: m.confidence,
               source: 'onshape-featurescript',
               generator: detector.generatorId,
+              spacerType: m.spacerType,
+              endType: m.endType,
               dimensions: m.dimensions,
               fabricationDraft: m.status === 'detected'
                 ? { method: null, quantityRequested: null, requiresConfirmation: true }
@@ -200,12 +227,19 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
             if (m.status === 'detected') detectedCount++
             else needsReviewCount++
           } else {
+            // Ambiguous mapping — persist spacerType/endType too, taken
+            // from the first candidate, so the confirm UI's default guess
+            // is at least this Part Studio's actual first match rather
+            // than a hard-coded ROUND assumption.
+            const first = matches[0] || {}
             await writeMetadata(supabase, row.id, {
               autoDetected: true,
               kind: detector.kind,
               status: 'needs_review',
               confidence: 'medium',
               source: 'onshape-featurescript',
+              spacerType: first.spacerType ?? null,
+              endType: first.endType ?? null,
               candidateMatches: matches,
               warnings: ['Multiple generated features and/or matching rows in this Part Studio — pick the correct match manually.'],
             })
