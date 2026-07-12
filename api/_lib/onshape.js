@@ -56,6 +56,40 @@ export async function onshapeGet(path, { retries = 3 } = {}) {
   }
 }
 
+export async function onshapePost(path, body, { retries = 3 } = {}) {
+  const accessKey = process.env.ONSHAPE_ACCESS_KEY
+  const secretKey = process.env.ONSHAPE_SECRET_KEY
+  if (!accessKey || !secretKey) {
+    throw new Error('ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY must be set.')
+  }
+  const credentials = Buffer.from(`${accessKey}:${secretKey}`).toString('base64')
+
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${ONSHAPE_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json;charset=UTF-8; qs=0.09',
+      },
+      body: JSON.stringify(body),
+    })
+    if (res.ok) return res.json()
+
+    if (res.status === 429 && attempt < retries) {
+      const retryAfterHeader = res.headers.get('retry-after')
+      const retryAfterMs     = retryAfterHeader ? parseFloat(retryAfterHeader) * 1000 : null
+      const backoffMs        = retryAfterMs ?? (400 * 2 ** attempt + Math.random() * 150)
+      console.warn(`[onshape] 429 rate limited on POST ${path} — retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${retries})`)
+      await sleep(backoffMs)
+      continue
+    }
+
+    const text = await res.text()
+    throw new Error(`Onshape API ${res.status}: ${text.slice(0, 800)}`)
+  }
+}
+
 // ── BOM fetching ──────────────────────────────────────────────
 
 
