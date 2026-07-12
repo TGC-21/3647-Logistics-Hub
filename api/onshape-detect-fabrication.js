@@ -41,14 +41,18 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Assembly is not linked to Onshape.' })
     }
 
-    const rows = await fetchWholeTreeParts(supabase, assemblyId)
+    const { rows, skippedCount } = await fetchWholeTreeParts(supabase, assemblyId)
 
     const result = await detectAndPersist(supabase, {
       rows,
       rootDocumentId: assembly.onshape_document_id,
     })
 
-    return res.status(200).json({ success: true, ...result })
+    const message = skippedCount
+      ? `${result.message} (${skippedCount} already-confirmed row(s) skipped.)`
+      : result.message
+
+    return res.status(200).json({ success: true, skippedCount, ...result, message })
 
   } catch (err) {
     console.error('[onshape-detect-fabrication]', err)
@@ -58,12 +62,19 @@ export default async function handler(req, res) {
 
 // ── Walk the whole assembly_parts tree (root + every nested subassembly) ──
 // Mirrors fetchAllLinkedInstanceIdsForAssembly's traversal in src/db.js.
+// Rows already in a TERMINAL detection state are excluded here — they
+// won't change unless the underlying Onshape feature does, so re-fetching
+// their source Part Studio and re-running evalFeatureScript on every
+// repeat click of "Detect fabrication candidates" (including reimports)
+// would be pure wasted API calls.
+const TERMINAL_DETECTION_STATUSES = ['confirmed', 'queued', 'ignored']
+
 async function fetchWholeTreeParts(supabase, assemblyId) {
   const allParts = []
 
   const { data: rootParts, error: rootErr } = await supabase
     .from('assembly_parts')
-    .select('id, part_name, part_number, onshape_reference')
+    .select('id, part_name, part_number, onshape_reference, fabrication_metadata')
     .eq('assembly_id', assemblyId)
   if (rootErr) throw rootErr
   allParts.push(...rootParts)
@@ -80,7 +91,7 @@ async function fetchWholeTreeParts(supabase, assemblyId) {
 
     const { data: childParts, error: cpErr } = await supabase
       .from('assembly_parts')
-      .select('id, part_name, part_number, onshape_reference')
+      .select('id, part_name, part_number, onshape_reference, fabrication_metadata')
       .eq('assembly_child_id', childId)
     if (cpErr) throw cpErr
     allParts.push(...childParts)
@@ -93,12 +104,20 @@ async function fetchWholeTreeParts(supabase, assemblyId) {
     queue.push(...(grandchildren || []).map(c => c.id))
   }
 
-  return allParts.map(row => ({
-    id:          row.id,
-    partName:    row.part_name,
-    partNumber:  row.part_number,
-    raw:         row.onshape_reference || {},
-  }))
+  const eligible = allParts.filter(row =>
+    !TERMINAL_DETECTION_STATUSES.includes(row.fabrication_metadata?.status)
+  )
+  const skippedCount = allParts.length - eligible.length
+
+  return {
+    rows: eligible.map(row => ({
+      id:          row.id,
+      partName:    row.part_name,
+      partNumber:  row.part_number,
+      raw:         row.onshape_reference || {},
+    })),
+    skippedCount,
+  }
 }
 
 // ── Group candidates by source Part Studio, fetch each once, match ──

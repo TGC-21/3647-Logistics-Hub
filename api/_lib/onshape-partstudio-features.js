@@ -20,7 +20,7 @@ import { onshapeGet, onshapePost } from './onshape.js'
  */
 export async function fetchPartStudioFeatures(documentId, wvmType, workspaceId, elementId) {
   const path = `/partstudios/d/${documentId}/${wvmType}/${workspaceId}/e/${elementId}/features` +
-    `?rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=false`
+    `?rollbackBarIndex=-1&includeGeometryIds=true&noSketchGeometry=true`
   return onshapeGet(path)
 }
 
