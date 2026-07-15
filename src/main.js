@@ -1,4 +1,5 @@
 import './style.css'
+import { renderSegmentEditor } from './segmentEditor.js'
 import {
   fetchCategories,
   upsertCategory,  deleteCategory,
@@ -521,6 +522,11 @@ function readAttrRowValue(row) {
     const numInput = row.querySelector('input[data-num-input]')
     return numInput ? numInput.value : ''
   }
+  if (type === 'segments') {
+    const editorEl = row.querySelector('.attr-segments-editor')
+    const segments  = editorEl?._segmentsValue || []
+    return { totalLength: segments.reduce((s, seg) => s + (seg.length || 0), 0), segments }
+  }
   // enum (<select>) and string (<input>) both expose data-val-input directly
   const input = row.querySelector('[data-val-input]')
   return input ? input.value : ''
@@ -585,6 +591,21 @@ function buildRequiredAttrRow(cfg, existingVal) {
     wrap.appendChild(unit)
     valueEl = wrap
 
+  } else if (cfg.type === 'segments') {
+    const wrap = document.createElement('div')
+    wrap.className = 'attr-segments-editor'
+    wrap.style.flex = '1.5'
+    wrap.dataset.valInput = '1'
+    const initial = (existingVal && typeof existingVal === 'object' && Array.isArray(existingVal.segments))
+      ? existingVal.segments.map(s => ({ ...s }))
+      : []
+    wrap._segmentsValue = initial
+    renderSegmentEditor(wrap, initial, {
+      editable: true,
+      unit: cfg.segmentUnit || 'in',
+      onChange: segs => { wrap._segmentsValue = segs },
+    })
+    valueEl = wrap
   } else {
     const input = document.createElement('input')
     input.type = 'text'
@@ -786,6 +807,19 @@ async function saveItem() {
   reqRows.forEach(row => {
     const configKey = row.dataset.configKey
     const config    = keysConfig.find(c => c.key === configKey)
+
+    if (row.dataset.type === 'segments') {
+      // Structural value — never route through the trim/stringify path
+      // below, which would collapse the segment array into "[object
+      // Object]" and always fail validation.
+      const segmentsVal = readAttrRowValue(row)
+      const errorTarget = row.querySelector('.attr-segments-editor')
+      const result = validateAttribute(segmentsVal, config)
+      if (!result.valid) { errorTarget?.classList.add('error'); valid = false }
+      else { errorTarget?.classList.remove('error') }
+      return
+    }
+
     const rawValue  = readAttrRowValue(row)
     const trimmed   = String(rawValue ?? '').trim()
 
@@ -829,11 +863,15 @@ async function saveItem() {
 
     let value
     if (isRequired) {
-      value = String(readAttrRowValue(row) ?? '').trim()
-      // Append the category's default unit for quantity types, e.g. "5" → "5 g"
-      if (type === 'quantity') {
-        const config = keysConfig.find(c => c.key === key)
-        if (config?.defaultUnit && value) value = `${value} ${config.defaultUnit}`
+      if (type === 'segments') {
+        value = readAttrRowValue(row)   // structured { totalLength, segments } object, kept as-is
+      } else {
+        value = String(readAttrRowValue(row) ?? '').trim()
+        // Append the category's default unit for quantity types, e.g. "5" → "5 g"
+        if (type === 'quantity') {
+          const config = keysConfig.find(c => c.key === key)
+          if (config?.defaultUnit && value) value = `${value} ${config.defaultUnit}`
+        }
       }
     } else {
       const vi = row.querySelector('[data-val-input]')
@@ -1033,6 +1071,7 @@ function renderReqKeysConfig() {
             <option value="string"   ${cfg.type === 'string'   ? 'selected' : ''}>Text</option>
             <option value="quantity" ${cfg.type === 'quantity' ? 'selected' : ''}>Quantity</option>
             <option value="enum"     ${cfg.type === 'enum'     ? 'selected' : ''}>Preset list</option>
+            <option value="segments" ${cfg.type === 'segments' ? 'selected' : ''}>Shaft profile (segments)</option>
           </select>
           <button type="button" class="btn-icon" data-remove-idx="${idx}" aria-label="Remove">
             <i class="ti ti-trash" style="font-size:13px" aria-hidden="true"></i>
@@ -1049,6 +1088,12 @@ function renderReqKeysConfig() {
             <label>Default unit <span style="font-weight:400;color:var(--color-text-tertiary)">(optional, e.g. mm, g, in)</span></label>
             <input type="text" class="quantity-unit-input" data-idx="${idx}"
                    value="${cfg.defaultUnit || ''}" placeholder="e.g. mm">
+          </div>` : ''}
+        ${cfg.type === 'segments' ? `
+          <div class="req-type-panel">
+            <label>Segment length unit <span style="font-weight:400;color:var(--color-text-tertiary)">(e.g. in, mm)</span></label>
+            <input type="text" class="segment-unit-input" data-idx="${idx}"
+                   value="${cfg.segmentUnit || 'in'}" placeholder="in">
           </div>` : ''}
       </div>
     `).join('')
@@ -1067,14 +1112,26 @@ function renderReqKeysConfig() {
       if (select.value === 'enum') {
         cfg.options = cfg.options || []
         delete cfg.defaultUnit
+        delete cfg.segmentUnit
       } else if (select.value === 'quantity') {
         cfg.defaultUnit = cfg.defaultUnit || ''
         delete cfg.options
+        delete cfg.segmentUnit
+      } else if (select.value === 'segments') {
+        cfg.segmentUnit = cfg.segmentUnit || 'in'
+        delete cfg.options
+        delete cfg.defaultUnit
       } else {
         delete cfg.options
         delete cfg.defaultUnit
+        delete cfg.segmentUnit
       }
       renderReqKeysConfig()
+    })
+  )
+  list.querySelectorAll('.segment-unit-input').forEach(input =>
+    input.addEventListener('input', () => {
+      editingReqKeysConfig[parseInt(input.dataset.idx, 10)].segmentUnit = input.value.trim()
     })
   )
   list.querySelectorAll('.enum-options-input').forEach(ta =>

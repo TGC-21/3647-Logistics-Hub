@@ -12,6 +12,7 @@ import {
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
+import { renderSegmentEditor } from './segmentEditor.js'
 
 // ── State ─────────────────────────────────────────────────────
 let assemblies        = []
@@ -55,8 +56,11 @@ let invLinkLoading     = false
 let fabDetectRunning   = false   // true while POST /api/onshape-detect-fabrication is in flight
 let fabDetectPartId    = null    // assembly_parts.id currently shown in the confirm modal
 let fabDetectIsChild   = false
-let fabDetectMatch     = null    // the single resolved match object (only set when unambiguous)
+let fabDetectMatch     = null    // the single resolved match object (only set when unambiguous) — spacer only
 let fabDetectCandidates = null 
+let fabDetectKind       = null   // 'spacer' | 'axial-shaft' — which confirm-overlay branch is showing
+let fabDetectSegments   = null   // working (editable) segment array — axial-shaft only
+let fabDetectOriginalSegments = null   // as-detected segment array, for override diffing at confirm time
 
 // Hard-coded category shape for auto-created Spacer components — no UI
 // to configure this in v1, matches the confirmation overlay's fields.
@@ -67,6 +71,27 @@ const SPACER_REQUIRED_KEYS_CONFIG = [
   { key: 'ID or Across Flats', type: 'quantity', defaultUnit: 'in' },
   { key: 'Length',       type: 'quantity', defaultUnit: 'in' },
 ]
+
+// Hard-coded category shape for auto-created Axial Shaft components —
+// mirrors the Spacer precedent above. A single 'segments'-typed
+// characteristic holds the whole reconstructed profile (see
+// AXIAL_SHAFT_DETECTION_ROADMAP.md's component-typing decision) rather
+// than a fixed set of scalar fields, since a shaft's dimensions are an
+// ordered list, not a handful of independent values.
+const AXIAL_SHAFT_CATEGORY_NAME = 'Axial Shaft'
+const AXIAL_SHAFT_REQUIRED_KEYS_CONFIG = [
+  { key: 'Profile', type: 'segments', segmentUnit: 'in' },
+]
+
+/** Finds (or creates, once) the hard-coded "Axial Shaft" category —
+ *  mirrors ensureSpacerCategory() below. */
+async function ensureAxialShaftCategory() {
+  const cats = await fetchCategories()
+  let cat = cats.find(c => c.name === AXIAL_SHAFT_CATEGORY_NAME)
+  if (cat) return cat
+  cat = await upsertCategory({ id: genId(), name: AXIAL_SHAFT_CATEGORY_NAME, requiredKeysConfig: AXIAL_SHAFT_REQUIRED_KEYS_CONFIG })
+  return cat
+}
 
 // ── Part name → category dictionary ─────────────────────────
 // Keys are lowercase keywords checked against words in a part's name.
@@ -753,7 +778,7 @@ function childPartRowHTML(p, job = null) {
       <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${collectedQty >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
-      ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected spacer"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
+      ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
       </td>
   </tr>`
 }
@@ -806,7 +831,7 @@ function partRowHTML(p, job = null) {
       <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
-      ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected spacer">     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
+      ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate">     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
       </td>
   </tr>`
 }
@@ -1573,6 +1598,7 @@ function fabRenderNewCatReqKeysConfig() {
             <option value="string"   ${cfg.type === 'string'   ? 'selected' : ''}>Text</option>
             <option value="quantity" ${cfg.type === 'quantity' ? 'selected' : ''}>Quantity</option>
             <option value="enum"     ${cfg.type === 'enum'     ? 'selected' : ''}>Preset list</option>
+            <option value="segments" ${cfg.type === 'segments' ? 'selected' : ''}>Shaft profile (segments)</option>
           </select>
           <button type="button" class="btn-icon" data-fab-remove-idx="${idx}" aria-label="Remove">
             <i class="ti ti-trash" style="font-size:13px" aria-hidden="true"></i>
@@ -1590,6 +1616,12 @@ function fabRenderNewCatReqKeysConfig() {
             <input type="text" class="fab-quantity-unit-input" data-idx="${idx}"
                    value="${cfg.defaultUnit || ''}" placeholder="e.g. mm">
           </div>` : ''}
+        ${cfg.type === 'segments' ? `
+          <div class="req-type-panel">
+            <label>Segment length unit <span style="font-weight:400;color:var(--color-text-tertiary)">(e.g. in, mm)</span></label>
+            <input type="text" class="fab-segment-unit-input" data-idx="${idx}"
+                   value="${cfg.segmentUnit || 'in'}" placeholder="in">
+          </div>` : ''}
       </div>
     `).join('')
   }
@@ -1604,10 +1636,16 @@ function fabRenderNewCatReqKeysConfig() {
       const idx = parseInt(select.dataset.idx, 10)
       const cfg = fabNewCatReqKeysConfig[idx]
       cfg.type = select.value
-      if (select.value === 'enum') { cfg.options = cfg.options || []; delete cfg.defaultUnit }
-      else if (select.value === 'quantity') { cfg.defaultUnit = cfg.defaultUnit || ''; delete cfg.options }
-      else { delete cfg.options; delete cfg.defaultUnit }
+      if (select.value === 'enum') { cfg.options = cfg.options || []; delete cfg.defaultUnit; delete cfg.segmentUnit }
+      else if (select.value === 'quantity') { cfg.defaultUnit = cfg.defaultUnit || ''; delete cfg.options; delete cfg.segmentUnit }
+      else if (select.value === 'segments') { cfg.segmentUnit = cfg.segmentUnit || 'in'; delete cfg.options; delete cfg.defaultUnit }
+      else { delete cfg.options; delete cfg.defaultUnit; delete cfg.segmentUnit }
       fabRenderNewCatReqKeysConfig()
+    })
+  )
+  list.querySelectorAll('.fab-segment-unit-input').forEach(input =>
+    input.addEventListener('input', () => {
+      fabNewCatReqKeysConfig[parseInt(input.dataset.idx, 10)].segmentUnit = input.value.trim()
     })
   )
   list.querySelectorAll('.fab-enum-options-input').forEach(ta =>
@@ -1829,13 +1867,103 @@ function openFabDetectConfirmModal(partId, isChildPart = false) {
   const part = currentFabDetectPart()
   if (!part) return
   const meta = part.fabricationMetadata || {}
- 
-  document.getElementById('fab-detect-subtitle').textContent =
-    `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
- 
+  fabDetectKind = meta.kind || 'spacer'
+
+  const subtitleEl = document.getElementById('fab-detect-subtitle')
+  if (subtitleEl) {
+    subtitleEl.textContent = `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
+  }
+
+  const ignoreBtn = document.getElementById('btn-fab-detect-ignore')
+  if (ignoreBtn) {
+    ignoreBtn.innerHTML = fabDetectKind === 'axial-shaft'
+      ? '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a shaft'
+      : '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a spacer'
+  }
+
+  const spacerFields   = document.getElementById('fab-detect-spacer-fields')
+  const segmentsFields = document.getElementById('fab-detect-segments-fields')
+  if (!spacerFields || !segmentsFields) {
+    // Static markup missing — almost always a stale bundle/HTML mismatch
+    // (e.g. dev server serving an old index.html against new JS) rather
+    // than a real runtime condition. Fail loudly in the console instead
+    // of throwing out of this click handler.
+    console.error('[fab-detect] Missing #fab-detect-spacer-fields or #fab-detect-segments-fields in the DOM — hard-refresh / rebuild likely needed.')
+    return
+  }
+
+  if (fabDetectKind === 'axial-shaft') {
+    spacerFields.style.display   = 'none'
+    segmentsFields.style.display = 'flex'
+    openAxialShaftConfirmFields(part, meta)
+  } else {
+    spacerFields.style.display   = 'flex'
+    segmentsFields.style.display = 'none'
+    openSpacerConfirmFields(part, meta)
+  }
+
+  const warnings = meta.warnings || []
+  document.getElementById('fab-detect-warning-banner').innerHTML = warnings.length
+    ? `<div class="onshape-preview-warning"><i class="ti ti-alert-triangle" aria-hidden="true"></i><span>${warnings.join(' ')}</span></div>`
+    : ''
+
+  document.getElementById('fab-detect-confirm-overlay').style.display = 'flex'
+}
+
+/** Seeds fabDetectSegments from a detected (or previously-edited, if the
+ *  modal is being reopened before confirming) axial-shaft's metadata, and
+ *  renders the shared segment editor. Overrides are re-applied so
+ *  reopening the modal doesn't discard in-progress edits made earlier in
+ *  the same session. */
+function openAxialShaftConfirmFields(part, meta) {
+  const detected = (meta.dimensions?.segments || []).map(s => ({ ...s }))
+  fabDetectOriginalSegments = detected.map(s => ({ ...s }))
+
+  fabDetectSegments = detected.map(seg => {
+    const ov = meta.overrides?.[seg.id]
+    if (!ov) return { ...seg }
+    const patched = { ...seg }
+    for (const [field, entry] of Object.entries(ov)) {
+      if (field === 'userAdded' || field === 'reason') continue
+      patched[field] = entry && typeof entry === 'object' && 'value' in entry ? entry.value : entry
+    }
+    return patched
+  })
+
+  // Restore any segments the user added in a prior (unconfirmed) edit —
+  // these exist only in overrides, not in the detected list.
+  if (meta.overrides) {
+    Object.entries(meta.overrides).forEach(([id, ov]) => {
+      if (ov.userAdded && !fabDetectSegments.some(s => s.id === id)) {
+        const { userAdded, reason, ...rest } = ov
+        fabDetectSegments.push({ id, ...rest })
+      }
+    })
+  }
+
+  const segListEl = document.getElementById('fab-detect-segments-list')
+  if (segListEl) {
+    renderSegmentEditor(segListEl, fabDetectSegments, {
+      editable: true,
+      unit: 'in',
+      onChange: () => {},   // array is mutated in place — nothing extra to sync
+    })
+  } else {
+    console.error('[fab-detect] #fab-detect-segments-list not found in the DOM.')
+  }
+
+  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
+  const qtyEl = document.getElementById('fab-detect-field-qty')
+  if (qtyEl) { qtyEl.value = gap; qtyEl.max = gap }
+}
+
+/** The original spacer-specific field population, unchanged in behavior —
+ *  just extracted into its own function so openFabDetectConfirmModal can
+ *  dispatch by kind. */
+function openSpacerConfirmFields(part, meta) {
   const candidateField  = document.getElementById('fab-detect-candidate-field')
   const candidateSelect = document.getElementById('fab-detect-candidate-select')
- 
+
   if (meta.candidateMatches && meta.candidateMatches.length > 1) {
     // Ambiguous — detection found multiple spacer features in this part's
     // source Part Studio and can't tell which one this BOM row is.
@@ -1867,15 +1995,8 @@ function openFabDetectConfirmModal(partId, isChildPart = false) {
     candidateField.style.display = 'none'
     fabDetectMatch = meta.dimensions ? meta : meta
   }
- 
+
   populateFabDetectFields(part)
- 
-  const warnings = meta.warnings || []
-  document.getElementById('fab-detect-warning-banner').innerHTML = warnings.length
-    ? `<div class="onshape-preview-warning"><i class="ti ti-alert-triangle" aria-hidden="true"></i><span>${warnings.join(' ')}</span></div>`
-    : ''
- 
-  document.getElementById('fab-detect-confirm-overlay').style.display = 'flex'
 }
  
 /** Fills the OD/ID/length/spacer-type/qty fields from whatever
@@ -1917,6 +2038,9 @@ function closeFabDetectConfirmModal() {
   fabDetectPartId = null
   fabDetectMatch  = null
   fabDetectCandidates = null
+  fabDetectKind = null
+  fabDetectSegments = null
+  fabDetectOriginalSegments = null
 }
  
 /** Finds (or creates, once) the hard-coded "Spacer" category. */
@@ -1931,7 +2055,12 @@ async function ensureSpacerCategory() {
 async function confirmFabDetection() {
   const part = currentFabDetectPart()
   if (!part) return
- 
+
+  if (fabDetectKind === 'axial-shaft') {
+    await confirmAxialShaftDetection(part)
+    return
+  }
+
   const od     = parseFloat(document.getElementById('fab-detect-field-od').value)
   const idOrAf = parseFloat(document.getElementById('fab-detect-field-id').value)
   const length = parseFloat(document.getElementById('fab-detect-field-length').value)
@@ -2015,6 +2144,117 @@ async function confirmFabDetection() {
   }
 }
  
+
+/**
+ * Confirms an auto-detected (or user-edited) axial shaft: validates every
+ * segment, diffs the final segment list against what was originally
+ * detected to build `overrides` (keyed by stable segment id — see
+ * AXIAL_SHAFT_DETECTION_ROADMAP.md's resolved override scheme), finds or
+ * creates the matching "Axial Shaft" component, and creates a
+ * fabrication job — same downstream mechanics as confirmFabDetection's
+ * spacer path.
+ */
+async function confirmAxialShaftDetection(part) {
+  if (!fabDetectSegments || !fabDetectSegments.length) {
+    toastFn('At least one segment is required')
+    return
+  }
+
+  for (const seg of fabDetectSegments) {
+    if (!Number.isFinite(seg.length) || seg.length <= 0) { toastFn('Every segment needs a positive length'); return }
+    if (seg.type === 'round'  && (!Number.isFinite(seg.diameter)    || seg.diameter    <= 0)) { toastFn('Every round segment needs a diameter'); return }
+    if (seg.type === 'hex'    && (!Number.isFinite(seg.acrossFlats) || seg.acrossFlats <= 0)) { toastFn('Every hex segment needs an across-flats value'); return }
+    if ((seg.type === 'square' || seg.type === 'prism') && (!Number.isFinite(seg.width) || seg.width <= 0)) { toastFn('Every square/prism segment needs a width'); return }
+  }
+
+  const qty = Math.max(1, parseInt(document.getElementById('fab-detect-field-qty').value, 10) || 1)
+
+  // Diff the final (possibly edited) segment list against the original
+  // detection, by stable id — never by array index (see roadmap).
+  const overrides = {}
+  const originalById = Object.fromEntries((fabDetectOriginalSegments || []).map(s => [s.id, s]))
+  const survivingIds = new Set()
+
+  for (const seg of fabDetectSegments) {
+    survivingIds.add(seg.id)
+    const original = originalById[seg.id]
+
+    if (!original) {
+      overrides[seg.id] = { ...seg, userAdded: true, reason: 'User-added segment' }
+      continue
+    }
+    const changedFields = {}
+    for (const key of Object.keys(seg)) {
+      if (key === 'id') continue
+      if (seg[key] !== original[key]) changedFields[key] = { value: seg[key], reason: 'User confirmation edit' }
+    }
+    if (Object.keys(changedFields).length) overrides[seg.id] = changedFields
+  }
+
+  const removedIds = Object.keys(originalById).filter(id => !survivingIds.has(id))
+  if (removedIds.length) overrides._removedSegmentIds = removedIds
+
+  const meta = part.fabricationMetadata || {}
+  const btn  = document.getElementById('btn-confirm-fab-detect')
+  btn.disabled = true; btn.textContent = 'Confirming…'
+
+  try {
+    const shaftCat = await ensureAxialShaftCategory()
+    const totalLength = fabDetectSegments.reduce((s, seg) => s + seg.length, 0)
+    // Strip UI-only fields (warnings) before persisting — the stored
+    // attribute value should be pure dimensional data.
+    const profileValue = {
+      totalLength,
+      segments: fabDetectSegments.map(({ warnings, ...rest }) => rest),
+    }
+
+    const component = await findOrCreateComponent({
+      categoryId: shaftCat.id,
+      fields:     shaftCat.requiredKeysConfig,
+      attrs:      { 'Profile': profileValue },
+      fallback:   { name: part.partName, description: 'Auto-detected axial shaft', image: null },
+      genId,
+    })
+
+    const updatedMeta = {
+      ...meta,
+      status: 'queued',
+      overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null),
+    }
+
+    const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
+
+    const job = await createFabricationJob({
+      assemblyPartId:    part.id,
+      quantityRequested: qty,
+      batchId:           null,
+      genId,
+    })
+    registerNewJob(job)
+
+    if (fabDetectIsChild) {
+      const idx = currentChildParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentChildParts[idx] = savedPart
+      currentChildPartJobs[part.id] = job
+      renderChildDetail()
+    } else {
+      const idx = currentParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentParts[idx] = savedPart
+      currentPartJobs[part.id] = job
+      renderAssemblyDetail()
+    }
+
+    closeFabDetectConfirmModal()
+    toastFn(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
+  } catch (e) {
+    console.error(e)
+    toastFn(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming shaft')
+  } finally {
+    btn.disabled = false
+    btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
+  }
+}
+
 /** "Not a spacer" — marks the row ignored so it stops showing the review
  *  action, without creating any component or job. */
 async function ignoreFabDetection() {
@@ -2893,12 +3133,13 @@ function renderLinkedDetail(partId, instances, isChildPart) {
 function fabDetectionBadgeHTML(p) {
   const meta = p.fabricationMetadata
   if (!meta || !meta.autoDetected) return ''
+  const noun = meta.kind === 'axial-shaft' ? 'shaft' : 'spacer'
   const map = {
-    detected:     ['fab-job-badge--complete',   'ti-cube-plus',    'Spacer detected'],
+    detected:     ['fab-job-badge--complete',   'ti-cube-plus',    `${noun[0].toUpperCase()}${noun.slice(1)} detected`],
     needs_review: ['fab-job-badge--committed',  'ti-help-circle',  'Needs review'],
     confirmed:    ['fab-job-badge--in_progress','ti-clock',        'Confirmed'],
     queued:       ['fab-job-badge--queued',     'ti-tool',         'Queued for fab'],
-    ignored:      ['fab-job-badge--queued',     'ti-eye-off',      'Not a spacer'],
+    ignored:      ['fab-job-badge--queued',     'ti-eye-off',      `Not a ${noun}`],
     failed:       ['fab-job-badge--committed',  'ti-alert-triangle','Detection failed'],
   }
   const [cls, icon, label] = map[meta.status] || ['fab-job-badge--queued', 'ti-cube', meta.status]
@@ -2917,7 +3158,7 @@ function fabDetectActionable(p) {
 // Add to the row's action cell (both partRowHTML and childPartRowHTML),
 // alongside the existing data-part-fab / data-child-part-fab button:
 //
-//   ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected spacer">
+//   ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate">
 //     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
 //
 // (use data-child-part-fabdetect for childPartRowHTML's row instead)
