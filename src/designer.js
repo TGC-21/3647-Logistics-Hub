@@ -1891,6 +1891,17 @@ function openFabDetectConfirmModal(partId, isChildPart = false) {
     console.error('[fab-detect] Missing #fab-detect-spacer-fields or #fab-detect-segments-fields in the DOM — hard-refresh / rebuild likely needed.')
     return
   }
+=======
+  document.getElementById('fab-detect-subtitle').textContent =
+    `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
+
+  document.getElementById('btn-fab-detect-ignore').innerHTML = fabDetectKind === 'axial-shaft'
+    ? '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a shaft'
+    : '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a spacer'
+
+  const spacerFields   = document.getElementById('fab-detect-spacer-fields')
+  const segmentsFields = document.getElementById('fab-detect-segments-fields')
+>>>>>>> 75d35aa9774ddd23c9e36f883c69a21c901296ac
 
   if (fabDetectKind === 'axial-shaft') {
     spacerFields.style.display   = 'none'
@@ -1955,6 +1966,17 @@ function openAxialShaftConfirmFields(part, meta) {
   const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
   const qtyEl = document.getElementById('fab-detect-field-qty')
   if (qtyEl) { qtyEl.value = gap; qtyEl.max = gap }
+=======
+  renderSegmentEditor(document.getElementById('fab-detect-segments-list'), fabDetectSegments, {
+    editable: true,
+    unit: 'in',
+    onChange: () => {},   // array is mutated in place — nothing extra to sync
+  })
+
+  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
+  document.getElementById('fab-detect-field-qty').value = gap
+  document.getElementById('fab-detect-field-qty').max   = gap
+>>>>>>> 75d35aa9774ddd23c9e36f883c69a21c901296ac
 }
 
 /** The original spacer-specific field population, unchanged in behavior —
