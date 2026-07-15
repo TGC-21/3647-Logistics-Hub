@@ -2,9 +2,6 @@
 //
 // Phase 1 of AXIAL_SHAFT_DETECTION_ROADMAP.md. Thin wrapper around
 // GET /partstudios/d/{did}/{wvm}/{wvmid}/e/{eid}/bodydetails, used by the
-=======
-// POST /partstudios/d/{did}/{wvm}/{wvmid}/e/{eid}/bodydetails, used by the
->>>>>>> 75d35aa9774ddd23c9e36f883c69a21c901296ac
 // (future) axial-shaft detector to inspect real B-rep geometry — faces,
 // edges, vertices, analytic surface descriptions (PLANE/CYLINDER/...) —
 // rather than FeatureScript parameters. Kept in its own file rather than
@@ -16,9 +13,6 @@
 // response this file returns) — no geometry logic belongs here.
 
 import { onshapeGet } from './onshape.js'
-=======
-import { onshapePost } from './onshape.js'
->>>>>>> 75d35aa9774ddd23c9e36f883c69a21c901296ac
 
 /**
  * Fetches body details (faces/edges/vertices with analytic surface
@@ -48,10 +42,6 @@ export async function fetchBodyDetails(documentId, wvmType, workspaceId, element
   const query = (partIds || []).map(id => `partIds=${encodeURIComponent(id)}`).join('&')
   const path = query ? `${base}?${query}` : base
   return onshapeGet(path)
-=======
-  const path = `/partstudios/d/${documentId}/${wvmType}/${workspaceId}/e/${elementId}/bodydetails`
-  return onshapePost(path, { partIds })
->>>>>>> 75d35aa9774ddd23c9e36f883c69a21c901296ac
 }
 
 /** Builds the same dedupe/grouping key convention used elsewhere
