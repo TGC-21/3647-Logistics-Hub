@@ -545,40 +545,52 @@
     <div class="modal-body">
       <div id="fab-detect-warning-banner"></div>
 
-      <div class="field" id="fab-detect-candidate-field" style="display:none">
-        <label>Which detected feature is this part? <span class="required-star">*</span></label>
-        <select id="fab-detect-candidate-select"></select>
-        <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
-          Multiple spacer features were found in this part's source Part Studio, and we can't
-          automatically tell which one this row corresponds to. Compare the dimensions below
-          against the physical part (or the feature in Onshape) and pick the correct match.
+      <!-- Spacer-kind fields (candidate picker + fixed OD/ID/Length) -->
+      <div id="fab-detect-spacer-fields" style="display:flex;flex-direction:column;gap:13px">
+        <div class="field" id="fab-detect-candidate-field" style="display:none">
+          <label>Which detected feature is this part? <span class="required-star">*</span></label>
+          <select id="fab-detect-candidate-select"></select>
+          <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
+            Multiple spacer features were found in this part's source Part Studio, and we can't
+            automatically tell which one this row corresponds to. Compare the dimensions below
+            against the physical part (or the feature in Onshape) and pick the correct match.
+          </p>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Spacer type</label>
+            <div id="fab-detect-spacer-type" style="font-size:13px;font-weight:600;padding:7px 0"></div>
+          </div>
+          <div class="field">
+            <label>Confidence</label>
+            <div id="fab-detect-confidence" style="padding:7px 0"></div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>OD (outer diameter, in) <span class="required-star">*</span></label>
+          <input type="number" step="any" id="fab-detect-field-od" placeholder="e.g. 0.375">
+        </div>
+
+        <div class="field" id="fab-detect-id-field">
+          <label id="fab-detect-id-label">ID (inner diameter, in) <span class="required-star">*</span></label>
+          <input type="number" step="any" id="fab-detect-field-id" placeholder="e.g. 0.196">
+        </div>
+
+        <div class="field">
+          <label>Length (in) <span class="required-star">*</span></label>
+          <input type="number" step="any" id="fab-detect-field-length" placeholder="e.g. 1.25">
+        </div>
+      </div>
+
+      <!-- Axial-shaft-kind fields (editable ordered segment list) -->
+      <div id="fab-detect-segments-fields" style="display:none;flex-direction:column;gap:10px">
+        <p style="font-size:12px;color:var(--color-text-tertiary);margin:0">
+          Reconstructed from the part's geometry — review each segment, edit any that look off,
+          or add/remove segments, then confirm.
         </p>
-      </div>
-
-      <div class="field-row">
-        <div class="field">
-          <label>Spacer type</label>
-          <div id="fab-detect-spacer-type" style="font-size:13px;font-weight:600;padding:7px 0"></div>
-        </div>
-        <div class="field">
-          <label>Confidence</label>
-          <div id="fab-detect-confidence" style="padding:7px 0"></div>
-        </div>
-      </div>
-
-      <div class="field">
-        <label>OD (outer diameter, in) <span class="required-star">*</span></label>
-        <input type="number" step="any" id="fab-detect-field-od" placeholder="e.g. 0.375">
-      </div>
-
-      <div class="field" id="fab-detect-id-field">
-        <label id="fab-detect-id-label">ID (inner diameter, in) <span class="required-star">*</span></label>
-        <input type="number" step="any" id="fab-detect-field-id" placeholder="e.g. 0.196">
-      </div>
-
-      <div class="field">
-        <label>Length (in) <span class="required-star">*</span></label>
-        <input type="number" step="any" id="fab-detect-field-length" placeholder="e.g. 1.25">
+        <div id="fab-detect-segments-list" class="segment-editor"></div>
       </div>
 
       <div class="field">

@@ -302,6 +302,7 @@ export function inspectPartStudioFeatures(featureListResponse) {
 export const spacerDetector = {
   kind: 'spacer',
   generatorId: null,   // no PARTSHELF_GENERATOR_ID — legacy signature only, by design
+  dataSource: 'features',   // tells the detection endpoint to use the features/evalFeatureScript path
   candidateFilter,
   isFromRootDocument,
   inspectPartStudioFeatures,

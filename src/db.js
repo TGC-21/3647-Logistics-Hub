@@ -800,6 +800,32 @@ export function migrateRequiredKeysIfNeeded(cat) {
  */
 export function validateAttribute(value, config) {
   if (!config) return { valid: true }
+
+  // Structural data — never coerce to a trimmed string like the other
+  // types below. `value` here is the { totalLength, segments } object
+  // itself (see AXIAL_SHAFT_DETECTION_ROADMAP.md), not a form-field string.
+  if (config.type === 'segments') {
+    if (!value || typeof value !== 'object' || !Array.isArray(value.segments) || value.segments.length === 0) {
+      return { valid: false, error: 'At least one segment is required' }
+    }
+    const REQUIRED_DIMS = {
+      round:  ['length', 'diameter'],
+      hex:    ['length', 'acrossFlats'],
+      square: ['length', 'width'],
+      prism:  ['length', 'width'],
+    }
+    for (const seg of value.segments) {
+      const fields = REQUIRED_DIMS[seg.type]
+      if (!fields) return { valid: false, error: `Unknown segment type "${seg.type}"` }
+      for (const f of fields) {
+        if (typeof seg[f] !== 'number' || !Number.isFinite(seg[f]) || seg[f] <= 0) {
+          return { valid: false, error: `Every ${seg.type} segment needs a positive ${f}` }
+        }
+      }
+    }
+    return { valid: true }
+  }
+
   const trimmed = String(value ?? '').trim()
 
   if (config.type === 'enum') {
@@ -836,7 +862,10 @@ export function validateRequiredAttributes(attributes, requiredKeysConfig) {
 
   requiredKeysConfig.forEach(config => {
     const value = byKey[config.key]
-    if (!value || !String(value).trim()) {
+    // Structural values (segments) fail the trim-string emptiness check
+    // below even when populated — validateAttribute itself already knows
+    // how to tell "empty" from "populated" for this type.
+    if (config.type !== 'segments' && (!value || !String(value).trim())) {
       errors[config.key] = 'Required'
       return
     }
@@ -852,6 +881,12 @@ export function validateRequiredAttributes(attributes, requiredKeysConfig) {
  * characteristic's default unit to bare quantity values (e.g. "5" → "5 g").
  */
 export function formatAttribute(value, config) {
+  if (config?.type === 'segments') {
+    if (!value || !Array.isArray(value.segments)) return '—'
+    const total = value.totalLength ?? value.segments.reduce((s, seg) => s + (seg.length || 0), 0)
+    const unit  = config.segmentUnit || ''
+    return `${value.segments.length} segment${value.segments.length === 1 ? '' : 's'}, ${total.toFixed(2)}${unit} total`
+  }
   const str = String(value ?? '')
   if (!config || config.type !== 'quantity') return str
   if (!config.defaultUnit || str.includes(' ') || str === '') return str
