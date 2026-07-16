@@ -142,8 +142,15 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
   let ignoredCount = 0
   const warnings = []
 
+  // Rows whose name matches BOTH spacer's and axial-shaft's keyword filter
+  // (e.g. a hex-profile spacer) are structurally ambiguous by name alone.
+  // Resolve with ONE cheap features-list fetch per overlapping Part Studio
+  // (never bodydetails) before axial-shaft's expensive geometry pass runs.
+  const excludeFromAxialShaft = await resolveSpacerAxialOverlap(rows, rootDocumentId)
+
   for (const detector of DETECTORS) {
-    const candidates = candidateRowsForDetector(detector, rows, rootDocumentId)
+    let candidates = candidateRowsForDetector(detector, rows, rootDocumentId)
+    if (detector.kind === 'axial-shaft') candidates = candidates.filter(r => !excludeFromAxialShaft.has(r.id))
     candidateCount += candidates.length
 
     // Rows filtered out by candidateFilter/isFromRootDocument but whose
@@ -188,6 +195,46 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
     warnings,
     message: `Scanned ${candidateCount} candidate part(s): ${detectedCount} detected, ${needsReviewCount} need review, ${ignoredCount} ignored.`,
   }
+}
+
+// ── Spacer / axial-shaft candidate overlap resolution ──────────────
+// Both detectors' candidateFilter are independent keyword tests, and a
+// real hex-profile spacer legitimately matches both ('spacer' AND 'hex').
+// Left unresolved, whichever detector runs LAST in DETECTORS silently
+// overwrites the other's fabrication_metadata. Since spacer's evidence
+// (a FeatureScript parameter signature) is far cheaper to check than
+// axial-shaft's (a bodydetails geometry fetch), resolve the overlap with
+// spacer's check FIRST and only let axial-shaft spend a bodydetails call
+// on rows spacer didn't claim.
+async function resolveSpacerAxialOverlap(rows, rootDocumentId) {
+  const spacerDet = DETECTORS.find(d => d.kind === 'spacer')
+  const axialDet  = DETECTORS.find(d => d.kind === 'axial-shaft')
+  if (!spacerDet || !axialDet) return new Set()
+
+  const axialIds = new Set(candidateRowsForDetector(axialDet, rows, rootDocumentId).map(r => r.id))
+  const overlap = candidateRowsForDetector(spacerDet, rows, rootDocumentId).filter(r => axialIds.has(r.id))
+  if (!overlap.length) return new Set()
+
+  const groups = new Map()
+  for (const row of overlap) {
+    const src = row.raw
+    const key = partStudioCacheKey(src.documentId, src.wvmType, src.wvmId, src.elementId, src.fullConfiguration)
+    if (!groups.has(key)) groups.set(key, { documentId: src.documentId, wvmType: src.wvmType || 'w', wvmId: src.wvmId, elementId: src.elementId, rows: [] })
+    groups.get(key).rows.push(row)
+  }
+
+  const confirmedSpacerIds = new Set()
+  for (const group of groups.values()) {
+    try {
+      const featureList = await fetchPartStudioFeatures(group.documentId, group.wvmType, group.wvmId, group.elementId)
+      if (spacerDet.inspectPartStudioFeatures(featureList).length > 0) {
+        group.rows.forEach(r => confirmedSpacerIds.add(r.id))
+      }
+    } catch (e) {
+      console.warn(`[onshape-detect-fabrication] overlap-resolution fetch failed for Part Studio ${group.elementId}: ${e.message}`)
+    }
+  }
+  return confirmedSpacerIds
 }
 
 // ── 'features' dataSource: spacer ──────────────────────────────────
