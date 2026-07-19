@@ -12,7 +12,7 @@ import {
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
-import { renderSegmentEditor } from './segmentEditor.js'
+import { renderSegmentEditor, renderSegmentPreview } from './segmentEditor.js'
 
 // ── State ─────────────────────────────────────────────────────
 let assemblies        = []
@@ -1970,6 +1970,9 @@ function openAxialShaftConfirmFields(part, meta) {
     })
   }
 
+  const previewEl = document.getElementById('fab-detect-segments-preview')
+  if (previewEl) renderSegmentPreview(previewEl, fabDetectSegments, {unit: 'in'})
+    
   const segListEl = document.getElementById('fab-detect-segments-list')
   if (segListEl) {
     renderSegmentEditor(segListEl, fabDetectSegments, {
@@ -1984,6 +1987,8 @@ function openAxialShaftConfirmFields(part, meta) {
   const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
   const qtyEl = document.getElementById('fab-detect-field-qty')
   if (qtyEl) { qtyEl.value = gap; qtyEl.max = gap }
+
+  
 }
 
 /** The original spacer-specific field population, unchanged in behavior —

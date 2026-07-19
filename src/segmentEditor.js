@@ -104,6 +104,58 @@ export function renderSegmentEditor(container, segments, { editable = true, unit
   }
 }
 
+/**
+ * Phase 6 (AXIAL_SHAFT_DETECTION_ROADMAP.md): renders a length-proportional
+ * stacked-profile SVG preview of a segment list — a sanity-check visual,
+ * not a dimensioned drawing. Purely reads `segments`; never mutates it,
+ * so it's safe to re-call on every edit alongside renderSegmentEditor.
+ */
+export function renderSegmentPreview(container, segments, { unit = 'in' } = {}) {
+  if (!segments.length) { container.innerHTML = ''; return }
+
+  const totalLength = segments.reduce((s, seg) => s + (seg.length || 0), 0) || 1
+  const W = 480, H = 90, padX = 10
+  const usableW = W - padX * 2
+
+  // Widest primary dimension across all segments, for vertical scaling
+  const maxDim = Math.max(1e-6, ...segments.map(primaryDim))
+  const maxBarH = 56
+
+  let x = padX
+  const bars = segments.map((seg, i) => {
+    const w = Math.max(2, (seg.length || 0) / totalLength * usableW)
+    const dim = primaryDim(seg)
+    const h = Math.max(10, (dim / maxDim) * maxBarH)
+    const y = (H - h) / 2
+    const fill = seg.type === 'round' ? 'var(--color-accent-light)'
+      : seg.type === 'hex' ? 'var(--color-warning-light)'
+      : seg.type === 'unknown' ? 'var(--color-danger-light)'
+      : 'var(--color-background-secondary)'
+    const stroke = seg.type === 'unknown' ? 'var(--color-danger)' : 'var(--color-border-primary)'
+    const rect = `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`
+    const label = w > 26
+      ? `<text x="${x + w / 2}" y="${H / 2 + 4}" font-size="9" text-anchor="middle" fill="var(--color-text-secondary)">${seg.type}</text>`
+      : ''
+    x += w
+    return rect + label
+  }).join('')
+
+  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <line x1="${padX}" y1="${H / 2}" x2="${W - padX}" y2="${H / 2}" stroke="var(--color-border-secondary)" stroke-dasharray="2,2"/>
+    ${bars}
+  </svg>
+  <div style="font-size:11px;color:var(--color-text-tertiary);text-align:right;margin-top:2px">
+    ${totalLength.toFixed(3)} ${unit} total
+  </div>`
+}
+
+function primaryDim(seg) {
+  if (seg.type === 'round')  return seg.diameter ?? 0
+  if (seg.type === 'hex')    return seg.acrossFlats ?? 0
+  if (seg.type === 'square' || seg.type === 'prism') return seg.width ?? 0
+  return Math.max(seg.diameter ?? 0, seg.acrossFlats ?? 0, seg.width ?? 0, 0.1)
+}
+
 function segmentRowHTML(seg, idx, editable, unit) {
   const type = seg.type && SEGMENT_TYPES.includes(seg.type) ? seg.type : 'round'
   const dims = DIM_FIELDS[type] || []
