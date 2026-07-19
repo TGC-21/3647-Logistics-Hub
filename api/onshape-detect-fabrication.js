@@ -6,28 +6,35 @@
 // during import/reimport — the user clicks "Detect fabrication
 // candidates" on an assembly, and this walks its part tree, groups
 // candidate rows by source Part Studio, fetches each Part Studio's
-// geometry/features exactly once, and writes results onto assembly_parts.
+// geometry exactly once, and writes results onto assembly_parts.
 // fabrication_metadata. No fabrication_jobs are created here — that only
 // happens when the user confirms a detected row in the UI.
 //
-// Two detectors are registered (see fabrication-detectors.js), each
-// tagged with a `dataSource`:
-//   'features'    — spacer: FeatureScript parameters via .../features,
-//                    with evalFeatureScript for geometry parameters can't
-//                    express (see runFeatureBasedDetection)
-//   'bodydetails' — axial-shaft: real B-rep geometry via
-//                    .../bodydetails, no FeatureScript parameters at all
-//                    (see runBodyDetailsBasedDetection)
-// The per-detector candidate/ignored-row bookkeeping is shared; only the
-// "how do we get dimensions for a candidate" step branches.
+// Both registered detectors (see fabrication-detectors.js) are now
+// 100% geometry-driven — spacer and axial-shaft each read real B-rep
+// geometry via .../bodydetails and classify it with their own
+// `classifyGeometry(body, opts)` (spacer.js / axial-shaft.js), rather
+// than either one touching FeatureScript parameters or the
+// .../featurescript eval endpoint. That used to be spacer-only and is
+// the reason this file previously carried a second, much more expensive
+// 'features' dataSource path (fetchPartStudioFeatures + evalFeatureScript,
+// one extra round-trip per ROUND/UP_TO_FACE spacer) — removed below, see
+// SPACER_AUTO_DETECTION_ROADMAP.md for why the FeatureScript-signature
+// approach was retired in favor of geometry.
+//
+// Every detector now shares ONE fetch/classify pipeline
+// (runBodyDetailsBasedDetection): group candidates by source Part
+// Studio, fetch bodydetails once per Part Studio (scoped to just that
+// group's partIds), then hand each row's body to its detector's
+// classifyGeometry(). The per-detector candidate/ignored-row bookkeeping
+// is shared; only the classification step is detector-specific, and it's
+// dispatched through a uniform interface rather than a dataSource switch.
 //
 // POST /api/onshape-detect-fabrication  { assemblyId }
 
 import { createClient } from '@supabase/supabase-js'
 import { applyCors, MAX_ONSHAPE_CONCURRENCY } from './_lib/onshape.js'
-import { fetchPartStudioFeatures, partStudioCacheKey, evalFeatureScript, extractEvalNumber } from './_lib/onshape-partstudio-features.js'
 import { fetchBodyDetails, bodyDetailsCacheKey, findBodyByPartId } from './_lib/onshape-bodydetails.js'
-import { reconstructAxialSegments } from './_lib/detectors/axial-shaft.js'
 import { DETECTORS, candidateRowsForDetector } from './_lib/fabrication-detectors.js'
 
 function getSupabase() {
@@ -77,10 +84,9 @@ export default async function handler(req, res) {
 // ── Walk the whole assembly_parts tree (root + every nested subassembly) ──
 // Mirrors fetchAllLinkedInstanceIdsForAssembly's traversal in src/db.js.
 // Rows already in a TERMINAL detection state are excluded here — they
-// won't change unless the underlying Onshape feature does, so re-fetching
-// their source Part Studio and re-running evalFeatureScript/bodydetails on
-// every repeat click of "Detect fabrication candidates" (including
-// reimports) would be pure wasted API calls.
+// won't change unless the underlying Onshape geometry does, so re-fetching
+// their source Part Studio on every repeat click of "Detect fabrication
+// candidates" (including reimports) would be pure wasted API calls.
 const TERMINAL_DETECTION_STATUSES = ['confirmed', 'queued', 'ignored']
 
 async function fetchWholeTreeParts(supabase, assemblyId) {
@@ -134,7 +140,7 @@ async function fetchWholeTreeParts(supabase, assemblyId) {
   }
 }
 
-// ── Group candidates by source Part Studio, dispatch by dataSource ────
+// ── Group candidates by source Part Studio, dispatch to each detector ──
 async function detectAndPersist(supabase, { rows, rootDocumentId }) {
   let candidateCount = 0
   let detectedCount  = 0
@@ -144,21 +150,26 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
 
   // Rows whose name matches BOTH spacer's and axial-shaft's keyword filter
   // (e.g. a hex-profile spacer) are structurally ambiguous by name alone.
-  // Resolve with ONE cheap features-list fetch per overlapping Part Studio
-  // (never bodydetails) before axial-shaft's expensive geometry pass runs.
-  const excludeFromAxialShaft = await resolveSpacerAxialOverlap(rows, rootDocumentId)
+  // Both detectors are geometry-driven now, so resolving this overlap no
+  // longer needs its own separate Onshape call: bodydetails for an
+  // overlapping row is fetched once (via spacer's pass, which runs
+  // first — see DETECTORS' order in fabrication-detectors.js) and, if
+  // spacer's classifyGeometry confidently recognizes it as a single
+  // bored round/hex segment, axial-shaft's pass skips that row entirely
+  // rather than re-fetching the same geometry and overwriting spacer's
+  // result with a (necessarily worse) multi-segment-shaft read of a
+  // part that isn't one.
+  const claimedBySpacer = new Set()
 
   for (const detector of DETECTORS) {
     let candidates = candidateRowsForDetector(detector, rows, rootDocumentId)
-    if (detector.kind === 'axial-shaft') candidates = candidates.filter(r => !excludeFromAxialShaft.has(r.id))
+    if (detector.kind === 'axial-shaft') candidates = candidates.filter(r => !claimedBySpacer.has(r.id))
     candidateCount += candidates.length
 
     // Rows filtered out by candidateFilter/isFromRootDocument but whose
     // name still mentions the detector's kind get marked 'ignored' so the
     // UI can distinguish "we looked and it's not ours" from "never
-    // considered". Cheap and just a name-substring check. Shared across
-    // both dataSource kinds — this logic doesn't care how dimensions get
-    // resolved, only whether the row was in-scope at all.
+    // considered". Cheap and just a name-substring check.
     const ignoredRows = rows.filter(r =>
       !candidates.includes(r) &&
       detector.candidateFilter(r) &&
@@ -170,7 +181,7 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
         kind: detector.kind,
         status: 'ignored',
         confidence: 'high',
-        source: detector.dataSource === 'bodydetails' ? 'onshape-bodydetails' : 'onshape-featurescript',
+        source: 'onshape-bodydetails',
         warnings: ['Source document differs from the imported assembly\'s root document — treated as vendor/COTS.'],
       })
       ignoredCount++
@@ -178,9 +189,11 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
 
     if (!candidates.length) continue
 
-    const stats = detector.dataSource === 'bodydetails'
-      ? await runBodyDetailsBasedDetection(supabase, detector, candidates)
-      : await runFeatureBasedDetection(supabase, detector, candidates)
+    const stats = await runBodyDetailsBasedDetection(supabase, detector, candidates, {
+      onRowClassified: (row, result) => {
+        if (detector.kind === 'spacer' && result.status === 'detected') claimedBySpacer.add(row.id)
+      },
+    })
 
     detectedCount    += stats.detected
     needsReviewCount += stats.needsReview
@@ -197,190 +210,22 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
   }
 }
 
-// ── Spacer / axial-shaft candidate overlap resolution ──────────────
-// Both detectors' candidateFilter are independent keyword tests, and a
-// real hex-profile spacer legitimately matches both ('spacer' AND 'hex').
-// Left unresolved, whichever detector runs LAST in DETECTORS silently
-// overwrites the other's fabrication_metadata. Since spacer's evidence
-// (a FeatureScript parameter signature) is far cheaper to check than
-// axial-shaft's (a bodydetails geometry fetch), resolve the overlap with
-// spacer's check FIRST and only let axial-shaft spend a bodydetails call
-// on rows spacer didn't claim.
-async function resolveSpacerAxialOverlap(rows, rootDocumentId) {
-  const spacerDet = DETECTORS.find(d => d.kind === 'spacer')
-  const axialDet  = DETECTORS.find(d => d.kind === 'axial-shaft')
-  if (!spacerDet || !axialDet) return new Set()
-
-  const axialIds = new Set(candidateRowsForDetector(axialDet, rows, rootDocumentId).map(r => r.id))
-  const overlap = candidateRowsForDetector(spacerDet, rows, rootDocumentId).filter(r => axialIds.has(r.id))
-  if (!overlap.length) return new Set()
-
-  const groups = new Map()
-  for (const row of overlap) {
-    const src = row.raw
-    const key = partStudioCacheKey(src.documentId, src.wvmType, src.wvmId, src.elementId, src.fullConfiguration)
-    if (!groups.has(key)) groups.set(key, { documentId: src.documentId, wvmType: src.wvmType || 'w', wvmId: src.wvmId, elementId: src.elementId, rows: [] })
-    groups.get(key).rows.push(row)
-  }
-
-  const confirmedSpacerIds = new Set()
-  for (const group of groups.values()) {
-    try {
-      const featureList = await fetchPartStudioFeatures(group.documentId, group.wvmType, group.wvmId, group.elementId)
-      if (spacerDet.inspectPartStudioFeatures(featureList).length > 0) {
-        group.rows.forEach(r => confirmedSpacerIds.add(r.id))
-      }
-    } catch (e) {
-      console.warn(`[onshape-detect-fabrication] overlap-resolution fetch failed for Part Studio ${group.elementId}: ${e.message}`)
-    }
-  }
-  return confirmedSpacerIds
-}
-
-// ── 'features' dataSource: spacer ──────────────────────────────────
-// Unchanged from the original single-detector implementation — only
-// extracted into its own function so detectAndPersist can dispatch by
-// dataSource instead of assuming every detector works this way.
-async function runFeatureBasedDetection(supabase, detector, candidates) {
-  let detected = 0
-  let needsReview = 0
-  const warnings = []
-
-  // Group by source Part Studio key
-  const groups = new Map()   // cacheKey -> { studioRef, rows: [] }
-  for (const row of candidates) {
-    const src = row.raw
-    const key = partStudioCacheKey(src.documentId, src.wvmType, src.wvmId, src.elementId, src.fullConfiguration)
-    if (!groups.has(key)) {
-      groups.set(key, { documentId: src.documentId, wvmType: src.wvmType || 'w', wvmId: src.wvmId, elementId: src.elementId, rows: [] })
-    }
-    groups.get(key).rows.push(row)
-  }
-
-  // Fetch each unique Part Studio's features once, capped concurrency
-  const groupEntries = [...groups.values()]
-  let cursor = 0
-  async function worker() {
-    while (cursor < groupEntries.length) {
-      const group = groupEntries[cursor++]
-      let matches = []
-      try {
-        const featureList = await fetchPartStudioFeatures(group.documentId, group.wvmType, group.wvmId, group.elementId)
-        matches = detector.inspectPartStudioFeatures(featureList)
-      } catch (e) {
-        console.warn(`[onshape-detect-fabrication] Feature fetch failed for Part Studio ${group.elementId}: ${e.message}`)
-        warnings.push(`Could not inspect Part Studio ${group.elementId}: ${e.message}`)
-      }
-
-      // Resolve any match that needs real geometry (ROUND id / UP_TO_FACE
-      // length) via evalFeatureScript — one call per feature, run after
-      // the cheap parameter-only pass above so a fetch failure there
-      // doesn't block eval, and vice versa.
-      if (detector.applyEvalResult) {
-        matches = await Promise.all(matches.map(async m => {
-          if (!m.evalRequest) return m
-          try {
-            const evalRes = await evalFeatureScript(
-              group.documentId, group.wvmType, group.wvmId, group.elementId,
-              m.evalRequest.script, m.evalRequest.queries
-            )
-            const radius = m.evalRequest.needsId ? extractEvalNumber(evalRes, 'radius') : null
-            const length = m.evalRequest.needsLength ? extractEvalNumber(evalRes, 'length') : null
-            const outcome = (m.evalRequest.needsId && radius === null) || (m.evalRequest.needsLength && length === null)
-              ? { error: 'Could not locate expected value in eval response — response shape may differ from what was assumed.' }
-              : { radius, length }
-            return detector.applyEvalResult(m, outcome)
-          } catch (e) {
-            console.warn(`[onshape-detect-fabrication] evalFeatureScript failed for feature ${m.featureId}: ${e.message}`)
-            return detector.applyEvalResult(m, { error: e.message })
-          }
-        }))
-      }
-
-      // Row-to-feature mapping: only confident when counts match 1:1.
-      // Otherwise every row in this studio is flagged needs_review with
-      // all candidate matches attached for manual selection — see
-      // "Open Questions" in the spacer roadmap re: partId/partIdentity
-      // mapping, which v1 does not attempt to resolve automatically.
-      for (const row of group.rows) {
-        if (!matches.length) {
-          await writeMetadata(supabase, row.id, {
-            autoDetected: true,
-            kind: detector.kind,
-            status: 'needs_review',
-            confidence: 'low',
-            source: 'onshape-featurescript',
-            warnings: ['No spacer-signature feature found in this part\'s source Part Studio.'],
-          })
-          needsReview++
-          continue
-        }
-
-        if (group.rows.length === 1 && matches.length === 1) {
-          const m = matches[0]
-          await writeMetadata(supabase, row.id, {
-            autoDetected: true,
-            kind: detector.kind,
-            status: m.status,
-            confidence: m.confidence,
-            source: 'onshape-featurescript',
-            generator: detector.generatorId,
-            spacerType: m.spacerType,
-            endType: m.endType,
-            dimensions: m.dimensions,
-            fabricationDraft: m.status === 'detected'
-              ? { method: null, quantityRequested: null, requiresConfirmation: true }
-              : null,
-            onshape: { featureId: m.featureId, documentId: group.documentId, wvmType: group.wvmType, wvmId: group.wvmId, elementId: group.elementId },
-            warnings: m.warnings,
-          })
-          if (m.status === 'detected') detected++
-          else needsReview++
-        } else {
-          // Ambiguous mapping — persist spacerType/endType too, taken
-          // from the first candidate, so the confirm UI's default guess
-          // is at least this Part Studio's actual first match rather
-          // than a hard-coded ROUND assumption.
-          const first = matches[0] || {}
-          await writeMetadata(supabase, row.id, {
-            autoDetected: true,
-            kind: detector.kind,
-            status: 'needs_review',
-            confidence: 'medium',
-            source: 'onshape-featurescript',
-            spacerType: first.spacerType ?? null,
-            endType: first.endType ?? null,
-            candidateMatches: matches,
-            warnings: ['Multiple generated features and/or matching rows in this Part Studio — pick the correct match manually.'],
-          })
-          needsReview++
-        }
-      }
-    }
-  }
-
-  const workerCount = Math.min(MAX_ONSHAPE_CONCURRENCY, groupEntries.length)
-  await Promise.all(Array.from({ length: workerCount }, worker))
-
-  return { detected, needsReview, warnings }
-}
-
-// ── 'bodydetails' dataSource: axial-shaft (Phase 3) ────────────────
-// Groups candidates by source Part Studio (same convention as the
-// features path), fetches bodydetails ONCE per Part Studio scoped to
-// just that group's partIds, then runs reconstructAxialSegments (Phase 2,
-// pure function) per part. No FeatureScript/eval involvement at all —
-// this detector is 100% geometry-driven, per
-// AXIAL_SHAFT_DETECTION_ROADMAP.md.
+// ── Shared bodydetails pipeline for every geometry-driven detector ─────
+// Groups candidates by source Part Studio (one bodydetails fetch per
+// group, scoped to just that group's partIds), then hands each row's
+// resolved body to `detector.classifyGeometry(body, opts)` — spacer.js
+// and axial-shaft.js both implement this with the same
+// { status, confidence, warnings, extra } return shape, so this function
+// has no detector-specific branching at all.
 //
-// unitScale is hard-coded to inches (1/0.0254), matching the same
-// inches-in-a-metric-API-response assumption the spacer detector already
-// makes throughout (its dimensions are stored with unit: 'in'). A
-// mixed-unit document would need real handling — not attempted in v1,
-// same scope line spacer.js draws for internalAdd's unit.
+// unitScale is hard-coded to inches (1/0.0254): Onshape's bodydetails
+// response is always in meters, and every detector's dimensions are
+// stored with unit: 'in'. A mixed-unit document would need real handling
+// — not attempted in v1, same scope line the original spacer detector
+// drew for internalAdd's unit.
 const UNIT_SCALE_METERS_TO_INCHES = 1 / 0.0254
 
-async function runBodyDetailsBasedDetection(supabase, detector, candidates) {
+async function runBodyDetailsBasedDetection(supabase, detector, candidates, { onRowClassified = () => {} } = {}) {
   let detected = 0
   let needsReview = 0
   const warnings = []
@@ -402,23 +247,22 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates) {
       const group = groupEntries[cursor++]
 
       // partId identifies which body in the (possibly multi-part)
-      // response belongs to which BOM row — same field the spacer
-      // detector's "Open Questions" flags as unresolved for its own
-      // partId/feature correlation, but here it's exactly what we need
-      // and nothing more, since bodydetails keys bodies by id === partId
-      // directly (no feature correlation required at all).
+      // response belongs to which BOM row — bodydetails keys bodies by
+      // id === partId directly, no feature correlation required.
       const rowsWithPartId = group.rows.filter(r => r.raw.partId)
       const rowsMissingPartId = group.rows.filter(r => !r.raw.partId)
 
       for (const row of rowsMissingPartId) {
-        await writeMetadata(supabase, row.id, {
+        const meta = {
           autoDetected: true,
           kind: detector.kind,
           status: 'needs_review',
           confidence: 'low',
           source: 'onshape-bodydetails',
           warnings: ['This BOM row has no recorded partId — cannot fetch its geometry.'],
-        })
+        }
+        await writeMetadata(supabase, row.id, meta)
+        onRowClassified(row, meta)
         needsReview++
       }
 
@@ -432,14 +276,16 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates) {
         console.warn(`[onshape-detect-fabrication] bodydetails fetch failed for Part Studio ${group.elementId}: ${e.message}`)
         warnings.push(`Could not fetch body details for Part Studio ${group.elementId}: ${e.message}`)
         for (const row of rowsWithPartId) {
-          await writeMetadata(supabase, row.id, {
+          const meta = {
             autoDetected: true,
             kind: detector.kind,
             status: 'needs_review',
             confidence: 'low',
             source: 'onshape-bodydetails',
             warnings: [`Body details fetch failed: ${e.message}`],
-          })
+          }
+          await writeMetadata(supabase, row.id, meta)
+          onRowClassified(row, meta)
           needsReview++
         }
         continue
@@ -450,47 +296,52 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates) {
         const body = findBodyByPartId(bodyDetailsResponse, partId)
 
         if (!body) {
-          await writeMetadata(supabase, row.id, {
+          const meta = {
             autoDetected: true,
             kind: detector.kind,
             status: 'needs_review',
             confidence: 'low',
             source: 'onshape-bodydetails',
             warnings: ['Part not found in the body details response — it may have been deleted, renamed, or reconfigured since import.'],
-          })
+          }
+          await writeMetadata(supabase, row.id, meta)
+          onRowClassified(row, meta)
           needsReview++
           continue
         }
 
         let result
         try {
-          result = reconstructAxialSegments(body, { unitScale: UNIT_SCALE_METERS_TO_INCHES })
+          result = detector.classifyGeometry(body, { unitScale: UNIT_SCALE_METERS_TO_INCHES })
         } catch (e) {
-          console.warn(`[onshape-detect-fabrication] axial-shaft reconstruction failed for part ${partId}: ${e.message}`)
-          await writeMetadata(supabase, row.id, {
+          console.warn(`[onshape-detect-fabrication] ${detector.kind} classification failed for part ${partId}: ${e.message}`)
+          const meta = {
             autoDetected: true,
             kind: detector.kind,
             status: 'needs_review',
             confidence: 'low',
             source: 'onshape-bodydetails',
-            warnings: [`Geometry reconstruction failed: ${e.message}`],
-          })
+            warnings: [`Geometry classification failed: ${e.message}`],
+          }
+          await writeMetadata(supabase, row.id, meta)
+          onRowClassified(row, meta)
           needsReview++
           continue
         }
 
-        await writeMetadata(supabase, row.id, {
+        const meta = {
           autoDetected: true,
           kind: detector.kind,
           status: result.status,
           confidence: result.confidence,
           source: 'onshape-bodydetails',
           generator: detector.generatorId,
-          axis: result.axis,
-          dimensions: result.dimensions,
           onshape: { documentId: group.documentId, wvmType: group.wvmType, wvmId: group.wvmId, elementId: group.elementId, partId },
           warnings: result.warnings,
-        })
+          ...result.extra,
+        }
+        await writeMetadata(supabase, row.id, meta)
+        onRowClassified(row, meta)
 
         if (result.status === 'detected') detected++
         else needsReview++

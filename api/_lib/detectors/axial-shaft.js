@@ -361,12 +361,32 @@ export function isFromRootDocument(row, rootDocumentId) {
   return !!row.raw?.documentId && row.raw.documentId === rootDocumentId
 }
 
+/**
+ * Generic geometry-classification entrypoint used by the detection
+ * endpoint's shared runBodyDetailsBasedDetection — see spacer.js's
+ * classifyGeometry for the sibling implementation. Returns
+ * { status, confidence, warnings, extra } where `extra` is spread
+ * directly onto the persisted fabrication_metadata, so each detector
+ * can carry its own kind-specific fields (here: axis + dimensions.segments)
+ * without the endpoint needing to know its shape.
+ */
+export function classifyGeometry(body, opts) {
+  const result = reconstructAxialSegments(body, opts)
+  return {
+    status: result.status,
+    confidence: result.confidence,
+    warnings: result.warnings,
+    extra: { axis: result.axis, dimensions: result.dimensions },
+  }
+}
+
 export const axialShaftDetector = {
   kind: 'axial-shaft',
   generatorId: null,      // geometry-driven detection, no FeatureScript marker relied on
   dataSource: 'bodydetails',   // tells the detection endpoint which fetch strategy to use
   candidateFilter,
   isFromRootDocument,
+  classifyGeometry,
 }
 
 /**

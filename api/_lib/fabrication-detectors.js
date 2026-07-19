@@ -2,19 +2,20 @@
 //
 // Generic detector registry. The importer/detection endpoint only knows
 // that a detector has a candidateFilter (cheap BOM-row prefilter), an
-// isFromRootDocument check, and a `dataSource` tag telling it which
-// Onshape fetch strategy to use — it never needs spacer- or
-// axial-shaft-specific knowledge directly. See
-// SPACER_AUTO_DETECTION_ROADMAP.md and
-// AXIAL_SHAFT_DETECTION_ROADMAP.md for each detector's own design.
+// isFromRootDocument check, and a classifyGeometry(body, opts) function
+// that turns an already-fetched bodydetails body into a
+// { status, confidence, warnings, extra } result — it never needs
+// spacer- or axial-shaft-specific knowledge directly. See
+// SPACER_AUTO_DETECTION_ROADMAP.md and AXIAL_SHAFT_DETECTION_ROADMAP.md
+// for each detector's own design.
 //
-// dataSource values in use:
-//   'features'    — spacer: reads FeatureScript parameters via
-//                    partstudios/.../features (+ evalFeatureScript for
-//                    geometry evalFeatureScript can't get from params alone)
-//   'bodydetails' — axial-shaft: reads real B-rep geometry via
-//                    partstudios/.../bodydetails, no FeatureScript
-//                    parameter matching at all
+// Both detectors currently read real B-rep geometry via
+// partstudios/.../bodydetails — no FeatureScript parameter matching or
+// evalFeatureScript involvement for either one. Order matters here:
+// spacer is listed first because the detection endpoint gives it first
+// crack at any row that could ambiguously match both detectors' name
+// filters (e.g. a hex-profile spacer) — see detectAndPersist's
+// `claimedBySpacer` set in onshape-detect-fabrication.js.
 
 import { spacerDetector } from './detectors/spacer.js'
 import { axialShaftDetector } from './detectors/axial-shaft.js'
