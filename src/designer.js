@@ -83,6 +83,20 @@ const AXIAL_SHAFT_REQUIRED_KEYS_CONFIG = [
   { key: 'Profile', type: 'segments', segmentUnit: 'in' },
 ]
 
+const PLATE_CATEGORY_NAME = 'Plate'
+const PLATE_REQUIRED_KEYS_CONFIG = [
+  { key: 'Material',  type: 'enum', options: ['Aluminum', 'Polycarbonate', 'Acrylic', 'Steel', 'Other'] },
+  { key: 'Thickness', type: 'quantity', defaultUnit: 'in' },
+]
+
+async function ensurePlateCategory() {
+  const cats = await fetchCategories()
+  let cat = cats.find(c => c.name === PLATE_CATEGORY_NAME)
+  if (cat) return cat
+  cat = await upsertCategory({ id: genId(), name: PLATE_CATEGORY_NAME, requiredKeysConfig: PLATE_REQUIRED_KEYS_CONFIG })
+  return cat
+}
+
 /** Finds (or creates, once) the hard-coded "Axial Shaft" category —
  *  mirrors ensureSpacerCategory() below. */
 
@@ -1907,7 +1921,9 @@ function openFabDetectConfirmModal(partId, isChildPart = false) {
   if (ignoreBtn) {
     ignoreBtn.innerHTML = fabDetectKind === 'axial-shaft'
       ? '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a shaft'
-      : '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a spacer'
+      : fabDetectKind === 'plate'
+        ? '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a plate'
+        : '<i class="ti ti-eye-off" aria-hidden="true"></i> Not a spacer'
   }
 
   const spacerFields   = document.getElementById('fab-detect-spacer-fields')
@@ -1921,13 +1937,24 @@ function openFabDetectConfirmModal(partId, isChildPart = false) {
     return
   }
 
+  const plateFields = document.getElementById('fab-detect-plate-fields')
+  if (!spacerFields || !segmentsFields || !plateFields) {
+    console.error('[fab-detect] Missing confirm-overlay field block — hard-refresh / rebuild likely needed.')
+    return
+  }
+
+  spacerFields.style.display   = 'none'
+  segmentsFields.style.display = 'none'
+  plateFields.style.display    = 'none'
+
   if (fabDetectKind === 'axial-shaft') {
-    spacerFields.style.display   = 'none'
     segmentsFields.style.display = 'flex'
     openAxialShaftConfirmFields(part, meta)
+  } else if (fabDetectKind === 'plate') {
+    plateFields.style.display = 'flex'
+    openPlateConfirmFields(part, meta)
   } else {
-    spacerFields.style.display   = 'flex'
-    segmentsFields.style.display = 'none'
+    spacerFields.style.display = 'flex'
     openSpacerConfirmFields(part, meta)
   }
 
@@ -2032,6 +2059,22 @@ function openSpacerConfirmFields(part, meta) {
 
   populateFabDetectFields(part)
 }
+
+/** Seeds the plate confirm fields from detected metadata — thickness
+ *  and confidence only, per resolved scope. Material has no detected
+ *  value (not derivable from geometry alone in v1), so it's always left
+ *  for the user to pick. */
+function openPlateConfirmFields(part, meta) {
+  const dims = meta.dimensions || {}
+  document.getElementById('fab-detect-plate-field-thickness').value = dims.thickness?.value ?? ''
+  document.getElementById('fab-detect-plate-field-material').value = ''
+  document.getElementById('fab-detect-plate-confidence').innerHTML =
+    `<span class="part-badge part-badge--${meta.confidence === 'high' ? 'complete' : 'partial'}">${meta.confidence || 'unknown'}</span>`
+
+  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
+  const qtyEl = document.getElementById('fab-detect-field-qty')
+  if (qtyEl) { qtyEl.value = gap; qtyEl.max = gap }
+}
  
 /** Fills the OD/ID/length/spacer-type/qty fields from whatever
  *  fabDetectMatch currently points at. Called on modal open and again
@@ -2092,6 +2135,11 @@ async function confirmFabDetection() {
 
   if (fabDetectKind === 'axial-shaft') {
     await confirmAxialShaftDetection(part)
+    return
+  }
+
+  if (fabDetectKind === 'plate') {
+    await confirmPlateDetection(part)
     return
   }
 
@@ -2283,6 +2331,77 @@ async function confirmAxialShaftDetection(part) {
   } catch (e) {
     console.error(e)
     toastFn(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming shaft')
+  } finally {
+    btn.disabled = false
+    btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
+  }
+}
+
+async function confirmPlateDetection(part) {
+  const thickness = parseFloat(document.getElementById('fab-detect-plate-field-thickness').value)
+  const material  = document.getElementById('fab-detect-plate-field-material').value
+  const qty       = Math.max(1, parseInt(document.getElementById('fab-detect-field-qty').value, 10) || 1)
+
+  if (!Number.isFinite(thickness) || thickness <= 0) { toastFn('Thickness is required'); return }
+  if (!material) { toastFn('Material is required'); return }
+
+  const meta = part.fabricationMetadata || {}
+  const detectedThickness = meta.dimensions?.thickness?.value
+  const overrides = {}
+  if (detectedThickness !== thickness) {
+    overrides.thickness = { value: thickness, unit: 'in', reason: 'User confirmation edit' }
+  }
+
+  const btn = document.getElementById('btn-confirm-fab-detect')
+  btn.disabled = true; btn.textContent = 'Confirming…'
+
+  try {
+    const plateCat = await ensurePlateCategory()
+    const attrs = {
+      'Material':  material,
+      'Thickness': String(thickness),
+    }
+    const component = await findOrCreateComponent({
+      categoryId: plateCat.id,
+      fields:     plateCat.requiredKeysConfig,
+      attrs,
+      fallback:   { name: part.partName, description: `Auto-detected ${material.toLowerCase()} plate`, image: null },
+      genId,
+    })
+
+    const updatedMeta = {
+      ...meta,
+      status: 'queued',
+      overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null),
+    }
+
+    const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
+
+    const job = await createFabricationJob({
+      assemblyPartId:    part.id,
+      quantityRequested: qty,
+      batchId:           null,
+      genId,
+    })
+    registerNewJob(job)
+
+    if (fabDetectIsChild) {
+      const idx = currentChildParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentChildParts[idx] = savedPart
+      currentChildPartJobs[part.id] = job
+      renderChildDetail()
+    } else {
+      const idx = currentParts.findIndex(p => p.id === part.id)
+      if (idx > -1) currentParts[idx] = savedPart
+      currentPartJobs[part.id] = job
+      renderAssemblyDetail()
+    }
+
+    closeFabDetectConfirmModal()
+    toastFn(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
+  } catch (e) {
+    console.error(e)
+    toastFn(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming plate')
   } finally {
     btn.disabled = false
     btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
@@ -3167,7 +3286,7 @@ function renderLinkedDetail(partId, instances, isChildPart) {
 function fabDetectionBadgeHTML(p) {
   const meta = p.fabricationMetadata
   if (!meta || !meta.autoDetected) return ''
-  const noun = meta.kind === 'axial-shaft' ? 'shaft' : 'spacer'
+  const noun = meta.kind === 'axial-shaft' ? 'shaft' : meta.kind === 'plate' ? 'plate' : 'spacer'
   const map = {
     detected:     ['fab-job-badge--complete',   'ti-cube-plus',    `${noun[0].toUpperCase()}${noun.slice(1)} detected`],
     needs_review: ['fab-job-badge--committed',  'ti-help-circle',  'Needs review'],
