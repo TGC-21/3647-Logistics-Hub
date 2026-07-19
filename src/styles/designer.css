@@ -699,7 +699,29 @@
   align-items: center;
   padding: 6px 0;
   border-bottom: 0.5px solid var(--color-border-tertiary);
+  flex-wrap: wrap;
+  align-items: flex-end;
 }
+
+.segment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.segment-field-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.segment-remove-btn {
+  align-self: flex-end;
+  margin-bottom: 1px;
+}
+
 .segment-row:last-child { border-bottom: none; }
 .segment-row--readonly {
   font-size: 12px;
@@ -748,6 +770,7 @@
   color: var(--color-text-secondary);
   white-space: nowrap;
 }
+
 .attr-segments-editor.error {
   border: 1px solid #E24B4A;
   border-radius: var(--border-radius-md);
