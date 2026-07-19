@@ -61,12 +61,27 @@ export const STOCK_THICKNESSES_IN = [0.125, 0.1875, 0.25, 0.375, 0.5]
 // "block" or "thick washer" (spacer-detector territory).
 const MIN_FOOTPRINT_TO_THICKNESS_RATIO = 8
 
+// Absolute area floor (m²) for a level to count toward the thickness
+// span calculation — filters out counterbore/countersink shoulder rings
+// regardless of how they compare proportionally to the top/bottom pair.
+// Small and deliberately separate from DOMINANT_PAIR_FOOTPRINT_FRACTION.
+const MIN_LEVEL_AREA_FOR_SPAN = 0.00002   // ~0.03 in² — a small washer-sized ring
+
 // A candidate plane pair's combined area must be at least this fraction
-// of the body's total face area to count as "dominant" — this is what
-// keeps counterbore shoulders / countersink rims (small-area planar
-// faces sharing the same normal) from ever being mistaken for a
-// primary top/bottom face.
-const DOMINANT_PAIR_AREA_FRACTION = 0.6
+// of the body's FOOTPRINT area (bounding-box length × width, derived
+// from face box data already present in bodydetails — not a second API
+// call) to count as "dominant." Deliberately normalized against
+// footprint rather than total body surface area: a heavily pocketed or
+// hole-riddled lightweighting plate can have dozens of hole/pocket wall
+// faces whose cumulative area rivals or exceeds the top+bottom pair,
+// even though those two faces are unambiguously the dominant PLANAR
+// pair. Total-surface-area normalization scales with feature count and
+// falsely rejects exactly this kind of legitimate, heavily-lightened
+// plate; footprint normalization does not, since footprint is a
+// property of the outline alone. 15% is a generous floor — even a
+// plate mostly pocketed out for weight typically retains more solid
+// material than that.
+const DOMINANT_PAIR_FOOTPRINT_FRACTION = 0.15
 
 // ── Step 1: find candidate plane-normal clusters, by area ───────────
 function groupPlanesByNormal(body) {
@@ -235,29 +250,48 @@ export function classifyPlateGeometry(body, { unitScale = 1 } = {}) {
 
     const [top, bottom] = levels
     const pairArea = top.area + bottom.area
-    if (pairArea / totalArea < DOMINANT_PAIR_AREA_FRACTION) continue
-
-    // Multi-offset check: any OTHER level whose area is not small
-    // relative to the top/bottom pair indicates a second thickness
-    // region (stepped/ribbed part) — explicitly out of scope.
-    const otherLevels = levels.slice(2)
-    const significantOtherLevels = otherLevels.filter(l => l.area > pairArea * 0.05)
-    if (significantOtherLevels.length) {
-      return {
-        status: 'needs_review',
-        confidence: 'medium',
-        dimensions: null,
-        normal: { direction: cluster.direction, confidence: 'plane-majority' },
-        warnings: [`Found ${significantOtherLevels.length + 2} distinct thickness offsets — likely a stepped or ribbed plate, not classified automatically.`],
-      }
-    }
-
-    const thickness = Math.abs(top.offset - bottom.offset) * unitScale
     const normalOrigin = top.faces[0].surface.origin
 
-    // Footprint: bounding box of the top face, projected perpendicular
-    // to the normal (coarse — not a true outline trace, per roadmap).
+    // Footprint computed up front — needed for the dominant-pair gate
+    // itself now, not just for the final reported dimensions. Free:
+    // derived from face.box corners already present in bodydetails, no
+    // second API call (and no need for the separate /boundingboxes
+    // endpoint — see DOMINANT_PAIR_FOOTPRINT_FRACTION's comment above).
     const footprint = planarFootprint(top.faces, normalOrigin, cluster.direction)
+    const footprintArea = footprint.length * footprint.width
+
+    if (footprintArea <= 0 || pairArea / footprintArea < DOMINANT_PAIR_FOOTPRINT_FRACTION) continue
+
+    // Thickness is the GREATEST distance between any two parallel planes
+    // in this normal cluster, not just the top/bottom-by-area pair —
+    // this is what lets stepped plates, counterbores, and countersinks
+    // report a correct thickness instead of being disqualified. A
+    // counterbore/countersink shoulder or a step face both show up as
+    // just another level in this same cluster; the true plate thickness
+    // is always the outermost span, regardless of which individual level
+    // happens to carry the most face area.
+    //
+    // Tiny levels (a counterbore/countersink shoulder ring, for example)
+    // are filtered out of this span calculation by an absolute area
+    // floor, not a fraction of the top pair's area — a large-diameter
+    // counterbore near full plate size would otherwise pass a
+    // relative threshold and wrongly extend the measured thickness.
+    // MIN_LEVEL_AREA_FOR_SPAN is intentionally small and separate from
+    // DOMINANT_PAIR_FOOTPRINT_FRACTION, which only governs whether a normal
+    // cluster reads as a plate at all.
+    const significantLevels = levels.filter(l => l.area > MIN_LEVEL_AREA_FOR_SPAN)
+    const offsets = significantLevels.map(l => l.offset)
+    const maxOffset = Math.max(...offsets)
+    const minOffset = Math.min(...offsets)
+
+    if (significantLevels.length > 2) {
+      warnings.push(`Found ${significantLevels.length} distinct thickness-relevant plane offsets (steps, counterbores, or countersinks) — thickness taken as the greatest span; confirm manually.`)
+    }
+
+    const thickness = Math.abs(maxOffset - minOffset) * unitScale
+
+    // minFootprintDim reuses the footprint already computed above for
+    // the dominant-pair gate — not recomputed here.
     const minFootprintDim = Math.min(footprint.length, footprint.width) * unitScale
 
     if (thickness <= 0 || minFootprintDim / thickness < MIN_FOOTPRINT_TO_THICKNESS_RATIO) {
@@ -290,9 +324,10 @@ export function classifyPlateGeometry(body, { unitScale = 1 } = {}) {
     }
 
     const status = unrecognizedHoles > 0 ? 'needs_review' : 'detected'
+    const multiLevel = significantLevels.length > 2
     let confidence = 'medium'
-    if (status === 'detected' && matchedStock) confidence = 'high'
-    if (status === 'detected' && !matchedStock) confidence = 'medium'
+    if (status === 'detected' && matchedStock && !multiLevel) confidence = 'high'
+    if (status === 'detected' && (!matchedStock || multiLevel)) confidence = 'medium'
     if (status === 'needs_review') confidence = 'low'
 
     return {
