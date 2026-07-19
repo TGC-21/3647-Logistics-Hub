@@ -61,7 +61,7 @@ let fabDetectCandidates = null
 let fabDetectKind       = null   // 'spacer' | 'axial-shaft' — which confirm-overlay branch is showing
 let fabDetectSegments   = null   // working (editable) segment array — axial-shaft only
 let fabDetectOriginalSegments = null   // as-detected segment array, for override diffing at confirm time
-
+let fabFilter = 'all'
 // Hard-coded category shape for auto-created Spacer components — no UI
 // to configure this in v1, matches the confirmation overlay's fields.
 const SPACER_CATEGORY_NAME = 'Spacer'
@@ -85,6 +85,25 @@ const AXIAL_SHAFT_REQUIRED_KEYS_CONFIG = [
 
 /** Finds (or creates, once) the hard-coded "Axial Shaft" category —
  *  mirrors ensureSpacerCategory() below. */
+
+function fabFilterMatches(p) {
+  if (fabFilter === 'all') return true
+  return p.fabricationMetadata?.status === fabFilter
+}
+
+function fabFilterSelectHTML() {
+  const opts = [
+    ['all', 'All parts'],
+    ['detected', 'Detected'],
+    ['needs_review', 'Needs review'],
+    ['queued', 'Queued for fab'],
+    ['ignored', 'Ignored'],
+  ]
+  return `<select id="fab-filter-select" style="font-size:12px;padding:4px 8px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary)">
+    ${opts.map(([v, l]) => `<option value="${v}"${fabFilter === v ? ' selected' : ''}>${l}</option>`).join('')}
+  </select>`
+}
+
 async function ensureAxialShaftCategory() {
   const cats = await fetchCategories()
   let cat = cats.find(c => c.name === AXIAL_SHAFT_CATEGORY_NAME)
@@ -433,6 +452,7 @@ async function renderAssemblyDetail() {
         <div style="flex:1"></div>
         <button class="btn btn-sm" id="btn-import-csv"><i class="ti ti-upload" aria-hidden="true"></i><span> Import CSV</span></button>
         <button class="btn btn-sm" id="btn-import-onshape"><i class="ti ti-cube" aria-hidden="true"></i><span> Import from Onshape</span></button>
+        ${assembly.onshapeElementId ? fabFilterSelectHTML() : ''}
         <button class="btn btn-primary btn-sm" id="btn-add-part"><i class="ti ti-plus" aria-hidden="true"></i><span> Add part</span></button>
       </div>
 
@@ -450,7 +470,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-                ${currentParts.map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
+                ${currentParts.filter(fabFilterMatches).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -502,6 +522,10 @@ async function renderAssemblyDetail() {
   document.getElementById('btn-import-csv')?.addEventListener('click', openBomImportModal)
   document.getElementById('btn-import-onshape')?.addEventListener('click', () => openOnshapeModal('import'))
   document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetection)
+  document.getElementById('fab-filter-select')?.addEventListener('change', e => {
+    fabFilter = e.target.value
+    renderAssemblyDetail()
+  })
 
   if (isLinked) {
     document.getElementById('btn-reimport-asm').addEventListener('click', () => confirmReimport(assembly))
@@ -654,7 +678,7 @@ async function renderChildDetail() {
                 </tr>
               </thead>
               <tbody id="child-parts-tbody">
-                ${currentChildParts.map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
+                ${currentParts.filter(fabFilterMatches).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -693,6 +717,10 @@ async function renderChildDetail() {
 
   document.getElementById('tab-btn-parts')?.addEventListener('click', () => { childDetailTab = 'parts'; renderChildDetail() })
   document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
+  document.getElementById('fab-filter-select')?.addEventListener('change', e => {
+  fabFilter = e.target.value
+  renderAssemblyDetail()
+  })
 
   area.querySelectorAll('[data-open-child]').forEach(el =>
     el.addEventListener('click', () => enterChildAssembly(el.dataset.openChild))
@@ -935,6 +963,7 @@ export function selectAssembly(id) {
   viewingChildId    = null
   childNavStack     = []
   detailTab         = 'parts'
+  fabFilter         = 'all'
   renderDesignerSidebar()
   renderDesignerContent()
 }
