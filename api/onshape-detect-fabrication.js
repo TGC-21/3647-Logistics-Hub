@@ -1,8 +1,8 @@
 // api/onshape-detect-fabrication.js — Vercel serverless function
 //
 // Button-triggered fabrication-candidate detection (see
-// SPACER_AUTO_DETECTION_ROADMAP.md and
-// AXIAL_SHAFT_DETECTION_ROADMAP.md). Deliberately NOT run automatically
+// SPACER_AUTO_DETECTION_ROADMAP.md, AXIAL_SHAFT_DETECTION_ROADMAP.md,
+// and PLATE_DETECTION_ROADMAP.md). Deliberately NOT run automatically
 // during import/reimport — the user clicks "Detect fabrication
 // candidates" on an assembly, and this walks its part tree, groups
 // candidate rows by source Part Studio, fetches each Part Studio's
@@ -10,25 +10,33 @@
 // fabrication_metadata. No fabrication_jobs are created here — that only
 // happens when the user confirms a detected row in the UI.
 //
-// Both registered detectors (see fabrication-detectors.js) are now
-// 100% geometry-driven — spacer and axial-shaft each read real B-rep
-// geometry via .../bodydetails and classify it with their own
-// `classifyGeometry(body, opts)` (spacer.js / axial-shaft.js), rather
-// than either one touching FeatureScript parameters or the
-// .../featurescript eval endpoint. That used to be spacer-only and is
-// the reason this file previously carried a second, much more expensive
-// 'features' dataSource path (fetchPartStudioFeatures + evalFeatureScript,
-// one extra round-trip per ROUND/UP_TO_FACE spacer) — removed below, see
-// SPACER_AUTO_DETECTION_ROADMAP.md for why the FeatureScript-signature
-// approach was retired in favor of geometry.
+// All three registered detectors (see fabrication-detectors.js) are
+// 100% geometry-driven — spacer, axial-shaft, and plate each read real
+// B-rep geometry via .../bodydetails and classify it with their own
+// `classifyGeometry(body, opts)`, rather than touching FeatureScript
+// parameters or the .../featurescript eval endpoint.
 //
-// Every detector now shares ONE fetch/classify pipeline
+// Every detector shares ONE fetch/classify pipeline
 // (runBodyDetailsBasedDetection): group candidates by source Part
 // Studio, fetch bodydetails once per Part Studio (scoped to just that
 // group's partIds), then hand each row's body to its detector's
 // classifyGeometry(). The per-detector candidate/ignored-row bookkeeping
 // is shared; only the classification step is detector-specific, and it's
 // dispatched through a uniform interface rather than a dataSource switch.
+//
+// CLAIM ORDERING (see PLATE_DETECTION_ROADMAP.md): a part's name can
+// legitimately contain more than one detector's keyword — e.g. a part
+// named "Spacer Plate" matches both spacer's and plate's candidateFilter.
+// DETECTORS' array order (spacer, axial-shaft, plate) is the single
+// source of truth for priority. `claimedByEarlierDetector` tracks every
+// row ANY earlier detector successfully classified as 'detected', and
+// every later detector's candidate list is filtered against it BEFORE
+// that detector runs — so a row spacer already detected never reaches
+// plate's classifyGeometry at all, and therefore can never have its
+// (correct) spacer fabrication_metadata overwritten by a worse/incorrect
+// plate read of the same geometry. This generalizes what used to be a
+// spacer-only special case (`claimedBySpacer`, checked only by
+// axial-shaft) into a running set every detector in the list consults.
 //
 // POST /api/onshape-detect-fabrication  { assemblyId }
 
@@ -148,30 +156,36 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
   let ignoredCount = 0
   const warnings = []
 
-  // Rows whose name matches BOTH spacer's and axial-shaft's keyword filter
-  // (e.g. a hex-profile spacer) are structurally ambiguous by name alone.
-  // Both detectors are geometry-driven now, so resolving this overlap no
-  // longer needs its own separate Onshape call: bodydetails for an
-  // overlapping row is fetched once (via spacer's pass, which runs
-  // first — see DETECTORS' order in fabrication-detectors.js) and, if
-  // spacer's classifyGeometry confidently recognizes it as a single
-  // bored round/hex segment, axial-shaft's pass skips that row entirely
-  // rather than re-fetching the same geometry and overwriting spacer's
-  // result with a (necessarily worse) multi-segment-shaft read of a
-  // part that isn't one.
-  const claimedBySpacer = new Set()
+  // Rows whose name matches more than one detector's keyword filter
+  // (e.g. "Spacer Plate", a hex-profile spacer matching axial-shaft's
+  // "hex" keyword) are structurally ambiguous by name alone. This set
+  // tracks every row ANY earlier detector in DETECTORS' order has
+  // already classified as 'detected' — every later detector's candidate
+  // list is filtered against it before that detector's bodydetails pass
+  // even runs, so a confirmed-good classification from an earlier
+  // detector is never re-fetched, re-classified, or overwritten by a
+  // later detector's (necessarily worse, since it wasn't the first
+  // match) read of the same geometry. This replaces what used to be a
+  // spacer-only special case checked only by axial-shaft.
+  const claimedByEarlierDetector = new Set()
 
   for (const detector of DETECTORS) {
     let candidates = candidateRowsForDetector(detector, rows, rootDocumentId)
-    if (detector.kind === 'axial-shaft') candidates = candidates.filter(r => !claimedBySpacer.has(r.id))
+    candidates = candidates.filter(r => !claimedByEarlierDetector.has(r.id))
     candidateCount += candidates.length
 
     // Rows filtered out by candidateFilter/isFromRootDocument but whose
     // name still mentions the detector's kind get marked 'ignored' so the
     // UI can distinguish "we looked and it's not ours" from "never
-    // considered". Cheap and just a name-substring check.
+    // considered". Cheap and just a name-substring check. Rows already
+    // claimed by an earlier detector are deliberately excluded from this
+    // ignored-marking too — they're not "ignored," they're already
+    // correctly classified by someone else, and re-marking them here
+    // would overwrite that correct metadata just as surely as running
+    // the detector's geometry pass would.
     const ignoredRows = rows.filter(r =>
       !candidates.includes(r) &&
+      !claimedByEarlierDetector.has(r.id) &&
       detector.candidateFilter(r) &&
       !detector.isFromRootDocument(r, rootDocumentId)
     )
@@ -191,7 +205,7 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
 
     const stats = await runBodyDetailsBasedDetection(supabase, detector, candidates, {
       onRowClassified: (row, result) => {
-        if (detector.kind === 'spacer' && result.status === 'detected') claimedBySpacer.add(row.id)
+        if (result.status === 'detected') claimedByEarlierDetector.add(row.id)
       },
     })
 
@@ -213,10 +227,16 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
 // ── Shared bodydetails pipeline for every geometry-driven detector ─────
 // Groups candidates by source Part Studio (one bodydetails fetch per
 // group, scoped to just that group's partIds), then hands each row's
-// resolved body to `detector.classifyGeometry(body, opts)` — spacer.js
-// and axial-shaft.js both implement this with the same
+// resolved body to `detector.classifyGeometry(body, opts)` — every
+// registered detector implements this with the same
 // { status, confidence, warnings, extra } return shape, so this function
-// has no detector-specific branching at all.
+// has no detector-specific branching for classification itself.
+//
+// A detector may also declare an optional async `postGeometryCheck`
+// (currently only plate.js's sheet-metal exclusion) — run only for rows
+// that already classified as 'detected', since it costs an extra
+// Onshape call and there's no reason to pay it for a row headed to
+// needs_review regardless.
 //
 // unitScale is hard-coded to inches (1/0.0254): Onshape's bodydetails
 // response is always in meters, and every detector's dimensions are
@@ -329,6 +349,33 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates, { on
           continue
         }
 
+        // Optional post-geometry check (currently: plate.js's sheet-metal
+        // exclusion) — only spent on rows that already read as 'detected',
+        // and only ever downgrades toward review, never silently drops
+        // or silently accepts.
+        if (result.status === 'detected' && typeof detector.postGeometryCheck === 'function') {
+          let notExcluded
+          try {
+            notExcluded = await detector.postGeometryCheck(group.documentId, group.wvmType, group.wvmId, group.elementId)
+          } catch (e) {
+            console.warn(`[onshape-detect-fabrication] ${detector.kind} postGeometryCheck failed for part ${partId}: ${e.message}`)
+            notExcluded = null
+          }
+          if (notExcluded === false) {
+            result = {
+              ...result,
+              status: 'needs_review',
+              warnings: [...result.warnings, 'Geometry matched, but this Part Studio appears to use a feature this detector excludes — please confirm manually.'],
+            }
+          } else if (notExcluded === null) {
+            result = {
+              ...result,
+              status: 'needs_review',
+              warnings: [...result.warnings, 'Could not confirm this part against an exclusion check — please confirm manually.'],
+            }
+          }
+        }
+
         const meta = {
           autoDetected: true,
           kind: detector.kind,
@@ -341,7 +388,7 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates, { on
           ...result.extra,
         }
         await writeMetadata(supabase, row.id, meta)
-        onRowClassified(row, meta)
+        onRowClassified(row, result)
 
         if (result.status === 'detected') detected++
         else needsReview++
