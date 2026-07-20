@@ -2465,6 +2465,22 @@ async function loadAndSearchInventory(query) {
   renderInventoryLinkResults()
 
   try {
+    const part = currentInvLinkPart()
+
+    // Strong signal first: if this part's Onshape-derived part number is
+    // already tied to a component, show ONLY that component's available
+    // instances — this is the "heavily filtered" auto-suggestion.
+    const rawPartNumber = part?.onshapeReference?.partNumber || part?.partNumber
+    if (rawPartNumber && !query.trim()) {
+      const suggested = await fetchSuggestedInstancesForPartNumber(rawPartNumber)
+      if (suggested.length) {
+        invLinkResults = [{ component: suggested[0].component ?? { id: suggested[0].componentId, fallbackName: suggested[0].name }, instances: suggested, suggested: true }]
+        invLinkLoading = false
+        renderInventoryLinkResults()
+        return
+      }
+    }
+
     if (!invLinkAllComponents.length) {
       invLinkAllComponents = await fetchComponents()
     }
@@ -3319,54 +3335,6 @@ function fabDetectionBadgeHTML(p) {
 function fabDetectActionable(p) {
   const meta = p.fabricationMetadata
   return !!meta?.autoDetected && ['detected', 'needs_review'].includes(meta.status)
-}
-
-async function loadAndSearchInventory(query) {
-  invLinkLoading = true
-  renderInventoryLinkResults()
-
-  try {
-    const part = currentInvLinkPart()
-
-    // Strong signal first: if this part's Onshape-derived part number is
-    // already tied to a component, show ONLY that component's available
-    // instances — this is the "heavily filtered" auto-suggestion.
-    const rawPartNumber = part?.onshapeReference?.partNumber || part?.partNumber
-    if (rawPartNumber && !query.trim()) {
-      const suggested = await fetchSuggestedInstancesForPartNumber(rawPartNumber)
-      if (suggested.length) {
-        invLinkResults = [{ component: suggested[0].component ?? { id: suggested[0].componentId, fallbackName: suggested[0].name }, instances: suggested, suggested: true }]
-        invLinkLoading = false
-        renderInventoryLinkResults()
-        return
-      }
-    }
-
-    if (!invLinkAllComponents.length) {
-      invLinkAllComponents = await fetchComponents()
-    }
-
-    const q = query.trim().toLowerCase()
-    const matches = q
-      ? invLinkAllComponents.filter(c => (c.fallbackName || '').toLowerCase().includes(q))
-      : invLinkAllComponents
-
-    const withInstances = await Promise.all(
-      matches.slice(0, 30).map(async c => ({
-        component: c,
-        instances: await fetchAvailableInstances(c.id),
-      }))
-    )
-
-    invLinkResults = withInstances.filter(r => r.instances.length > 0)
-  } catch (e) {
-    console.error(e)
-    toastFn('Error searching inventory')
-    invLinkResults = []
-  } finally {
-    invLinkLoading = false
-    renderInventoryLinkResults()
-  }
 }
 
 async function addPartToCart(partId) {
