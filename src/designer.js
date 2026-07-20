@@ -484,7 +484,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-                ${currentChildParts.filter(fabFilterMatches).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
++                ${currentParts.filter(fabFilterMatches).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
