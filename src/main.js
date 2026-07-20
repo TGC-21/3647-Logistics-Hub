@@ -96,13 +96,11 @@ async function boot() {
     console.error(e)
     showToast('Could not connect to database — check your .env file')
   }
-
-
   render()
-  bindStaticEvents()
-  bindDesignerEvents()
-  bindFabricateEvents()
-  bindPartOrdersEvents()
+  try { bindStaticEvents() }    catch (e) { console.error('[boot] bindStaticEvents failed', e) }
+  try { bindDesignerEvents() }  catch (e) { console.error('[boot] bindDesignerEvents failed', e) }
+  try { bindFabricateEvents() } catch (e) { console.error('[boot] bindFabricateEvents failed', e) }
+  try { bindPartOrdersEvents() } catch (e) { console.error('[boot] bindPartOrdersEvents failed', e) }
 }
 
 // ── Helpers ───────────────────────────────────────────────────

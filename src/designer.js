@@ -3350,11 +3350,11 @@ async function addPartToCart(partId) {
       id: genId(), cartId: cart.id,
       partNumberId: pn?.id || null,
       assemblyPartId: part.id,
-      nameOverride: pn ? null : part.partName,
+      nameOverride: part.partName,
       quantity: Math.max(1, part.quantityNeeded - (part.quantityCollected || 0)) || 1,
       status: 'pending',
     })
-    registerNewCart(cart)  // no-op if cart already existed client-side; harmless dupe guard below
+    if (!carts.some(c=> c.id === cart.id)) registerNewCart(cart)
     registerNewCartItem(item)
     toastFn(`Added "${part.partName}" to cart "${cart.name}"`)
   } catch (e) {

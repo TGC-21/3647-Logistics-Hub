@@ -403,7 +403,7 @@ async function saveItemModal() {
 
 // ── Bind static events ───────────────────────────────────────
 export function bindPartOrdersEvents() {
-  document.getElementById('btn-new-cart').addEventListener('click', () => openCartModal())
+  document.getElementById('btn-new-cart-topbar').addEventListener('click', () => openCartModal())
 
   document.getElementById('btn-close-cart-detail-modal').addEventListener('click', closeCartModal)
   document.getElementById('btn-cancel-cart-detail').addEventListener('click', closeCartModal)
