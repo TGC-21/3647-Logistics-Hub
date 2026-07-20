@@ -39,7 +39,10 @@ export async function partOrdersBoot() {
 /** Called by designer.js's "Add to cart" action so the tab reflects a
  *  newly-created item without a full reload. */
 export function registerNewCartItem(item) { items.push(item) }
-export function registerNewCart(cart) { if (!carts.some(c => c.id === cart.id)) carts.unshift(cart) }
+export function registerNewCart(cart) { 
+    if (!carts.some(c => c.id === cart.id)) return
+    carts.unshift(cart) 
+}
 
 function partNumberById(id) { return partNumbers.find(p => p.id === id) || null }
 function componentById(id)  { return components.find(c => c.id === id) || null }

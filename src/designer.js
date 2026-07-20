@@ -65,6 +65,9 @@ let fabDetectKind       = null   // 'spacer' | 'axial-shaft' — which confirm-o
 let fabDetectSegments   = null   // working (editable) segment array — axial-shaft only
 let fabDetectOriginalSegments = null   // as-detected segment array, for override diffing at confirm time
 let fabFilter = 'all'
+
+let partSearchQuery = ''
+let partNumberOnly  = false   // "has part number" filter
 // Hard-coded category shape for auto-created Spacer components — no UI
 // to configure this in v1, matches the confirmation overlay's fields.
 const SPACER_CATEGORY_NAME = 'Spacer'
@@ -106,6 +109,27 @@ async function ensurePlateCategory() {
 function fabFilterMatches(p) {
   if (fabFilter === 'all') return true
   return p.fabricationMetadata?.status === fabFilter
+}
+
+function partSearchMatches(p) {
+  const q = partSearchQuery.trim().toLowerCase()
+  if (!q) return true
+  return (p.partName || '').toLowerCase().includes(q)
+    || (p.partNumber || '').toLowerCase().includes(q)
+    || (p.onshapeReference?.partNumber || '').toLowerCase().includes(q)
+    || (p.notes || '').toLowerCase().includes(q)
+}
+
+function partHasPartNumber(p) {
+  return !!(p.partNumber || p.onshapeReference?.partNumber)
+}
+
+function partNumberFilterMatches(p) {
+  return !partNumberOnly || partHasPartNumber(p)
+}
+
+function partRowVisible(p) {
+  return fabFilterMatches(p) && partSearchMatches(p) && partNumberFilterMatches(p)
 }
 
 function fabFilterSelectHTML() {
@@ -466,6 +490,7 @@ async function renderAssemblyDetail() {
   const partsSectionHTML = showSubTab ? '' : `
       <div class="asm-parts-toolbar">
         ${tabsHTML ? '' : `<div class="asm-parts-title">Parts <span class="section-count">${currentParts.length}</span></div>`}
+        ${partSearchToolbarHTML()}
         <div style="flex:1"></div>
         <button class="btn btn-sm" id="btn-import-csv"><i class="ti ti-upload" aria-hidden="true"></i><span> Import CSV</span></button>
         <button class="btn btn-sm" id="btn-import-onshape"><i class="ti ti-cube" aria-hidden="true"></i><span> Import from Onshape</span></button>
@@ -487,7 +512,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-+                ${currentParts.filter(fabFilterMatches).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
+                ${currentParts.filter(partRowVisible).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -542,6 +567,24 @@ async function renderAssemblyDetail() {
   document.getElementById('fab-filter-select')?.addEventListener('change', e => {
     fabFilter = e.target.value
     renderAssemblyDetail()
+  })
+
+  document.getElementById('chk-part-number-only')?.addEventListener('change', e => {
+    partNumberOnly = e.target.checked
+    renderAssemblyDetail()
+  })
+  let partSearchTimer
+  document.getElementById('part-search-input')?.addEventListener('input', e => {
+    partSearchQuery = e.target.value
+    clearTimeout(partSearchTimer)
+    // Re-render on a short debounce so search feels responsive without
+    // re-rendering the whole table on every keystroke; caret position is
+    // preserved because the input keeps focus across renders below.
+    partSearchTimer = setTimeout(() => {
+      renderAssemblyDetail()
+      const input = document.getElementById('part-search-input')
+      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length) }
+    }, 200)
   })
 
   if (isLinked) {
@@ -679,7 +722,7 @@ async function renderChildDetail() {
   const showSubTab = childDetailTab === 'subassemblies' && currentChildChildren.length
 
   const partsSectionHTML = showSubTab ? '' : `
-      ${tabsHTML ? '' : `<div class="asm-parts-toolbar"><div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div></div>`}
+      ${tabsHTML ? '' : `<div class="asm-parts-toolbar"><div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div>${partSearchToolbarHTML()}</div>`}
       ${currentChildParts.length
         ? `<div class="parts-table-wrap">
             <table class="parts-table">
@@ -695,7 +738,7 @@ async function renderChildDetail() {
                 </tr>
               </thead>
               <tbody id="child-parts-tbody">
-                ${currentChildParts.filter(fabFilterMatches).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
+                ${currentChildParts.filter(partRowVisible).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -735,8 +778,22 @@ async function renderChildDetail() {
   document.getElementById('tab-btn-parts')?.addEventListener('click', () => { childDetailTab = 'parts'; renderChildDetail() })
   document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
   document.getElementById('fab-filter-select')?.addEventListener('change', e => {
-  fabFilter = e.target.value
+    fabFilter = e.target.value
+    renderAssemblyDetail()
+  })
+    document.getElementById('chk-part-number-only')?.addEventListener('change', e => {
+    partNumberOnly = e.target.checked
     renderChildDetail()
+  })
+  let childPartSearchTimer
+  document.getElementById('part-search-input')?.addEventListener('input', e => {
+    partSearchQuery = e.target.value
+    clearTimeout(childPartSearchTimer)
+    childPartSearchTimer = setTimeout(() => {
+      renderChildDetail()
+      const input = document.getElementById('part-search-input')
+      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length) }
+    }, 200)
   })
 
   area.querySelectorAll('[data-open-child]').forEach(el =>
@@ -984,6 +1041,8 @@ export function selectAssembly(id) {
   childNavStack     = []
   detailTab         = 'parts'
   fabFilter         = 'all'
+  partSearchQuery   = ''
+  partNumberOnly    = false
   renderDesignerSidebar()
   renderDesignerContent()
 }
@@ -3354,11 +3413,23 @@ async function addPartToCart(partId) {
       quantity: Math.max(1, part.quantityNeeded - (part.quantityCollected || 0)) || 1,
       status: 'pending',
     })
-    if (!carts.some(c=> c.id === cart.id)) registerNewCart(cart)
+    registerNewCart(cart)
     registerNewCartItem(item)
     toastFn(`Added "${part.partName}" to cart "${cart.name}"`)
   } catch (e) {
     console.error(e)
     toastFn('Error adding to cart')
   }
+}
+
+function partSearchToolbarHTML() {
+  return `
+    <div class="onshape-search-row" style="margin:0;max-width:220px">
+      <i class="ti ti-search" aria-hidden="true"></i>
+      <input type="text" id="part-search-input" placeholder="Search parts…" value="${partSearchQuery}">
+    </div>
+    <label class="fab-history-toggle">
+      <input type="checkbox" id="chk-part-number-only" ${partNumberOnly ? 'checked' : ''}>
+      <span>Has part #</span>
+    </label>`
 }
