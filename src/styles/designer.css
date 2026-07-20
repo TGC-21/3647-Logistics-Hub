@@ -723,6 +723,7 @@
 }
 
 .segment-row:last-child { border-bottom: none; }
+
 .segment-row--readonly {
   font-size: 12px;
   color: var(--color-text-secondary);
