@@ -822,7 +822,6 @@ async function renderChildDetail() {
       const fabDetectBtn = e.target.closest('[data-child-part-fabdetect]')
       const cartBtn = e.target.closest('[data-child-part-cart]')
 
-   
       if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.childPartFabdetect, true); return }
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
@@ -892,7 +891,7 @@ function childPartRowHTML(p, job = null) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-cart="${p.id}" aria-label="Add to cart" title="Add to Part Orders"><i class="ti ti-shopping-cart-plus" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-cart="${p.id}" aria-label="Add to cart" title="Add to Part Orders"><i class="ti ti-shopping-cart-plus" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
