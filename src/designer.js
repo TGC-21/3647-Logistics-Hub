@@ -9,10 +9,13 @@ import {
   fetchActiveJobsForParts, createFabricationJob,
   fetchComponentsForFabricatePicker, findOrCreateComponent,
   fetchCategories, upsertCategory, validateAttribute, 
+  fetchSuggestedInstancesForPartNumber, linkPartNumberToComponent, ensurePartNumberStub,
+  findOrCreateAssemblyCart, upsertCartItem, fetchPartNumberByValue,
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
 import { renderSegmentEditor, renderSegmentPreview } from './segmentEditor.js'
+import { registerNewCartItem, registerNewCart } from './partOrders.js'
 
 // ── State ─────────────────────────────────────────────────────
 let assemblies        = []
@@ -817,7 +820,7 @@ function childPartRowHTML(p, job = null) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${collectedQty >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-cart="${p.id}" aria-label="Add to cart" title="Add to Part Orders"><i class="ti ti-shopping-cart-plus" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
@@ -869,7 +872,7 @@ function partRowHTML(p, job = null) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-link="${p.id}" aria-label="Link inventory" ${linkedPiles >= p.quantityNeeded ? 'disabled' : ''}><i class="ti ti-search" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-cart="${p.id}" aria-label="Add to cart" title="Add to Part Orders"><i class="ti ti-shopping-cart-plus" style="font-size:13px"></i></button>      
       <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
@@ -901,6 +904,9 @@ function bindPartRowEvents() {
 
     const fabDetectBtn = e.target.closest('[data-part-fabdetect]')
     if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.partFabdetect, false); return }
+
+    const cartBtn = e.target.closest('[data-part-cart]')
+    if (cartBtn) { await addPartToCart(cartBtn.dataset.partCart); return }
   })
 }
 
@@ -2614,6 +2620,13 @@ async function linkInstanceToPart(instanceId, componentName, componentId, reques
     updatedPart.status = computePartStatus(updatedPart)
 
     const saved = await upsertAssemblyPart(updatedPart)
+        // Backfill: this confirms which component the part's vendor SKU
+    // actually is, so future imports/links auto-suggest correctly.
+    const rawPartNumber = part.onshapeReference?.partNumber || part.partNumber
+    if (rawPartNumber) {
+      try { await linkPartNumberToComponent(rawPartNumber, updatedPart.componentId || componentId) }
+      catch (e) { console.warn('[partNumbers] backfill failed', e) }
+    }
 
     if (invLinkIsChildPart) {
       const idx = currentChildParts.findIndex(p => p.id === part.id)
@@ -3308,10 +3321,76 @@ function fabDetectActionable(p) {
   return !!meta?.autoDetected && ['detected', 'needs_review'].includes(meta.status)
 }
 
-// Add to the row's action cell (both partRowHTML and childPartRowHTML),
-// alongside the existing data-part-fab / data-child-part-fab button:
-//
-//   ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate">
-//     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
-//
-// (use data-child-part-fabdetect for childPartRowHTML's row instead)
+async function loadAndSearchInventory(query) {
+  invLinkLoading = true
+  renderInventoryLinkResults()
+
+  try {
+    const part = currentInvLinkPart()
+
+    // Strong signal first: if this part's Onshape-derived part number is
+    // already tied to a component, show ONLY that component's available
+    // instances — this is the "heavily filtered" auto-suggestion.
+    const rawPartNumber = part?.onshapeReference?.partNumber || part?.partNumber
+    if (rawPartNumber && !query.trim()) {
+      const suggested = await fetchSuggestedInstancesForPartNumber(rawPartNumber)
+      if (suggested.length) {
+        invLinkResults = [{ component: suggested[0].component ?? { id: suggested[0].componentId, fallbackName: suggested[0].name }, instances: suggested, suggested: true }]
+        invLinkLoading = false
+        renderInventoryLinkResults()
+        return
+      }
+    }
+
+    if (!invLinkAllComponents.length) {
+      invLinkAllComponents = await fetchComponents()
+    }
+
+    const q = query.trim().toLowerCase()
+    const matches = q
+      ? invLinkAllComponents.filter(c => (c.fallbackName || '').toLowerCase().includes(q))
+      : invLinkAllComponents
+
+    const withInstances = await Promise.all(
+      matches.slice(0, 30).map(async c => ({
+        component: c,
+        instances: await fetchAvailableInstances(c.id),
+      }))
+    )
+
+    invLinkResults = withInstances.filter(r => r.instances.length > 0)
+  } catch (e) {
+    console.error(e)
+    toastFn('Error searching inventory')
+    invLinkResults = []
+  } finally {
+    invLinkLoading = false
+    renderInventoryLinkResults()
+  }
+}
+
+async function addPartToCart(partId) {
+  const part = currentParts.find(p => p.id === partId)
+  if (!part) return
+  const assembly = assemblyById(currentAssemblyId)
+  const rawPartNumber = part.onshapeReference?.partNumber || part.partNumber
+
+  try {
+    const pn = rawPartNumber ? await ensurePartNumberStub(rawPartNumber, genId) : null
+    const cart = await findOrCreateAssemblyCart(currentAssemblyId, assembly.name, genId)
+    const item = await upsertCartItem({
+      id: genId(), cartId: cart.id,
+      partNumberId: pn?.id || null,
+      assemblyPartId: part.id,
+      nameOverride: pn ? null : part.partName,
+      quantity: Math.max(1, part.quantityNeeded - (part.quantityCollected || 0)) || 1,
+      status: 'pending',
+    })
+    registerNewCart(cart)  // no-op if cart already existed client-side; harmless dupe guard below
+    registerNewCartItem(item)
+    toastFn(`Added "${part.partName}" to cart "${cart.name}"`)
+  } catch (e) {
+    console.error(e)
+    toastFn('Error adding to cart')
+  }
+}

@@ -168,6 +168,16 @@ async function seedAssemblyContents(supabase, {
     if (partsErr) throw new Error(`Parts insert: ${partsErr.message}`)
   }
 
+  // Auto-create part_numbers stubs for every part carrying a vendor SKU —
+  // component_id stays null until a user confirms the match via
+  // linkInstanceToPart's backfill (src/db.js). Best-effort: failures here
+  // shouldn't fail the whole import.
+  for (const p of directParts) {
+    if (!p.partNumber) continue
+    try { await ensurePartNumberStubServer(supabase, p.partNumber, genId) }
+    catch (e) { console.warn(`[onshape-bom] part_numbers stub failed for "${p.partNumber}": ${e.message}`) }
+  }
+
   // ── Recursively build subassembly nodes (assembly_children only) ──
   // Siblings at this depth don't depend on each other, so resolve them
   // concurrently (capped) instead of one full round trip at a time — a
@@ -351,4 +361,12 @@ async function releaseAllLinkedInstances(supabase, assemblyId) {
     .in('id', allInstanceIds)
   if (error) console.warn(`[onshape-bom] Failed releasing ${allInstanceIds.length} instance(s): ${error.message}`)
   else console.log(`[onshape-bom] Released ${allInstanceIds.length} inventory instance(s) back to available.`)
+}
+
+async function ensurePartNumberStubServer(supabase, value, genId) {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return
+  const { data: existing } = await supabase.from('part_numbers').select('id').eq('value', trimmed).maybeSingle()
+  if (existing) return
+  await supabase.from('part_numbers').insert({ id: genId(), value: trimmed, component_id: null })
 }

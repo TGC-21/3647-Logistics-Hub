@@ -23,6 +23,12 @@ import {
   bindFabricateEvents,    selectBatch,
 } from './fabricate.js'
 
+import {
+  partOrdersBoot, setPartOrdersToast,
+  renderPartOrdersSidebar, renderPartOrdersContent,
+  bindPartOrdersEvents, selectCart, openCartModal,
+} from './partOrders.js'
+
 window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
@@ -43,6 +49,7 @@ let appMode = 'inventory' //'inventory' | 'designer' | 'fabricate'
 async function boot() {
   setToast(showToast)
   setFabricateToast(showToast)
+  setPartOrdersToast(showToast)
 
   // "?asm=<id>" opens a single ROOT assembly full-screen; "?child=<id>"
   // opens a single SUBASSEMBLY node full-screen. Both have no sidebar/other
@@ -83,14 +90,19 @@ async function boot() {
     [categories, items] = await Promise.all([fetchCategories(), fetchInventoryInstances()])
     await designerBoot()
     await fabricateBoot()
+    await partOrdersBoot()
+
   } catch (e) {
     console.error(e)
     showToast('Could not connect to database — check your .env file')
   }
+
+
   render()
   bindStaticEvents()
   bindDesignerEvents()
   bindFabricateEvents()
+  bindPartOrdersEvents()
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -118,6 +130,8 @@ function setMode(newMode) {
   document.getElementById('designer-actions').style.display = appMode === 'designer' ? '' : 'none'
   document.getElementById('fabricate-actions').style.display = appMode === 'fabricate' ? '' : 'none'
   document.getElementById('topbar-search-wrap').style.display = appMode === 'inventory' ? '' : 'none'
+  document.getElementById('btn-mode-partorders').classList.toggle('active', appMode === 'partorders')
+  document.getElementById('partorders-actions').style.display = appMode === 'partorders' ? '' : 'none'
 
   // Mobile bottom tab bar + FAB mirror the same mode
   const tabComponents = document.getElementById('tab-btn-components')
@@ -148,10 +162,13 @@ function render() {
   } else if (appMode === 'fabricate'){
     renderFabricateSidebar()
     renderFabricateContent()
+  } else if (appMode === 'partorders') {
+  renderPartOrdersSidebar()
+  renderPartOrdersContent()
   } else {
     renderSidebar()
     renderContent()
-  }
+  } 
 }
 
 function renderSidebar() {
@@ -307,6 +324,9 @@ function bindStaticEvents() {
   document.getElementById('search-input').addEventListener('input', render)
   document.getElementById('btn-add').addEventListener('click', () => openAddModal())
   document.getElementById('btn-manage-cats').addEventListener('click', openCatModal)
+  document.getElementById('btn-mode-partorders').addEventListener('click', () => setMode('partorders'))
+  document.getElementById('btn-new-cart-topbar').addEventListener('click', () => openCartModal())
+
 
   // Sidebar drawer (mobile)
   const sidebarEl   = document.getElementById('sidebar')
