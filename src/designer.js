@@ -484,7 +484,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-                ${currentParts.filter(fabFilterMatches).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
+                ${currentChildParts.filter(fabFilterMatches).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -692,7 +692,7 @@ async function renderChildDetail() {
                 </tr>
               </thead>
               <tbody id="child-parts-tbody">
-                ${currentParts.filter(fabFilterMatches).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
+                ${currentChildParts.filter(fabFilterMatches).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
               </tbody>
             </table>
           </div>`
@@ -733,7 +733,7 @@ async function renderChildDetail() {
   document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
   document.getElementById('fab-filter-select')?.addEventListener('change', e => {
   fabFilter = e.target.value
-  renderAssemblyDetail()
+    renderChildDetail()
   })
 
   area.querySelectorAll('[data-open-child]').forEach(el =>

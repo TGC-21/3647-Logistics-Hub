@@ -110,10 +110,31 @@ const CATEGORY_HEADER_ID = '57f3fb8efa3416c06701d625'
 const STANDARD_BOM_COLUMN_IDS = [
   '57f3fb8efa3416c06701d60d', // Name
   '57f3fb8efa3416c06701d60f', // Part number
-  '5ace8269c046ad612c65a0ba', // Quantity
-  CATEGORY_HEADER_ID, // Category — defined below, see note
+  '5ace84d3c046ad611c65a0dd', // Quantity  ← was '5ace8269c046ad612c65a0ba' (that id is actually "Item", not Quantity)
+  CATEGORY_HEADER_ID,         // Category
 ]
+const QUANTITY_HEADER_ID    = '5ace84d3c046ad611c65a0dd'
+const NAME_HEADER_ID        = '57f3fb8efa3416c06701d60d'
+const PART_NUMBER_HEADER_ID = '57f3fb8efa3416c06701d60f'
 
+// ── Value unwrapping ─────────────────────────────────────────
+//
+// Several BOM columns (confirmed for Category; treated as a general risk
+// for any column) come back as an object or single-element array wrapping
+// the real value rather than a bare primitive — e.g.
+// { value: 4 } or [{ name: 'Assembly', ... }] instead of just `4`.
+// This unwraps common shapes defensively before anything tries to
+// parseInt/String a column value, so a wrapped response degrades to "use
+// the wrapped payload" instead of silently producing NaN/"[object Object]".
+function unwrapBomValue(val) {
+  if (val === null || val === undefined) return val
+  if (Array.isArray(val)) return val.length ? unwrapBomValue(val[0]) : null
+  if (typeof val === 'object') {
+    if ('value' in val) return val.value
+    if ('name' in val) return val.name
+  }
+  return val
+}
 /**
  * Fetches a BOM at `path`, with a fallback for elements that have never had
  * ANY BOM materialized: `generateIfAbsent=true` is supposed to generate one
@@ -222,9 +243,28 @@ export function resolveRow(row, headerById) {
     const name = headerById[hid]
     if (name) byName[name] = v
   })
-  const partName   = byName['name'] || byName['part name'] || byName['description'] || 'Unknown part'
-  const partNumber = byName['part number'] || byName['part #'] || byName['pn'] || ''
-  const quantity   = parseInt(byName['quantity'] || byName['qty'] || byName['count'] || '1', 10) || 1
+
+  // Prefer looking up the well-known columns directly by header id — this
+  // is immune to a document's BOM template renaming/localizing a column
+  // (e.g. "Qty (ea)" instead of "Quantity"), which the old name-matching
+  // logic would silently miss and fall back to a default. Only fall back
+  // to name-based matching when the id isn't present in this row at all
+  // (e.g. a custom/non-standard BOM template that omits it).
+  const rawQuantity   = vals[QUANTITY_HEADER_ID]    ?? byName['quantity'] ?? byName['qty'] ?? byName['count']
+  const rawPartName   = vals[NAME_HEADER_ID]        ?? byName['name'] ?? byName['part name'] ?? byName['description']
+  const rawPartNumber = vals[PART_NUMBER_HEADER_ID] ?? byName['part number'] ?? byName['part #'] ?? byName['pn']
+
+  const unwrappedQuantity = unwrapBomValue(rawQuantity)
+  const parsedQuantity    = parseInt(unwrappedQuantity, 10)
+
+  const partName   = unwrapBomValue(rawPartName) ? String(unwrapBomValue(rawPartName)) : 'Unknown part'
+  const partNumber = unwrapBomValue(rawPartNumber) ? String(unwrapBomValue(rawPartNumber)) : ''
+  const quantity   = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1
+
+  if (!Number.isFinite(parsedQuantity)) {
+    console.warn(`[onshape] Could not resolve a quantity for row "${partName}" — raw value:`, rawQuantity, '— defaulting to 1.')
+  }
+
   return {
     partName: String(partName),
     partNumber: String(partNumber),
