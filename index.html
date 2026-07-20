@@ -60,6 +60,11 @@
     <div class="topbar-actions" id="partorders-actions" style="display:none">
       <button class="btn btn-primary" id="btn-new-cart-topbar"><i class="ti ti-plus" aria-hidden="true"></i><span> New cart</span></button>
     </div>  
+
+    <div class="topbar-actions" id="partorders-actions" style="display:none">
+      <button class="btn" id="btn-manage-vendors"><i class="ti ti-building-store" aria-hidden="true"></i><span> Vendors</span></button>
+      <button class="btn btn-primary" id="btn-new-cart-topbar"><i class="ti ti-plus" aria-hidden="true"></i><span> New cart</span></button>
+    </div>
   </div>
 
   <!-- Mobile-only: fullscreen search overlay, triggered by btn-mobile-search -->
@@ -729,6 +734,61 @@
       <div class="onshape-list" id="listing-picker-list"></div>
     </div>
     <div class="modal-footer"><button class="btn" id="btn-cancel-listing-picker">Cancel</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="manage-vendors-overlay" style="display:none">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <div class="modal-title">Vendors & part number listings</div>
+      <button class="btn-icon" id="btn-close-manage-vendors"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Vendors</label>
+        <div id="mv-vendor-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
+        <div class="new-cat-row">
+          <input type="text" id="mv-new-vendor-input" placeholder="New vendor name…">
+          <button class="btn btn-primary btn-sm" id="btn-mv-add-vendor">Add</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Part numbers <span style="font-weight:400;color:var(--color-text-tertiary)">(search, then manage listings)</span></label>
+        <div class="onshape-search-row" style="margin-bottom:8px">
+          <i class="ti ti-search" aria-hidden="true"></i>
+          <input type="text" id="mv-pn-search" placeholder="Search part numbers…">
+        </div>
+        <div class="new-cat-row">
+          <input type="text" id="mv-new-pn-input" placeholder="Add a part number manually…">
+          <button class="btn btn-sm" id="btn-mv-add-pn">Add</button>
+        </div>
+        <div id="mv-pn-list" style="margin-top:8px;display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto"></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn" id="btn-close-manage-vendors-2">Done</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="listing-search-overlay" style="display:none">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Link to a vendor listing</div>
+        <div style="font-size:11px;color:var(--color-text-tertiary)" id="listing-search-subtitle"></div>
+      </div>
+      <button class="btn-icon" id="btn-close-listing-search"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="onshape-search-row">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" id="listing-search-input" placeholder="Search part number, vendor, or component…">
+      </div>
+      <div class="onshape-list" id="listing-search-results" style="max-height:320px"></div>
+      <button class="btn btn-sm" id="btn-listing-search-new" style="align-self:flex-start;margin-top:8px">
+        <i class="ti ti-plus" aria-hidden="true"></i> No match — add a new listing
+      </button>
+    </div>
+    <div class="modal-footer"><button class="btn" id="btn-cancel-listing-search">Cancel</button></div>
   </div>
 </div>
 

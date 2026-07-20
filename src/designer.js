@@ -14,11 +14,15 @@ import {
   ensurePartNumberStub, linkPartNumberToComponent,
   findOrCreateCartForVendor, findOrCreateVendor,
   fetchListingsForPartNumber, upsertVendorListing,
+  fetchAllPartNumbersWithListings,
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
 import { renderSegmentEditor, renderSegmentPreview } from './segmentEditor.js'
-import { registerNewCartItem, registerNewCart, registerNewVendor } from './partOrders.js'
+import {
+  registerNewCartItem, registerNewCart, registerNewVendor,
+  getVendors, getPartNumbers,
+} from './partOrders.js'
 
 // ── State ─────────────────────────────────────────────────────
 let assemblies        = []
@@ -3296,6 +3300,13 @@ export function bindDesignerEvents() {
   document.getElementById('btn-confirm-new-listing').addEventListener('click', confirmNewListing)
   document.getElementById('btn-close-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
   document.getElementById('btn-cancel-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+  document.getElementById('btn-close-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
+  let listingSearchTimer
+  document.getElementById('listing-search-input').addEventListener('input', e => {
+    clearTimeout(listingSearchTimer)
+    listingSearchTimer = setTimeout(() => renderListingSearchResults(e.target.value), 150)
+  })
 
   let invLinkSearchTimer
   document.getElementById('inv-link-search-input').addEventListener('input', e => {
@@ -3418,33 +3429,98 @@ async function addPartToCart(partId, isChildPart = false) {
   if (!part) return
 
   const rawPartNumber = part.onshapeReference?.partNumber || part.partNumber
+
   if (!rawPartNumber) {
-    // No identity at all — go straight to the ad hoc item modal via
-    // Part Orders, seeded with the assembly part's own name. We don't
-    // have a cart to target yet without a vendor, so prompt for one.
-    toastFn('This part has no part number — add it as a manual item from a cart\'s "Add item" button.')
+    // No identity to auto-resolve — let the user search every existing
+    // vendor listing and pick the right one manually, instead of a dead-end toast.
+    cartLinkPartId = partId
+    cartLinkIsChild = isChildPart
+    await openListingSearchModal(part.partName)
     return
   }
 
   cartLinkPartId = partId
   cartLinkIsChild = isChildPart
-
   try {
     cartLinkPartNumber = await ensurePartNumberStub(rawPartNumber, genId)
     cartLinkListings = await fetchListingsForPartNumber(cartLinkPartNumber.id)
-  } catch (e) {
-    console.error(e); toastFn('Error resolving part number'); return
+  } catch (e) { console.error(e); toastFn('Error resolving part number'); return }
+
+  if (cartLinkListings.length === 1) { await addToCartWithListing(cartLinkListings[0]); return }
+  if (cartLinkListings.length === 0) { openNewListingModal(rawPartNumber); return }
+  openListingPickerModal()
+}
+
+let listingSearchAll = null
+
+async function openListingSearchModal(partName) {
+  document.getElementById('listing-search-subtitle').textContent = `For: ${partName}`
+  document.getElementById('listing-search-input').value = ''
+  document.getElementById('listing-search-overlay').style.display = 'flex'
+  document.getElementById('btn-listing-search-new').onclick = () => {
+    document.getElementById('listing-search-overlay').style.display = 'none'
+    // No known part number string — prompt for one alongside the vendor listing.
+    openAdhocListingModal()
   }
 
-  if (cartLinkListings.length === 1) {
-    await addToCartWithListing(cartLinkListings[0])
-    return
+  if (!listingSearchAll) {
+    try { listingSearchAll = await fetchAllPartNumbersWithListings() }
+    catch (e) { console.error(e); toastFn('Error loading listings'); listingSearchAll = [] }
   }
-  if (cartLinkListings.length === 0) {
-    openNewListingModal(rawPartNumber)   // pre-fill SKU field with the part number
-    return
+  renderListingSearchResults('')
+  setTimeout(() => document.getElementById('listing-search-input').focus(), 60)
+}
+
+function renderListingSearchResults(query) {
+  const q = query.trim().toLowerCase()
+  const results = (listingSearchAll || []).filter(r =>
+    !q || r.partNumber.value.toLowerCase().includes(q)
+       || (r.vendor?.name || '').toLowerCase().includes(q)
+       || (r.component?.fallbackName || '').toLowerCase().includes(q)
+  ).slice(0, 40)
+
+  const el = document.getElementById('listing-search-results')
+  el.innerHTML = results.length
+    ? results.map(r => `<div class="onshape-list-item" data-pick-search-listing="${r.listing.id}">
+        <div class="onshape-list-item-icon"><i class="ti ti-building-store" aria-hidden="true"></i></div>
+        <div class="onshape-list-item-text">
+          <div class="onshape-list-item-name">${r.component?.fallbackName || r.partNumber.value}</div>
+          <div class="onshape-list-item-meta">${r.partNumber.value} · ${r.vendor?.name || '?'}${r.listing.purchasePrice != null ? ' · $' + r.listing.purchasePrice.toFixed(2) : ''}</div>
+        </div>
+        <i class="ti ti-chevron-right" aria-hidden="true"></i>
+      </div>`).join('')
+    : `<div class="onshape-state" style="padding:24px 0"><i class="ti ti-search-off" aria-hidden="true"></i><div class="onshape-state-title">No matches</div></div>`
+
+  el.querySelectorAll('[data-pick-search-listing]').forEach(item =>
+    item.addEventListener('click', async () => {
+      const found = listingSearchAll.find(r => r.listing.id === item.dataset.pickSearchListing)
+      document.getElementById('listing-search-overlay').style.display = 'none'
+      if (found) await addToCartWithListing(found.listing)
+    })
+  )
+}
+
+// Ad hoc: user picked "no match" — collect a new part number string +
+// vendor listing together, same shape as openNewListingModal but without
+// a pre-resolved cartLinkPartNumber.
+function openAdhocListingModal() {
+  document.getElementById('listing-modal-hint').textContent = 'Enter the part number and vendor details for this item.'
+  document.getElementById('listing-field-link').value = ''
+  document.getElementById('listing-field-price').value = ''
+  populateListingVendorSelectDesigner('')
+  const skuField = ensureAdhocSkuField()
+  skuField.value = ''
+  document.getElementById('new-listing-modal-overlay').style.display = 'flex'
+}
+function ensureAdhocSkuField() {
+  let el = document.getElementById('listing-field-sku')
+  if (!el) {
+    el = document.createElement('input')
+    el.type = 'text'; el.id = 'listing-field-sku'; el.placeholder = 'Part number / SKU'
+    document.querySelector('#new-listing-modal-overlay .modal-body').prepend(el)
   }
-  openListingPickerModal()
+  el.style.display = ''
+  return el
 }
 
 async function addToCartWithListing(listing) {
@@ -3489,6 +3565,7 @@ async function confirmNewListing() {
   const newVendorName = document.getElementById('listing-new-vendor-input').value.trim()
   const link = document.getElementById('listing-field-link').value.trim()
   const price = document.getElementById('listing-field-price').value
+  const skuField = document.getElementById('listing-field-sku')
 
   if (!vendorSel && !newVendorName) { toastFn('Select or enter a vendor'); return }
 
@@ -3496,11 +3573,19 @@ async function confirmNewListing() {
     const vendor = vendorSel ? getVendors().find(v => v.id === vendorSel) : await findOrCreateVendor(newVendorName, genId)
     if (!vendorSel) registerNewVendor(vendor)
 
+    let partNumber = cartLinkPartNumber
+    if (!partNumber) {
+      const sku = skuField?.value.trim()
+      if (!sku) { toastFn('Enter a part number'); return }
+      partNumber = await ensurePartNumberStub(sku, genId)
+    }
+
     const listing = await upsertVendorListing({
-      id: genId(), partNumberId: cartLinkPartNumber.id, vendorId: vendor.id,
+      id: genId(), partNumberId: partNumber.id, vendorId: vendor.id,
       purchaseLink: link, purchasePrice: price ? parseFloat(price) : null, isPreferred: true,
     })
     document.getElementById('new-listing-modal-overlay').style.display = 'none'
+    if (skuField) skuField.style.display = 'none'
     await addToCartWithListing(listing)
   } catch (e) { console.error(e); toastFn('Error creating vendor listing') }
 }

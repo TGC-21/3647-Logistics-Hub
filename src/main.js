@@ -27,6 +27,7 @@ import {
   partOrdersBoot, setPartOrdersToast,
   renderPartOrdersSidebar, renderPartOrdersContent,
   bindPartOrdersEvents, selectCart, openCartModal,
+  bindManageVendorsEvents,
 } from './partOrders.js'
 
 window.reconcileInventory = reconcileOrphanedInstances
@@ -101,6 +102,7 @@ async function boot() {
   try { bindDesignerEvents() }  catch (e) { console.error('[boot] bindDesignerEvents failed', e) }
   try { bindFabricateEvents() } catch (e) { console.error('[boot] bindFabricateEvents failed', e) }
   try { bindPartOrdersEvents() } catch (e) { console.error('[boot] bindPartOrdersEvents failed', e) }
+  try { bindManageVendorsEvents()} catch (e) { console.error('[boot] bindManageVendorsEvents failed', e)}
   
 }
 

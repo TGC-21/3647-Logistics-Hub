@@ -5,7 +5,7 @@ import {
   fetchAllCartItems, upsertCartItem, deleteCartItem,
   fetchAllPartNumbers, fetchVendors, findOrCreateVendor,
   fetchComponents, fetchListingsForPartNumber,
-  resolveCartItemDisplay,
+  resolveCartItemDisplay, ensurePartNumberStub, 
 } from './db.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ let listingsCache  = new Map()   // partNumberId -> vendor_listings[] (lazy)
 let selectedCartId = null
 let editingCartId  = null
 let showReceived   = false
+let mvPnQuery = ''
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -499,4 +500,135 @@ export function bindPartOrdersEvents() {
 
 export async function refreshPartNumbers() {
   partNumbers = await fetchAllPartNumbers()
+}
+
+export function openManageVendorsModal() {
+  renderManageVendorsModal()
+  document.getElementById('manage-vendors-overlay').style.display = 'flex'
+}
+
+function renderManageVendorsModal() {
+  const vendorList = document.getElementById('mv-vendor-list')
+  vendorList.innerHTML = vendors.map(v =>
+    `<span class="tag-chip">${v.name}<button type="button" data-mv-del-vendor="${v.id}" aria-label="Delete vendor">×</button></span>`
+  ).join('') || `<span style="font-size:12px;color:var(--color-text-tertiary)">No vendors yet.</span>`
+
+  vendorList.querySelectorAll('[data-mv-del-vendor]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this vendor? Any listings from it will also be deleted.')) return
+      try {
+        await deleteVendor(btn.dataset.mvDelVendor)
+        vendors = vendors.filter(v => v.id !== btn.dataset.mvDelVendor)
+        renderManageVendorsModal()
+      } catch (e) { console.error(e); toastFn('Error deleting vendor — it may be in use by a cart') }
+    })
+  )
+
+  const q = mvPnQuery.trim().toLowerCase()
+  const filtered = q ? partNumbers.filter(pn => pn.value.toLowerCase().includes(q)) : partNumbers.slice(0, 40)
+
+  const pnListEl = document.getElementById('mv-pn-list')
+  pnListEl.innerHTML = filtered.map(pnRowHTML).join('') ||
+    `<span style="font-size:12px;color:var(--color-text-tertiary)">No part numbers found.</span>`
+
+  filtered.forEach(pn => bindPnRowEvents(pn.id))
+}
+
+function pnRowHTML(pn) {
+  const comp = componentById(pn.componentId)
+  const list = listingsCache.get(pn.id) || null   // populated lazily below
+  return `<div class="cat-manage-row" style="flex-direction:column;align-items:stretch;gap:6px" data-pn-row="${pn.id}">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="cat-manage-name">${pn.value}</div>
+        <div class="cat-manage-reqs">${comp ? 'Linked: ' + comp.fallbackName : 'Not linked to a component yet'}</div>
+      </div>
+      <button class="btn-icon" data-pn-delete="${pn.id}" aria-label="Delete part number"><i class="ti ti-trash" style="font-size:13px"></i></button>
+    </div>
+    <div class="mv-listings" id="mv-listings-${pn.id}" style="font-size:12px;color:var(--color-text-tertiary)">Loading listings…</div>
+    <div class="new-cat-row">
+      <select data-pn-vendor-select="${pn.id}" style="flex:1"></select>
+      <input type="url" placeholder="Link" data-pn-link-input="${pn.id}" style="flex:1.3;padding:6px 9px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);font-size:12px">
+      <input type="number" step="0.01" placeholder="Price" data-pn-price-input="${pn.id}" style="width:70px;padding:6px 9px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);font-size:12px">
+      <button class="btn btn-sm" data-pn-add-listing="${pn.id}">Add listing</button>
+    </div>
+  </div>`
+}
+
+async function bindPnRowEvents(pnId) {
+  const listingsEl = document.getElementById(`mv-listings-${pnId}`)
+  const listings = await fetchListingsForPartNumber(pnId)
+  listingsCache.set(pnId, listings)
+  listingsEl.innerHTML = listings.length
+    ? listings.map(l => {
+        const v = vendorById(l.vendorId)
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0">
+          <span>${v?.name || '?'} — ${l.purchaseLink ? `<a href="${l.purchaseLink}" target="_blank" rel="noreferrer">link</a>` : 'no link'} — ${l.purchasePrice != null ? '$' + l.purchasePrice.toFixed(2) : 'no price'}</span>
+          <button class="btn-icon" data-listing-delete="${l.id}" aria-label="Delete listing"><i class="ti ti-trash" style="font-size:12px"></i></button>
+        </div>`
+      }).join('')
+    : 'No vendor listings yet.'
+
+  listingsEl.querySelectorAll('[data-listing-delete]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      try { await deleteVendorListing(btn.dataset.listingDelete); await bindPnRowEvents(pnId) }
+      catch (e) { console.error(e); toastFn('Error deleting listing') }
+    })
+  )
+
+  const vendorSelect = document.querySelector(`[data-pn-vendor-select="${pnId}"]`)
+  vendorSelect.innerHTML = '<option value="">Vendor…</option>' + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join('')
+
+  document.querySelector(`[data-pn-add-listing="${pnId}"]`).addEventListener('click', async () => {
+    const vendorId = vendorSelect.value
+    const link = document.querySelector(`[data-pn-link-input="${pnId}"]`).value.trim()
+    const price = document.querySelector(`[data-pn-price-input="${pnId}"]`).value
+    if (!vendorId) { toastFn('Select a vendor'); return }
+    try {
+      await upsertVendorListing({ id: genId(), partNumberId: pnId, vendorId, purchaseLink: link, purchasePrice: price ? parseFloat(price) : null, isPreferred: false })
+      await bindPnRowEvents(pnId)
+      toastFn('Listing added')
+    } catch (e) { console.error(e); toastFn('Error adding listing') }
+  })
+
+  document.querySelector(`[data-pn-delete="${pnId}"]`)?.addEventListener('click', async () => {
+    if (!confirm('Delete this part number and all its listings?')) return
+    try {
+      await deletePartNumber(pnId)
+      partNumbers = partNumbers.filter(p => p.id !== pnId)
+      renderManageVendorsModal()
+    } catch (e) { console.error(e); toastFn('Error deleting part number') }
+  })
+}
+
+export function bindManageVendorsEvents() {
+  document.getElementById('btn-manage-vendors').addEventListener('click', openManageVendorsModal)
+  document.getElementById('btn-close-manage-vendors').addEventListener('click', () => document.getElementById('manage-vendors-overlay').style.display = 'none')
+  document.getElementById('btn-close-manage-vendors-2').addEventListener('click', () => document.getElementById('manage-vendors-overlay').style.display = 'none')
+  document.getElementById('btn-mv-add-vendor').addEventListener('click', async () => {
+    const name = document.getElementById('mv-new-vendor-input').value.trim()
+    if (!name) return
+    try {
+      const vendor = await findOrCreateVendor(name, genId)
+      registerNewVendor(vendor)
+      document.getElementById('mv-new-vendor-input').value = ''
+      renderManageVendorsModal()
+    } catch (e) { console.error(e); toastFn('Error adding vendor') }
+  })
+  document.getElementById('btn-mv-add-pn').addEventListener('click', async () => {
+    const value = document.getElementById('mv-new-pn-input').value.trim()
+    if (!value) return
+    try {
+      const pn = await ensurePartNumberStub(value, genId)
+      registerNewPartNumber(pn)
+      document.getElementById('mv-new-pn-input').value = ''
+      renderManageVendorsModal()
+    } catch (e) { console.error(e); toastFn('Error adding part number') }
+  })
+  let mvSearchTimer
+  document.getElementById('mv-pn-search').addEventListener('input', e => {
+    mvPnQuery = e.target.value
+    clearTimeout(mvSearchTimer)
+    mvSearchTimer = setTimeout(renderManageVendorsModal, 200)
+  })
 }

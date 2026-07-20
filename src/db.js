@@ -1199,6 +1199,35 @@ export async function fetchAllPartNumbers() {
   return data.map(dbPartNumberToLocal)
 }
 
+/** All part_numbers × their vendor_listings, joined with vendor and
+ *  component info — used by the "search all listings" picker when an
+ *  assembly part has no part number of its own to auto-resolve. */
+export async function fetchAllPartNumbersWithListings() {
+  const [{ data: pns, error: pnErr }, { data: listings, error: lErr }, { data: vendorRows, error: vErr }, { data: compRows, error: cErr }] =
+    await Promise.all([
+      supabase.from('part_numbers').select('*'),
+      supabase.from('vendor_listings').select('*'),
+      supabase.from('vendors').select('*'),
+      supabase.from('components').select('*'),
+    ])
+  if (pnErr) throw pnErr; if (lErr) throw lErr; if (vErr) throw vErr; if (cErr) throw cErr
+
+  const pnById = Object.fromEntries((pns || []).map(p => [p.id, dbPartNumberToLocal(p)]))
+  const vendorById = Object.fromEntries((vendorRows || []).map(v => [v.id, dbVendorToLocal(v)]))
+  const compById = Object.fromEntries((compRows || []).map(c => [c.id, dbComponentToLocal(c)]))
+
+  return (listings || []).map(row => {
+    const listing = dbListingToLocal(row)
+    const partNumber = pnById[listing.partNumberId]
+    return {
+      listing,
+      partNumber,
+      vendor: vendorById[listing.vendorId] || null,
+      component: partNumber?.componentId ? compById[partNumber.componentId] || null : null,
+    }
+  }).filter(r => r.partNumber)
+}
+
 export async function upsertPartNumber(pn) {
   const { data, error } = await supabase
     .from('part_numbers')
