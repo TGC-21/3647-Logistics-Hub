@@ -1,27 +1,22 @@
-// partOrders.js — Part Orders workflow (carts + cart items)
-//
-// Mirrors fabricate.js's module structure/conventions. A cart groups
-// order line items — either tied to one assembly (auto-created via
-// "Add to cart" on a BOM part row in Designer) or general-purpose
-// ("Tools", "Bolt restock", etc, created manually here).
+// partOrders.js — Part Orders workflow (vendor-scoped carts + cart items)
 
 import {
   fetchCarts, upsertCart, deleteCart,
   fetchAllCartItems, upsertCartItem, deleteCartItem,
-  fetchAllPartNumbers, upsertPartNumber, deletePartNumber,
-  fetchComponents, fetchAssemblies,
+  fetchAllPartNumbers, fetchVendors, findOrCreateVendor,
+  fetchComponents, fetchListingsForPartNumber,
   resolveCartItemDisplay,
 } from './db.js'
 
 // ── State ─────────────────────────────────────────────────────
 let carts          = []
-let items          = []          // ALL cart_items, every cart
-let partNumbers    = []          // ALL part_numbers
-let components     = []          // for resolving names/links on items
-let assemblies     = []          // for the cart "linked assembly" label + filter
-let selectedCartId = null        // null = overview
+let items          = []
+let partNumbers    = []
+let vendors        = []
+let components     = []
+let listingsCache  = new Map()   // partNumberId -> vendor_listings[] (lazy)
+let selectedCartId = null
 let editingCartId  = null
-let editingItemId  = null
 let showReceived   = false
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -29,32 +24,43 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
 let toastFn = msg => console.warn('[toast]', msg)
 export function setPartOrdersToast(fn) { toastFn = fn }
 
-// ── Boot ──────────────────────────────────────────────────────
 export async function partOrdersBoot() {
-  ;[carts, items, partNumbers, components, assemblies] = await Promise.all([
-    fetchCarts(), fetchAllCartItems(), fetchAllPartNumbers(), fetchComponents(), fetchAssemblies(),
+  ;[carts, items, partNumbers, vendors, components] = await Promise.all([
+    fetchCarts(), fetchAllCartItems(), fetchAllPartNumbers(), fetchVendors(), fetchComponents(),
   ])
 }
 
-/** Called by designer.js's "Add to cart" action so the tab reflects a
- *  newly-created item without a full reload. */
 export function registerNewCartItem(item) { items.push(item) }
-export function registerNewCart(cart) { 
-    if (!carts.some(c => c.id === cart.id)) return
-    carts.unshift(cart) 
-}
+export function registerNewCart(cart) { if (!carts.some(c => c.id === cart.id)) carts.unshift(cart) }
+export function registerNewVendor(vendor) { if (!vendors.some(v => v.id === vendor.id)) vendors.push(vendor) }
+export function registerNewPartNumber(pn) { if (!partNumbers.some(p => p.id === pn.id)) partNumbers.push(pn) }
+export function getVendors() { return vendors }
+export function getPartNumbers() { return partNumbers }
 
-function partNumberById(id) { return partNumbers.find(p => p.id === id) || null }
+function vendorById(id)     { return vendors.find(v => v.id === id) || null }
 function componentById(id)  { return components.find(c => c.id === id) || null }
-function assemblyById(id)   { return assemblies.find(a => a.id === id) || null }
-
+function partNumberById(id) { return partNumbers.find(p => p.id === id) || null }
 function itemsForCart(cartId) { return items.filter(i => i.cartId === cartId) }
+
+// ── Listing lookups (needed synchronously for row render — cache-first) ──
+// Cart items store a vendor_listing_id directly (no async needed to
+// render once cached), but the cache itself is populated lazily per part
+// number the first time it's touched (e.g. from the linking modal). For
+// items whose listing isn't cached yet, render falls back to overrides.
+function cachedListing(listingId) {
+  for (const list of listingsCache.values()) {
+    const found = list.find(l => l.id === listingId)
+    if (found) return found
+  }
+  return null
+}
 
 function cartTotal(cartId) {
   return itemsForCart(cartId).reduce((sum, item) => {
-    const pn = partNumberById(item.partNumberId)
+    const listing = item.vendorListingId ? cachedListing(item.vendorListingId) : null
+    const pn = listing ? partNumberById(listing.partNumberId) : null
     const comp = pn ? componentById(pn.componentId) : null
-    const display = resolveCartItemDisplay(item, pn, comp)
+    const display = resolveCartItemDisplay(item, listing, comp, item.nameOverride)
     return sum + (display.price != null ? display.price * item.quantity : 0)
   }, 0)
 }
@@ -70,9 +76,10 @@ export function renderPartOrdersSidebar() {
   catNav.innerHTML = carts.map(c => {
     const active = selectedCartId === c.id
     const count = itemsForCart(c.id).length
+    const vendor = c.vendorId ? vendorById(c.vendorId) : null
     return `<div class="nav-item asm-nav-item${active ? ' active' : ''}" data-cart-nav="${c.id}">
       <i class="ti ti-shopping-cart" style="font-size:15px;flex-shrink:0" aria-hidden="true"></i>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${c.name}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${c.name}${vendor ? ` <span style="color:var(--color-text-tertiary);font-weight:400">· ${vendor.name}</span>` : ''}</span>
       <span class="nav-count">${count}</span>
     </div>`
   }).join('')
@@ -94,7 +101,7 @@ export function selectCart(id) {
 }
 
 // ── Content ───────────────────────────────────────────────────
-export function renderPartOrdersContent() {
+export async function renderPartOrdersContent() {
   const title = document.getElementById('content-title')
   const meta  = document.getElementById('content-meta')
   const area  = document.getElementById('main-area')
@@ -109,12 +116,15 @@ export function renderPartOrdersContent() {
   const cart = carts.find(c => c.id === selectedCartId)
   if (!cart) { selectCart(null); return }
 
-  const linkedAsm = cart.assemblyId ? assemblyById(cart.assemblyId) : null
+  const vendor = cart.vendorId ? vendorById(cart.vendorId) : null
   title.textContent = cart.name
-  meta.innerHTML = `${linkedAsm ? `<span class="asm-linked-badge"><i class="ti ti-box" aria-hidden="true"></i> ${linkedAsm.name}</span>` : ''}
+  meta.innerHTML = `${vendor ? `<span class="asm-linked-badge"><i class="ti ti-building-store" aria-hidden="true"></i> ${vendor.name}</span>` : ''}
     <span style="margin-left:8px;color:var(--color-text-tertiary)">Total: $${cartTotal(cart.id).toFixed(2)}</span>`
 
+  // Prime the listing cache for every part number referenced by this
+  // cart's items so cartTotal()/rows render with real prices, not blanks.
   const cartItems = itemsForCart(cart.id).filter(i => showReceived || i.status !== 'received')
+  await primeListingsForItems(cartItems)
 
   area.innerHTML = `<div class="asm-detail">
     <div class="asm-detail-toolbar">
@@ -144,12 +154,50 @@ export function renderPartOrdersContent() {
   bindItemRowEvents()
 }
 
+async function primeListingsForItems(cartItems) {
+  const pnIds = new Set()
+  for (const item of cartItems) {
+    const listing = item.vendorListingId ? cachedListing(item.vendorListingId) : null
+    if (item.vendorListingId && !listing) {
+      // We only have the id — fetch by walking part_numbers is wasteful;
+      // instead fetch listings keyed by the part number once we know it.
+      // Simplify: fetch every part number's listings lazily as items ask
+      // for them, keyed by part_number_id — but items only carry
+      // vendor_listing_id, so resolve via a direct listing fetch instead.
+    }
+  }
+  // Simpler and correct: fetch listings for every part number in
+  // `partNumbers` that appears on a cart item indirectly isn't knowable
+  // without the listing row itself, so just fetch-by-id for any
+  // uncached vendor_listing_id.
+  const uncachedIds = [...new Set(cartItems.map(i => i.vendorListingId).filter(Boolean))]
+    .filter(id => !cachedListing(id))
+  await Promise.all(uncachedIds.map(fetchAndCacheListingById))
+}
+
+async function fetchAndCacheListingById(listingId) {
+  // vendor_listings has no single-row fetch-by-id helper exposed yet —
+  // reuse fetchListingsForPartNumber once we know the part number. Since
+  // we only have the listing id at this point, do a light direct query.
+  const { supabase } = await import('./db.js')
+  const { data, error } = await supabase.from('vendor_listings').select('*').eq('id', listingId).maybeSingle()
+  if (error || !data) return
+  const listing = {
+    id: data.id, partNumberId: data.part_number_id, vendorId: data.vendor_id,
+    purchaseLink: data.purchase_link ?? '', purchasePrice: data.purchase_price ?? null,
+    isPreferred: data.is_preferred ?? false, createdAt: data.created_at,
+  }
+  const list = listingsCache.get(listing.partNumberId) || []
+  if (!list.some(l => l.id === listing.id)) list.push(listing)
+  listingsCache.set(listing.partNumberId, list)
+}
+
 function renderCartsOverview(area) {
   if (!carts.length) {
     area.innerHTML = `<div class="empty">
       <i class="ti ti-shopping-cart-off" aria-hidden="true"></i>
       <div class="empty-title">No carts yet</div>
-      <div class="empty-sub">Create a cart for an assembly's BOM, or a general-purpose cart like "Tools" or "Bolt restock."</div>
+      <div class="empty-sub">Carts are organized by vendor — one cart per store you're ordering from.</div>
       <button class="btn btn-primary" id="empty-new-cart-btn"><i class="ti ti-plus"></i> New cart</button>
     </div>`
     document.getElementById('empty-new-cart-btn').addEventListener('click', () => openCartModal())
@@ -163,45 +211,39 @@ function renderCartsOverview(area) {
 }
 
 function cartCardHTML(c) {
-  const linkedAsm = c.assemblyId ? assemblyById(c.assemblyId) : null
+  const vendor = c.vendorId ? vendorById(c.vendorId) : null
   const count = itemsForCart(c.id).length
-  const total = cartTotal(c.id)
   return `<div class="asm-card" data-open-cart="${c.id}">
     <div class="asm-card-header">
       <div class="asm-card-name">${c.name}</div>
-      ${linkedAsm ? `<span class="asm-linked-badge"><i class="ti ti-box" aria-hidden="true"></i> Linked</span>` : ''}
+      ${vendor ? `<span class="asm-linked-badge"><i class="ti ti-building-store" aria-hidden="true"></i> ${vendor.name}</span>` : ''}
     </div>
-    <div class="asm-card-desc"><i class="ti ti-list-details" aria-hidden="true"></i> ${count} item${count === 1 ? '' : 's'} — $${total.toFixed(2)}</div>
+    <div class="asm-card-desc"><i class="ti ti-list-details" aria-hidden="true"></i> ${count} item${count === 1 ? '' : 's'} — $${cartTotal(c.id).toFixed(2)}</div>
   </div>`
 }
 
 // ── Item table ───────────────────────────────────────────────
 function itemsTableHTML(list) {
   if (!list.length) {
-    return `<div class="empty" style="padding:40px 0">
-      <i class="ti ti-list-check" aria-hidden="true"></i>
-      <div class="empty-title">No items in this cart</div>
-    </div>`
+    return `<div class="empty" style="padding:40px 0"><i class="ti ti-list-check" aria-hidden="true"></i><div class="empty-title">No items in this cart</div></div>`
   }
-
-  const rows = list.map(itemRowHTML).join('')
   return `<div class="parts-table-wrap">
     <table class="parts-table">
       <thead><tr>
-        <th>Name</th><th>Assembly</th><th>Vendor</th>
+        <th>Name</th><th>Part #</th>
         <th style="text-align:center">Qty</th><th style="text-align:right">Price</th>
         <th style="text-align:center">Status</th><th></th>
       </tr></thead>
-      <tbody id="cart-items-tbody">${rows}</tbody>
+      <tbody id="cart-items-tbody">${list.map(itemRowHTML).join('')}</tbody>
     </table>
   </div>`
 }
 
 function itemRowHTML(item) {
-  const pn = partNumberById(item.partNumberId)
+  const listing = item.vendorListingId ? cachedListing(item.vendorListingId) : null
+  const pn = listing ? partNumberById(listing.partNumberId) : null
   const comp = pn ? componentById(pn.componentId) : null
-  const display = resolveCartItemDisplay(item, pn, comp)
-  const asm = item.assemblyPartId ? null : null // assembly resolved at cart level; per-item shown only if useful later
+  const display = resolveCartItemDisplay(item, listing, comp, item.nameOverride)
 
   const statusBadge = {
     pending:  '<span class="part-badge part-badge--pending">Pending</span>',
@@ -214,10 +256,8 @@ function itemRowHTML(item) {
   return `<tr data-item-id="${item.id}">
     <td>
       <div class="part-name">${display.link ? `<a href="${display.link}" target="_blank" rel="noreferrer">${display.name}</a>` : display.name}</div>
-      ${pn ? `<div class="part-notes">${pn.value}</div>` : ''}
     </td>
-    <td><span class="part-number">${display.vendor || '—'}</span></td>
-    <td><span class="part-number">${display.vendor || '—'}</span></td>
+    <td><span class="part-number">${pn?.value || '—'}</span></td>
     <td style="text-align:center">${item.quantity}</td>
     <td style="text-align:right">${display.price != null ? '$' + display.price.toFixed(2) : '—'} <span style="color:var(--color-text-tertiary);font-size:11px">(${lineTotal})</span></td>
     <td style="text-align:center">${statusBadge}</td>
@@ -276,22 +316,57 @@ async function handleDeleteCart(cartId) {
   } catch (e) { console.error(e); toastFn('Error deleting cart') }
 }
 
-// ── Cart modal ───────────────────────────────────────────────
+// ── Cart modal (vendor-scoped) ──────────────────────────────
+let cartModalNewVendorMode = false
+
 export function openCartModal(id) {
   editingCartId = id || null
+  cartModalNewVendorMode = false
   const c = id ? carts.find(x => x.id === id) : null
 
   document.getElementById('cart-modal-title').textContent = c ? 'Edit cart' : 'New cart'
   document.getElementById('cart-field-name').value  = c?.name || ''
   document.getElementById('cart-field-notes').value = c?.notes || ''
 
-  const asmSelect = document.getElementById('cart-field-assembly')
-  asmSelect.innerHTML = '<option value="">— No linked assembly —</option>' +
-    assemblies.map(a => `<option value="${a.id}"${c?.assemblyId === a.id ? ' selected' : ''}>${a.name}</option>`).join('')
+  populateVendorSelect(c?.vendorId || '')
+  hideCartNewVendorRow()
 
   document.getElementById('btn-delete-cart-modal').style.display = c ? 'inline-flex' : 'none'
   document.getElementById('cart-modal-overlay').style.display = 'flex'
   setTimeout(() => document.getElementById('cart-field-name').focus(), 80)
+}
+
+function populateVendorSelect(selectedId) {
+  const sel = document.getElementById('cart-field-vendor')
+  sel.innerHTML = '<option value="">— Select vendor —</option>' +
+    vendors.map(v => `<option value="${v.id}"${v.id === selectedId ? ' selected' : ''}>${v.name}</option>`).join('')
+}
+
+function showCartNewVendorRow() {
+  document.getElementById('cart-new-vendor-row').style.display = 'flex'
+  document.getElementById('btn-cart-new-vendor').style.display = 'none'
+  document.getElementById('cart-field-vendor').disabled = true
+  cartModalNewVendorMode = true
+  setTimeout(() => document.getElementById('cart-new-vendor-input').focus(), 60)
+}
+function hideCartNewVendorRow() {
+  document.getElementById('cart-new-vendor-row').style.display = 'none'
+  document.getElementById('btn-cart-new-vendor').style.display = 'inline-flex'
+  document.getElementById('cart-field-vendor').disabled = false
+  document.getElementById('cart-new-vendor-input').value = ''
+  cartModalNewVendorMode = false
+}
+
+async function confirmCartNewVendor() {
+  const name = document.getElementById('cart-new-vendor-input').value.trim()
+  if (!name) { document.getElementById('cart-new-vendor-input').focus(); return }
+  try {
+    const vendor = await findOrCreateVendor(name, genId)
+    registerNewVendor(vendor)
+    populateVendorSelect(vendor.id)
+    hideCartNewVendorRow()
+    toastFn('Vendor added')
+  } catch (e) { console.error(e); toastFn('Error adding vendor') }
 }
 
 function closeCartModal() {
@@ -301,15 +376,11 @@ function closeCartModal() {
 
 async function saveCartModal() {
   const name = document.getElementById('cart-field-name').value.trim()
+  const vendorId = document.getElementById('cart-field-vendor').value || null
   if (!name) { document.getElementById('cart-field-name').focus(); toastFn('Cart name is required'); return }
+  if (!vendorId) { toastFn('A vendor is required — every cart belongs to exactly one vendor'); return }
 
-  const payload = {
-    id:         editingCartId || genId(),
-    name,
-    assemblyId: document.getElementById('cart-field-assembly').value || null,
-    notes:      document.getElementById('cart-field-notes').value.trim(),
-    status:     'open',
-  }
+  const payload = { id: editingCartId || genId(), name, vendorId, notes: document.getElementById('cart-field-notes').value.trim(), status: 'open' }
 
   try {
     const saved = await upsertCart(payload)
@@ -326,28 +397,27 @@ async function saveCartModal() {
   } catch (e) { console.error(e); toastFn('Error saving cart') }
 }
 
-// ── Item modal ───────────────────────────────────────────────
-// Simple ad hoc item entry — name, link, price, quantity, optional
-// vendor. Doesn't try to resolve an existing part_number/component;
-// that linkage happens automatically via the Designer "Add to cart"
-// path (openAddToCartFromPart in designer.js), which passes a
-// part_number_id directly. This modal covers manual/ad hoc purchases.
+// ── Item modal (ad hoc items only — listing-linked items are edited via
+//    the assembly-part linking flow in designer.js) ─────────────────
 let itemModalCartId = null
+let editingItemId = null
 
 export function openItemModal(cartId, itemId) {
   itemModalCartId = cartId
   editingItemId = itemId || null
   const item = itemId ? items.find(i => i.id === itemId) : null
-  const pn = item?.partNumberId ? partNumberById(item.partNumberId) : null
+  const isLinked = !!item?.vendorListingId
 
   document.getElementById('item-modal-title').textContent = item ? 'Edit item' : 'Add item'
-  document.getElementById('item-field-name').value     = pn ? (componentById(pn.componentId)?.fallbackName || pn.value) : (item?.nameOverride || '')
-  document.getElementById('item-field-link').value      = pn?.purchaseLink || item?.linkOverride || ''
-  document.getElementById('item-field-price').value     = pn?.purchasePrice ?? item?.priceOverride ?? ''
-  document.getElementById('item-field-qty').value       = item?.quantity ?? 1
-  document.getElementById('item-field-name').disabled   = !!pn
-  document.getElementById('item-modal-hint').textContent = pn
-    ? `Linked to vendor SKU "${pn.value}" — edit price/link from the component's Part Numbers instead.`
+  document.getElementById('item-field-name').value = item?.nameOverride || ''
+  document.getElementById('item-field-link').value = item?.linkOverride || ''
+  document.getElementById('item-field-price').value = item?.priceOverride ?? ''
+  document.getElementById('item-field-qty').value = item?.quantity ?? 1
+  document.getElementById('item-field-name').disabled = isLinked
+  document.getElementById('item-field-link').disabled = isLinked
+  document.getElementById('item-field-price').disabled = isLinked
+  document.getElementById('item-modal-hint').textContent = isLinked
+    ? 'This item is linked to a vendor listing — edit price/link from the part\'s vendor listings instead.'
     : ''
   document.getElementById('item-modal-overlay').style.display = 'flex'
   setTimeout(() => document.getElementById('item-field-name').focus(), 80)
@@ -362,9 +432,7 @@ function closeItemModal() {
 async function saveItemModal() {
   const existing = editingItemId ? items.find(i => i.id === editingItemId) : null
 
-  // If this item is linked to a part number, only quantity/status are
-  // editable here — name/link/price live on the part_numbers row.
-  if (existing?.partNumberId) {
+  if (existing?.vendorListingId) {
     const payload = { ...existing, quantity: Math.max(1, parseInt(document.getElementById('item-field-qty').value, 10) || 1) }
     try {
       const saved = await upsertCartItem(payload)
@@ -379,15 +447,15 @@ async function saveItemModal() {
   if (!name) { document.getElementById('item-field-name').focus(); toastFn('Name is required'); return }
 
   const payload = {
-    id:            editingItemId || genId(),
-    cartId:        itemModalCartId,
-    partNumberId:  null,
+    id: editingItemId || genId(),
+    cartId: itemModalCartId,
+    vendorListingId: null,
     assemblyPartId: existing?.assemblyPartId || null,
-    nameOverride:  name,
-    linkOverride:  document.getElementById('item-field-link').value.trim(),
+    nameOverride: name,
+    linkOverride: document.getElementById('item-field-link').value.trim(),
     priceOverride: document.getElementById('item-field-price').value ? parseFloat(document.getElementById('item-field-price').value) : null,
-    quantity:      Math.max(1, parseInt(document.getElementById('item-field-qty').value, 10) || 1),
-    status:        existing?.status || 'pending',
+    quantity: Math.max(1, parseInt(document.getElementById('item-field-qty').value, 10) || 1),
+    status: existing?.status || 'pending',
   }
 
   try {
@@ -412,11 +480,14 @@ export function bindPartOrdersEvents() {
   document.getElementById('btn-cancel-cart-detail').addEventListener('click', closeCartModal)
   document.getElementById('btn-save-cart-detail').addEventListener('click', saveCartModal)
   document.getElementById('btn-delete-cart-modal').addEventListener('click', async () => {
-    if (editingCartId) { closeCartModal(); await handleDeleteCart(editingCartId) }
+    if (editingCartId) { const id = editingCartId; closeCartModal(); await handleDeleteCart(id) }
   })
   document.getElementById('cart-modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeCartModal()
   })
+  document.getElementById('btn-cart-new-vendor').addEventListener('click', showCartNewVendorRow)
+  document.getElementById('btn-cart-cancel-new-vendor').addEventListener('click', hideCartNewVendorRow)
+  document.getElementById('btn-cart-confirm-new-vendor').addEventListener('click', confirmCartNewVendor)
 
   document.getElementById('btn-close-item-modal').addEventListener('click', closeItemModal)
   document.getElementById('btn-cancel-item').addEventListener('click', closeItemModal)
@@ -426,8 +497,6 @@ export function bindPartOrdersEvents() {
   })
 }
 
-// ── Refresh hook (call after part_numbers change elsewhere, e.g. from
-//    the component view's "manage vendors" editor) ──────────────────
 export async function refreshPartNumbers() {
   partNumbers = await fetchAllPartNumbers()
 }

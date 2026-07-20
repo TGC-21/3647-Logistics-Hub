@@ -9,13 +9,16 @@ import {
   fetchActiveJobsForParts, createFabricationJob,
   fetchComponentsForFabricatePicker, findOrCreateComponent,
   fetchCategories, upsertCategory, validateAttribute, 
-  fetchSuggestedInstancesForPartNumber, linkPartNumberToComponent, ensurePartNumberStub,
+  fetchSuggestedInstancesForPartNumber,
   findOrCreateAssemblyCart, upsertCartItem, fetchPartNumberByValue,
+  ensurePartNumberStub, linkPartNumberToComponent,
+  findOrCreateCartForVendor, findOrCreateVendor,
+  fetchListingsForPartNumber, upsertVendorListing,
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
 import { renderSegmentEditor, renderSegmentPreview } from './segmentEditor.js'
-import { registerNewCartItem, registerNewCart } from './partOrders.js'
+import { registerNewCartItem, registerNewCart, registerNewVendor } from './partOrders.js'
 
 // ── State ─────────────────────────────────────────────────────
 let assemblies        = []
@@ -65,6 +68,11 @@ let fabDetectKind       = null   // 'spacer' | 'axial-shaft' — which confirm-o
 let fabDetectSegments   = null   // working (editable) segment array — axial-shaft only
 let fabDetectOriginalSegments = null   // as-detected segment array, for override diffing at confirm time
 let fabFilter = 'all'
+
+let cartLinkPartId = null
+let cartLinkIsChild = false
+let cartLinkPartNumber = null   // the resolved part_numbers row
+let cartLinkListings = []
 
 let partSearchQuery = ''
 let partNumberOnly  = false   // "has part number" filter
@@ -808,12 +816,15 @@ async function renderChildDetail() {
       const delBtn = e.target.closest('[data-child-part-del]')
       const fabBtn = e.target.closest('[data-child-part-fab]')
       const fabDetectBtn = e.target.closest('[data-child-part-fabdetect]')
+      const cartBtn = e.target.closest('[data-child-part-cart]')
+
    
       if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.childPartFabdetect, true); return }
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
       if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.childPartFab, true); return }
+      if (cartBtn) { await addPartToCart(cartBtn.dataset.childPartCart, true); return }
     })
   }
 }
@@ -963,7 +974,7 @@ function bindPartRowEvents() {
     if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.partFabdetect, false); return }
 
     const cartBtn = e.target.closest('[data-part-cart]')
-    if (cartBtn) { await addPartToCart(cartBtn.dataset.partCart); return }
+    if (cartBtn) { await addPartToCart(cartBtn.dataset.partCart, false); return }
   })
 }
 
@@ -3280,6 +3291,12 @@ export function bindDesignerEvents() {
     if (e.target === e.currentTarget) closeFabDetectConfirmModal()
   })
 
+  document.getElementById('btn-close-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
+  document.getElementById('btn-confirm-new-listing').addEventListener('click', confirmNewListing)
+  document.getElementById('btn-close-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+
   let invLinkSearchTimer
   document.getElementById('inv-link-search-input').addEventListener('input', e => {
     invLinkQuery = e.target.value
@@ -3396,30 +3413,125 @@ function fabDetectActionable(p) {
   return !!meta?.autoDetected && ['detected', 'needs_review'].includes(meta.status)
 }
 
-async function addPartToCart(partId) {
-  const part = currentParts.find(p => p.id === partId)
+async function addPartToCart(partId, isChildPart = false) {
+  const part = isChildPart ? currentChildParts.find(p => p.id === partId) : currentParts.find(p => p.id === partId)
   if (!part) return
-  const assembly = assemblyById(currentAssemblyId)
+
   const rawPartNumber = part.onshapeReference?.partNumber || part.partNumber
+  if (!rawPartNumber) {
+    // No identity at all — go straight to the ad hoc item modal via
+    // Part Orders, seeded with the assembly part's own name. We don't
+    // have a cart to target yet without a vendor, so prompt for one.
+    toastFn('This part has no part number — add it as a manual item from a cart\'s "Add item" button.')
+    return
+  }
+
+  cartLinkPartId = partId
+  cartLinkIsChild = isChildPart
 
   try {
-    const pn = rawPartNumber ? await ensurePartNumberStub(rawPartNumber, genId) : null
-    const cart = await findOrCreateAssemblyCart(currentAssemblyId, assembly.name, genId)
+    cartLinkPartNumber = await ensurePartNumberStub(rawPartNumber, genId)
+    cartLinkListings = await fetchListingsForPartNumber(cartLinkPartNumber.id)
+  } catch (e) {
+    console.error(e); toastFn('Error resolving part number'); return
+  }
+
+  if (cartLinkListings.length === 1) {
+    await addToCartWithListing(cartLinkListings[0])
+    return
+  }
+  if (cartLinkListings.length === 0) {
+    openNewListingModal(rawPartNumber)   // pre-fill SKU field with the part number
+    return
+  }
+  openListingPickerModal()
+}
+
+async function addToCartWithListing(listing) {
+  const part = cartLinkIsChild ? currentChildParts.find(p => p.id === cartLinkPartId) : currentParts.find(p => p.id === cartLinkPartId)
+  if (!part) return
+
+  try {
+    const vendor = getVendors().find(v => v.id === listing.vendorId)
+    const cart = await findOrCreateCartForVendor(listing.vendorId, vendor?.name || 'Vendor', genId)
     const item = await upsertCartItem({
       id: genId(), cartId: cart.id,
-      partNumberId: pn?.id || null,
+      vendorListingId: listing.id,
       assemblyPartId: part.id,
-      nameOverride: part.partName,
+      nameOverride: part.partName,   // fallback if no component linked yet
       quantity: Math.max(1, part.quantityNeeded - (part.quantityCollected || 0)) || 1,
       status: 'pending',
     })
     registerNewCart(cart)
     registerNewCartItem(item)
     toastFn(`Added "${part.partName}" to cart "${cart.name}"`)
-  } catch (e) {
-    console.error(e)
-    toastFn('Error adding to cart')
-  }
+  } catch (e) { console.error(e); toastFn('Error adding to cart') }
+}
+
+// ── "No listings yet" — one-click-collapsing add-vendor-listing modal ──
+function openNewListingModal(prefillSku) {
+  populateListingVendorSelect('')
+  document.getElementById('listing-field-link').value = ''
+  document.getElementById('listing-field-price').value = ''
+  document.getElementById('listing-modal-hint').textContent =
+    `No vendor listing exists yet for "${cartLinkPartNumber.value}" — add the vendor, link, and price.`
+  document.getElementById('new-listing-modal-overlay').style.display = 'flex'
+}
+
+function populateListingVendorSelect(selectedId) {
+  const sel = document.getElementById('listing-field-vendor')
+  sel.innerHTML = '<option value="">— Select or create vendor —</option>' +
+    getVendors().map(v => `<option value="${v.id}"${v.id === selectedId ? ' selected' : ''}>${v.name}</option>`).join('')
+}
+
+async function confirmNewListing() {
+  const vendorSel = document.getElementById('listing-field-vendor').value
+  const newVendorName = document.getElementById('listing-new-vendor-input').value.trim()
+  const link = document.getElementById('listing-field-link').value.trim()
+  const price = document.getElementById('listing-field-price').value
+
+  if (!vendorSel && !newVendorName) { toastFn('Select or enter a vendor'); return }
+
+  try {
+    const vendor = vendorSel ? getVendors().find(v => v.id === vendorSel) : await findOrCreateVendor(newVendorName, genId)
+    if (!vendorSel) registerNewVendor(vendor)
+
+    const listing = await upsertVendorListing({
+      id: genId(), partNumberId: cartLinkPartNumber.id, vendorId: vendor.id,
+      purchaseLink: link, purchasePrice: price ? parseFloat(price) : null, isPreferred: true,
+    })
+    document.getElementById('new-listing-modal-overlay').style.display = 'none'
+    await addToCartWithListing(listing)
+  } catch (e) { console.error(e); toastFn('Error creating vendor listing') }
+}
+
+// ── 2+ listings — picker ────────────────────────────────────
+function openListingPickerModal() {
+  const list = document.getElementById('listing-picker-list')
+  list.innerHTML = cartLinkListings.map(l => {
+    const vendor = getVendors().find(v => v.id === l.vendorId)
+    return `<div class="onshape-list-item" data-pick-listing="${l.id}">
+      <div class="onshape-list-item-icon"><i class="ti ti-building-store" aria-hidden="true"></i></div>
+      <div class="onshape-list-item-text">
+        <div class="onshape-list-item-name">${vendor?.name || 'Unknown vendor'}</div>
+        <div class="onshape-list-item-meta">${l.purchaseLink ? l.purchaseLink : 'No link set'}${l.purchasePrice != null ? ' · $' + l.purchasePrice.toFixed(2) : ''}</div>
+      </div>
+      <i class="ti ti-chevron-right" aria-hidden="true"></i>
+    </div>`
+  }).join('') + `<div class="onshape-list-item" data-pick-listing="__new__">
+      <div class="onshape-list-item-icon"><i class="ti ti-plus" aria-hidden="true"></i></div>
+      <div class="onshape-list-item-text"><div class="onshape-list-item-name">Add another vendor</div></div>
+    </div>`
+
+  list.querySelectorAll('[data-pick-listing]').forEach(el =>
+    el.addEventListener('click', () => {
+      document.getElementById('listing-picker-overlay').style.display = 'none'
+      if (el.dataset.pickListing === '__new__') { openNewListingModal(cartLinkPartNumber.value); return }
+      const listing = cartLinkListings.find(l => l.id === el.dataset.pickListing)
+      if (listing) addToCartWithListing(listing)
+    })
+  )
+  document.getElementById('listing-picker-overlay').style.display = 'flex'
 }
 
 function partSearchToolbarHTML() {

@@ -1129,14 +1129,10 @@ export async function updateInstanceLocation(id, location) {
 
 function dbPartNumberToLocal(row) {
   return {
-    id:            row.id,
-    componentId:   row.component_id ?? null,
-    value:         row.value,
-    vendorName:    row.vendor_name ?? '',
-    purchaseLink:  row.purchase_link ?? '',
-    purchasePrice: row.purchase_price ?? null,
-    isPreferred:   row.is_preferred ?? false,
-    createdAt:     row.created_at,
+    id:          row.id,
+    componentId: row.component_id ?? null,
+    value:       row.value,
+    createdAt:   row.created_at,
   }
 }
 
@@ -1158,8 +1154,6 @@ export async function ensurePartNumberStub(value, genId) {
     .insert({ id: genId(), value: trimmed, component_id: null })
     .select()
     .single()
-  // Unique-constraint race: another concurrent import created it first —
-  // just refetch rather than erroring the whole import.
   if (error) {
     const { data: retry } = await supabase.from('part_numbers').select('*').eq('value', trimmed).maybeSingle()
     if (retry) return dbPartNumberToLocal(retry)
@@ -1193,11 +1187,8 @@ export async function fetchPartNumberByValue(value) {
   return data ? dbPartNumberToLocal(data) : null
 }
 
-/** All part numbers for a component — the "which vendors sell this"
- *  list shown in the component view / part orders picker. */
 export async function fetchPartNumbersForComponent(componentId) {
-  const { data, error } = await supabase
-    .from('part_numbers').select('*').eq('component_id', componentId).order('is_preferred', { ascending: false })
+  const { data, error } = await supabase.from('part_numbers').select('*').eq('component_id', componentId)
   if (error) throw error
   return data.map(dbPartNumberToLocal)
 }
@@ -1211,15 +1202,7 @@ export async function fetchAllPartNumbers() {
 export async function upsertPartNumber(pn) {
   const { data, error } = await supabase
     .from('part_numbers')
-    .upsert({
-      id:              pn.id,
-      component_id:    pn.componentId ?? null,
-      value:           pn.value,
-      vendor_name:     pn.vendorName ?? '',
-      purchase_link:   pn.purchaseLink ?? '',
-      purchase_price:  pn.purchasePrice ?? null,
-      is_preferred:    pn.isPreferred ?? false,
-    })
+    .upsert({ id: pn.id, component_id: pn.componentId ?? null, value: pn.value })
     .select()
     .single()
   if (error) throw error
@@ -1231,34 +1214,94 @@ export async function deletePartNumber(id) {
   if (error) throw error
 }
 
-/**
- * Given an assembly_part's raw part number string, returns inventory
- * instances worth suggesting for linking — i.e. instances whose
- * component is already tied to that exact vendor SKU. This is the
- * "heavily filtered" auto-suggestion: instances of ANY OTHER component
- * are excluded entirely rather than just deprioritized, since a part
- * number match is a strong, near-certain signal.
- */
+// "Heavily filtered" inventory suggestion — unchanged behavior, still
+// keyed off part_numbers.component_id (sourcing split doesn't affect this).
 export async function fetchSuggestedInstancesForPartNumber(partNumberValue) {
   const pn = await fetchPartNumberByValue(partNumberValue)
   if (!pn || !pn.componentId) return []
   return fetchAvailableInstances(pn.componentId)
 }
 
+function dbVendorToLocal(row) {
+  return { id: row.id, name: row.name, skuPattern: row.sku_pattern ?? null, createdAt: row.created_at }
+}
+
+export async function fetchVendors() {
+  const { data, error } = await supabase.from('vendors').select('*').order('name')
+  if (error) throw error
+  return data.map(dbVendorToLocal)
+}
+
+/** Find-or-create by name (case-insensitive) — used by the inline
+ *  "new vendor" step so retyping "mcmaster" doesn't fork a duplicate row. */
+export async function findOrCreateVendor(name, genId) {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Vendor name is required')
+
+  const { data: existing, error: findErr } = await supabase
+    .from('vendors').select('*').ilike('name', trimmed).maybeSingle()
+  if (findErr) throw findErr
+  if (existing) return dbVendorToLocal(existing)
+
+  const { data, error } = await supabase
+    .from('vendors').insert({ id: genId(), name: trimmed }).select().single()
+  if (error) throw error
+  return dbVendorToLocal(data)
+}
+
+export async function deleteVendor(id) {
+  const { error } = await supabase.from('vendors').delete().eq('id', id)
+  if (error) throw error
+}
+
+function dbListingToLocal(row) {
+  return {
+    id:            row.id,
+    partNumberId:  row.part_number_id,
+    vendorId:      row.vendor_id,
+    purchaseLink:  row.purchase_link ?? '',
+    purchasePrice: row.purchase_price ?? null,
+    isPreferred:   row.is_preferred ?? false,
+    createdAt:     row.created_at,
+  }
+}
+
+export async function fetchListingsForPartNumber(partNumberId) {
+  const { data, error } = await supabase
+    .from('vendor_listings').select('*').eq('part_number_id', partNumberId).order('is_preferred', { ascending: false })
+  if (error) throw error
+  return data.map(dbListingToLocal)
+}
+
+export async function upsertVendorListing(listing) {
+  const { data, error } = await supabase
+    .from('vendor_listings')
+    .upsert({
+      id:              listing.id,
+      part_number_id:  listing.partNumberId,
+      vendor_id:       listing.vendorId,
+      purchase_link:   listing.purchaseLink || null,
+      purchase_price:  listing.purchasePrice ?? null,
+      is_preferred:    listing.isPreferred ?? false,
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return dbListingToLocal(data)
+}
+
+export async function deleteVendorListing(id) {
+  const { error } = await supabase.from('vendor_listings').delete().eq('id', id)
+  if (error) throw error
+}
+
 // ── Part Orders (carts + cart items) ────────────────────────
 
 function dbCartToLocal(row) {
-  return {
-    id:          row.id,
-    name:        row.name,
-    assemblyId:  row.assembly_id ?? null,
-    status:      row.status ?? 'open',
-    notes:       row.notes ?? '',
-    createdAt:   row.created_at,
-  }
+  return { id: row.id, name: row.name, vendorId: row.vendor_id ?? null, status: row.status ?? 'open', notes: row.notes ?? '', createdAt: row.created_at }
 }
 function localCartToDb(c) {
-  return { id: c.id, name: c.name, assembly_id: c.assemblyId ?? null, status: c.status ?? 'open', notes: c.notes ?? '' }
+  return { id: c.id, name: c.name, vendor_id: c.vendorId ?? null, status: c.status ?? 'open', notes: c.notes ?? '' }
 }
 
 export async function fetchCarts() {
@@ -1278,54 +1321,52 @@ export async function deleteCart(id) {
   if (error) throw error
 }
 
-/** Finds an open cart for a given assembly, or creates one — used when
- *  "Add to cart" is clicked on a BOM part with no cart yet targeting
- *  that assembly. */
-export async function findOrCreateAssemblyCart(assemblyId, assemblyName, genId) {
+/** Find-or-create the open cart for a vendor — this is what "which cart
+ *  does this item land in" now resolves to, replacing the old
+ *  assembly-keyed version entirely. */
+export async function findOrCreateCartForVendor(vendorId, vendorName, genId) {
   const { data: existing, error: findErr } = await supabase
-    .from('carts').select('*').eq('assembly_id', assemblyId).eq('status', 'open').maybeSingle()
+    .from('carts').select('*').eq('vendor_id', vendorId).eq('status', 'open').maybeSingle()
   if (findErr) throw findErr
   if (existing) return dbCartToLocal(existing)
 
   const { data, error } = await supabase
-    .from('carts')
-    .insert({ id: genId(), name: `${assemblyName} — parts`, assembly_id: assemblyId, status: 'open' })
-    .select()
-    .single()
+    .from('carts').insert({ id: genId(), name: `${vendorName} order`, vendor_id: vendorId, status: 'open' }).select().single()
   if (error) throw error
   return dbCartToLocal(data)
 }
 
+// ── Cart items ───────────────────────────────────────────────
+
 function dbCartItemToLocal(row) {
   return {
-    id:              row.id,
-    cartId:          row.cart_id,
-    partNumberId:    row.part_number_id ?? null,
-    assemblyPartId:  row.assembly_part_id ?? null,
-    nameOverride:    row.name_override ?? '',
-    linkOverride:    row.link_override ?? '',
-    priceOverride:   row.price_override ?? null,
-    quantity:        row.quantity ?? 1,
-    status:          row.status ?? 'pending',
-    createdAt:       row.created_at,
-  }
-}
-function localCartItemToDb(item) {
-  return {
-    id:                item.id,
-    cart_id:           item.cartId,
-    part_number_id:    item.partNumberId ?? null,
-    assembly_part_id:  item.assemblyPartId ?? null,
-    name_override:     item.nameOverride || null,
-    link_override:     item.linkOverride || null,
-    price_override:    item.priceOverride ?? null,
-    quantity:          item.quantity ?? 1,
-    status:            item.status ?? 'pending',
+    id:               row.id,
+    cartId:           row.cart_id,
+    vendorListingId:  row.vendor_listing_id ?? null,
+    assemblyPartId:   row.assembly_part_id ?? null,
+    nameOverride:     row.name_override ?? '',
+    linkOverride:     row.link_override ?? '',
+    priceOverride:    row.price_override ?? null,
+    quantity:         row.quantity ?? 1,
+    status:           row.status ?? 'pending',
+    createdAt:        row.created_at,
   }
 }
 
-/** All cart items, across every cart — Part Orders renders/groups these
- *  client-side by cart, same pattern fetchAllFabricationJobs uses. */
+function localCartItemToDb(item) {
+  return {
+    id:                  item.id,
+    cart_id:             item.cartId,
+    vendor_listing_id:   item.vendorListingId ?? null,
+    assembly_part_id:    item.assemblyPartId ?? null,
+    name_override:       item.nameOverride || null,
+    link_override:       item.linkOverride || null,
+    price_override:      item.priceOverride ?? null,
+    quantity:            item.quantity ?? 1,
+    status:              item.status ?? 'pending',
+  }
+}
+
 export async function fetchAllCartItems() {
   const { data, error } = await supabase.from('cart_items').select('*').order('created_at', { ascending: true })
   if (error) throw error
@@ -1343,16 +1384,13 @@ export async function deleteCartItem(id) {
   if (error) throw error
 }
 
-/**
- * Resolves a cart item's display fields (name/link/price), preferring
- * the linked part_number + component over manual overrides. `partNumber`
- * and `component` are the already-fetched lookup objects (or null).
- */
-export function resolveCartItemDisplay(item, partNumber, component) {
+/** Resolves a cart item's display fields, preferring the linked listing
+ *  (and its component) over manual overrides. `partNameFallback` is the
+ *  assembly part's own name — used when no component is linked yet. */
+export function resolveCartItemDisplay(item, listing, component, partNameFallback) {
   return {
-    name:  component?.fallbackName || item.nameOverride || 'Unnamed item',
-    link:  partNumber?.purchaseLink || item.linkOverride || '',
-    price: partNumber?.purchasePrice ?? item.priceOverride ?? null,
-    vendor: partNumber?.vendorName || '',
+    name:  component?.fallbackName || item.nameOverride || partNameFallback || 'Unnamed item',
+    link:  listing?.purchaseLink || item.linkOverride || '',
+    price: listing?.purchasePrice ?? item.priceOverride ?? null,
   }
 }

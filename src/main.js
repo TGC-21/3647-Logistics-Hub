@@ -101,6 +101,7 @@ async function boot() {
   try { bindDesignerEvents() }  catch (e) { console.error('[boot] bindDesignerEvents failed', e) }
   try { bindFabricateEvents() } catch (e) { console.error('[boot] bindFabricateEvents failed', e) }
   try { bindPartOrdersEvents() } catch (e) { console.error('[boot] bindPartOrdersEvents failed', e) }
+  
 }
 
 // ── Helpers ───────────────────────────────────────────────────
