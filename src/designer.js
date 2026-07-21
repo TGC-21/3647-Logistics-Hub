@@ -827,6 +827,7 @@ async function renderChildDetail() {
       const linkBtn = e.target.closest('[data-part-link]')
       const viewLinkedBtn = e.target.closest('[data-view-linked]')
       const delBtn = e.target.closest('[data-child-part-del]')
+      const editBtn = e.target.closest('[data-child-part-edit]')
       const fabBtn = e.target.closest('[data-child-part-fab]')
       const fabDetectBtn = e.target.closest('[data-child-part-fabdetect]')
       const orderBtn = e.target.closest('[data-child-part-order]')
@@ -837,7 +838,7 @@ async function renderChildDetail() {
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
       if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.childPartFab, true); return }
       if (orderBtn) { await openSendToOrderModal(orderBtn.dataset.childPartOrder, true); return }
-
+      if (editBtn) { openPartModal(editBtn.dataset.childPartEdit); return }
     })
   }
 }
@@ -895,7 +896,7 @@ function childPartRowHTML(p, job = null, orders = []) {
   // they're not un-accounted-for either.
   const promisedQty = totalPromisedQty(job, orders)
   const gapRemaining = p.quantityNeeded - collectedQty - promisedQty
-  const canPromiseMore = gapRemaining < 0;
+  const canPromiseMore = gapRemaining > 0;
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name-cell">
@@ -926,6 +927,7 @@ function childPartRowHTML(p, job = null, orders = []) {
           <i class="ti ti-truck-delivery" style="font-size:13px"></i>
       </button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canPromiseMore ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
       </td>
