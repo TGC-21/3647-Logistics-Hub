@@ -925,7 +925,7 @@ function childPartRowHTML(p, job = null, orders = []) {
         ${canPromiseMore ? '' : 'disabled'}>
           <i class="ti ti-truck-delivery" style="font-size:13px"></i>
       </button>
-      <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canPromiseMore ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
       </td>
@@ -982,7 +982,7 @@ function partRowHTML(p, job = null, orders = []) {
         ${canPromiseMore ? '':'disabled'}>
         <i class="ti ti-shopping-cart-plus" style="font-size:13px"></i>
       </button>      
-      <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canPromiseMore ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate">     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
