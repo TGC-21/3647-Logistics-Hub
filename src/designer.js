@@ -9,8 +9,7 @@ import {
   fetchActiveJobsForParts, createFabricationJob,
   fetchComponentsForFabricatePicker, findOrCreateComponent,
   fetchCategories, upsertCategory, validateAttribute, 
-  fetchSuggestedInstancesForPartNumber,
-  findOrCreateAssemblyCart, upsertCartItem, fetchPartNumberByValue,
+  fetchSuggestedInstancesForPartNumber, upsertCartItem, fetchPartNumberByValue,
   ensurePartNumberStub, linkPartNumberToComponent,
   findOrCreateCartForVendor, findOrCreateVendor,
   fetchListingsForPartNumber, upsertVendorListing,
@@ -33,6 +32,7 @@ let currentChildren   = []   // assembly_children rows for the current assembly
 let navigationStack   = []   // [{id, name}] trail from root → current (root assemblies only)
 let editingAssemblyId = null
 let editingPartId     = null
+let editingChild      = false
 let detailTab         = 'parts'   // 'parts' | 'subassemblies' — active tab in assembly detail view
 let isolatedMode      = false     // true when opened via "?asm=<id>" / "?child=<id>" in its own window/tab
 
@@ -838,7 +838,8 @@ async function renderChildDetail() {
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
       if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.childPartFab, true); return }
       if (orderBtn) { await openSendToOrderModal(orderBtn.dataset.childPartOrder, true); return }
-      if (editBtn) { openPartModal(editBtn.dataset.childPartEdit); return }
+      if (editBtn) { openPartModal(editBtn.dataset.childPartEdit, true); return }
+      
     })
   }
 }
@@ -1005,7 +1006,7 @@ function bindPartRowEvents() {
     if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, false); return }
 
     const editBtn = e.target.closest('[data-part-edit]')
-    if (editBtn) { openPartModal(editBtn.dataset.partEdit); return }
+    if (editBtn) { openPartModal(editBtn.dataset.partEdit, false); return }
 
     const delBtn = e.target.closest('[data-part-del]')
     if (delBtn) { await deletePart(delBtn.dataset.partDel); return }
@@ -1179,9 +1180,13 @@ export async function saveAssembly() {
 }
 
 // ── Part modal ────────────────────────────────────────────────
-function openPartModal(id) {
+function openPartModal(id, isChildPart = false) {
+  
   editingPartId = id || null
-  const p = id ? currentParts.find(x => x.id === id) : null
+  const p = isChildPart
+    ? currentChildParts.find(p => p.id === editingPartId)
+    : currentParts.find(p => p.id === editingPartId)
+  if (!p) return
 
   document.getElementById('part-modal-title').textContent = p ? 'Edit part' : 'Add part'
   document.getElementById('part-field-name').value        = p?.partName || ''
