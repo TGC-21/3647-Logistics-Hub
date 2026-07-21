@@ -3550,7 +3550,7 @@ function openAdhocListingModal() {
   document.getElementById('listing-modal-hint').textContent = 'Enter the part number and vendor details for this item.'
   document.getElementById('listing-field-link').value = ''
   document.getElementById('listing-field-price').value = ''
-  populateListingVendorSelectDesigner('')
+  populateListingVendorSelect('')
   const skuField = ensureAdhocSkuField()
   skuField.value = ''
   document.getElementById('new-listing-modal-overlay').style.display = 'flex'
