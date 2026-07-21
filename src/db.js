@@ -625,6 +625,192 @@ export async function archiveFabricationJob(jobId) {
   return dbJobToLocal(data)
 }
 
+// ── Part orders (inventory-first, assembly-optional) ───────────
+// A part_order restocks a COMPONENT (required) and may optionally
+// earmark itself toward one assembly_part (assembly_part_id), the same
+// "promised" concept fabrication_jobs uses — see schema.sql's
+// part_orders migration for the full lifecycle (cart → ordered →
+// received → archived) and why there's no "one active order per part"
+// constraint here (unlike fabrication_jobs' partial unique index):
+// orders are routinely NOT assembly-scoped at all, and a part's gap can
+// legitimately be split across more than one order.
+
+/** All orders, across every component — mirrors fetchAllFabricationJobs.
+ *  The Part Orders view groups/filters these client-side (cart vs.
+ *  ordered vs. received vs. archived), same pattern Fabricate uses for
+ *  jobs. */
+export async function fetchAllPartOrders() {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .select('*')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data.map(dbPartOrderToLocal)
+}
+
+/** Every order (any status) for one component — used by a component's
+ *  "on order" readout, e.g. alongside fetchInstanceCounts's on-hand
+ *  count in Inventory mode. */
+export async function fetchOrdersForComponent(componentId) {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .select('*')
+    .eq('component_id', componentId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data.map(dbPartOrderToLocal)
+}
+
+/** All ACTIVE (non-archived, non-fully-received) orders earmarked to a
+ *  given assembly_part — used to compute "promised" the same way
+ *  fetchActiveJobForPart does for fabrication. A part can have more than
+ *  one active order (see schema note), so this returns an array, not a
+ *  single row like fetchActiveJobForPart. */
+export async function fetchActiveOrdersForPart(assemblyPartId) {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .select('*')
+    .eq('assembly_part_id', assemblyPartId)
+    .neq('status', 'archived')
+    .neq('status', 'received')
+  if (error) throw error
+  return data.map(dbPartOrderToLocal)
+}
+
+/** Bulk version of the above — one query instead of N, for rendering an
+ *  assembly's whole parts table without a per-row round trip. Returns a
+ *  map keyed by assembly_part_id → array of active orders (never a
+ *  single order, since — unlike fetchActiveJobsForParts — more than one
+ *  can be active on the same part at once). */
+export async function fetchActiveOrdersForParts(assemblyPartIds) {
+  if (!assemblyPartIds || !assemblyPartIds.length) return {}
+  const { data, error } = await supabase
+    .from('part_orders')
+    .select('*')
+    .in('assembly_part_id', assemblyPartIds)
+    .neq('status', 'archived')
+    .neq('status', 'received')
+  if (error) throw error
+  const map = {}
+  for (const row of data) {
+    const order = dbPartOrderToLocal(row)
+    if (!map[order.assemblyPartId]) map[order.assemblyPartId] = []
+    map[order.assemblyPartId].push(order)
+  }
+  return map
+}
+
+/**
+ * Creates a new order line in 'cart' status. `assemblyPartId` is
+ * optional (null = pure restock, not earmarked to any assembly) — this
+ * is the inversion from createFabricationJob, where the assembly-part
+ * link is mandatory.
+ */
+export async function createPartOrder({ componentId, assemblyPartId, quantityOrdered, vendor, cost, notes, genId }) {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .insert({
+      id:                genId(),
+      component_id:      componentId,
+      assembly_part_id:  assemblyPartId || null,
+      quantity_ordered:  quantityOrdered,
+      vendor:            vendor || null,
+      cost:              cost ?? null,
+      notes:             notes || '',
+      status:            'cart',
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return dbPartOrderToLocal(data)
+}
+
+/** Only a 'cart' order can have its quantity/vendor/cost/notes/assembly
+ *  link edited — once placed, the commitment is frozen (mirrors
+ *  updateQueuedJobQuantity's status-gating; enforced here at the query
+ *  layer, same as fabrication_jobs, not as a DB constraint). */
+export async function updateCartOrder(orderId, { quantityOrdered, assemblyPartId, vendor, cost, notes }) {
+  const patch = {}
+  if (quantityOrdered !== undefined) patch.quantity_ordered = quantityOrdered
+  if (assemblyPartId !== undefined)  patch.assembly_part_id = assemblyPartId || null
+  if (vendor !== undefined)          patch.vendor = vendor || null
+  if (cost !== undefined)            patch.cost = cost ?? null
+  if (notes !== undefined)           patch.notes = notes
+
+  const { data, error } = await supabase
+    .from('part_orders')
+    .update(patch)
+    .eq('id', orderId)
+    .eq('status', 'cart')
+    .select()
+    .single()
+  if (error) throw error
+  return dbPartOrderToLocal(data)
+}
+
+/** Only a 'cart' order can be deleted outright — once placed, archive it
+ *  instead (mirrors deleteQueuedFabricationJob). */
+export async function deleteCartOrder(orderId) {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .delete()
+    .eq('id', orderId)
+    .eq('status', 'cart')
+    .select()
+  if (error) throw error
+  if (!data.length) throw new Error('Only a cart order can be deleted — archive it instead.')
+}
+
+/** cart → ordered. Freezes quantity/assembly link (enforced by
+ *  updateCartOrder's status gate above, not by this call). Sets
+ *  ordered_at for a "placed on" readout. */
+export async function placePartOrder(orderId) {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .update({ status: 'ordered', ordered_at: new Date().toISOString() })
+    .eq('id', orderId)
+    .eq('status', 'cart')
+    .select()
+  if (error) throw error
+  if (!data.length) throw new Error('This order is no longer in cart — refresh and try again.')
+  return dbPartOrderToLocal(data[0])
+}
+
+/**
+ * The core Part Order → Inventory handoff. Records `quantity` newly
+ * arrived units against an order via the record_received_units() RPC,
+ * which atomically creates an inventory_instances row (status depends on
+ * whether the order is assembly-earmarked — see schema.sql), and if it
+ * IS earmarked, also bumps the linked assembly_part's quantity_collected
+ * + linked_instance_ids. Mirrors recordMachinedUnits exactly. Returns the
+ * updated order — the caller should also refetch the assembly_part (if
+ * assemblyPartId was set) to refresh collected/promised in the UI, same
+ * as the Fabricate flow does today.
+ */
+export async function recordReceivedUnits(orderId, quantity) {
+  const { data, error } = await supabase.rpc('record_received_units', {
+    p_order_id: orderId,
+    p_quantity: quantity,
+  })
+  if (error) throw error
+  return dbPartOrderToLocal(data)
+}
+
+/** received → archived. Terminal — archived orders are hidden from the
+ *  active Part Orders view but never deleted (audit trail of what was
+ *  ordered and received). Mirrors archiveFabricationJob. */
+export async function archivePartOrder(orderId) {
+  const { data, error } = await supabase
+    .from('part_orders')
+    .update({ status: 'archived' })
+    .eq('id', orderId)
+    .eq('status', 'received')
+    .select()
+    .single()
+  if (error) throw error
+  return dbPartOrderToLocal(data)
+}
+
 // ── Assembly children (subassemblies) ─────────────────────────
 // Subassemblies never live in `assemblies` — they're their own node type,
 // nested under either a root assembly or another subassembly node. All
@@ -1393,6 +1579,22 @@ function localCartItemToDb(item) {
     price_override:      item.priceOverride ?? null,
     quantity:            item.quantity ?? 1,
     status:              item.status ?? 'pending',
+  }
+}
+
+function dbPartOrderToLocal(row) {
+  return {
+    id:                row.id,
+    componentId:       row.component_id,
+    assemblyPartId:    row.assembly_part_id ?? null,
+    quantityOrdered:   row.quantity_ordered ?? 1,
+    quantityReceived:  row.quantity_received ?? 0,
+    status:            row.status ?? 'cart',
+    vendor:            row.vendor ?? '',
+    cost:              row.cost ?? null,
+    notes:             row.notes ?? '',
+    orderedAt:         row.ordered_at ?? null,
+    createdAt:         row.created_at,
   }
 }
 

@@ -14,7 +14,7 @@ import {
   ensurePartNumberStub, linkPartNumberToComponent,
   findOrCreateCartForVendor, findOrCreateVendor,
   fetchListingsForPartNumber, upsertVendorListing,
-  fetchAllPartNumbersWithListings,
+  fetchAllPartNumbersWithListings, fetchActiveOrdersForParts, createPartOrder, placePartOrder
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
@@ -77,6 +77,13 @@ let cartLinkPartId = null
 let cartLinkIsChild = false
 let cartLinkPartNumber = null   // the resolved part_numbers row
 let cartLinkListings = []
+
+let currentPartOrders      = {}   // assembly_part id -> array of active part_orders, for the currently open root assembly
+let currentChildPartOrders = {}   // same, for a subassembly node
+
+// Send to Part Order modal state — mirrors fabJobPartId/fabJobIsChildPart
+let orderPartId      = null
+let orderIsChildPart = false
 
 let partSearchQuery = ''
 let partNumberOnly  = false   // "has part number" filter
@@ -411,6 +418,7 @@ async function renderAssemblyDetail() {
       fetchAssemblyChildren(currentAssemblyId),
     ])
     currentPartJobs = await fetchActiveJobsForParts(currentParts.map(p => p.id))
+    currentPartOrders = await fetchActiveOrdersForParts(currentParts.map(p => p.id))
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading assembly</div></div>`
     return
@@ -524,7 +532,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-                ${currentParts.filter(partRowVisible).map(p => partRowHTML(p, currentPartJobs[p.id] || null)).join('')}
+                ${currentParts.filter(partRowVisible).map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartorders[p.id] || [])).join('')}
               </tbody>
             </table>
           </div>`
@@ -683,6 +691,7 @@ async function renderChildDetail() {
       fetchChildrenOfChild(viewingChildId),
     ])
     currentChildPartJobs = await fetchActiveJobsForParts(currentChildParts.map(p => p.id))
+    currentChildPartOrders = await fetchActiveOrdersForParts(currentChildParts.map(p => p.id))
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading subassembly</div></div>`
     return
@@ -750,7 +759,7 @@ async function renderChildDetail() {
                 </tr>
               </thead>
               <tbody id="child-parts-tbody">
-                ${currentChildParts.filter(partRowVisible).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null)).join('')}
+                ${currentChildParts.filter(partRowVisible).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentPartOrders[p.id] || [])).join('')}
               </tbody>
             </table>
           </div>`
@@ -820,14 +829,15 @@ async function renderChildDetail() {
       const delBtn = e.target.closest('[data-child-part-del]')
       const fabBtn = e.target.closest('[data-child-part-fab]')
       const fabDetectBtn = e.target.closest('[data-child-part-fabdetect]')
-      const cartBtn = e.target.closest('[data-child-part-cart]')
+      const orderBtn = e.target.closest('[data-child-part-order]')
 
       if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.childPartFabdetect, true); return }
       if (linkBtn) { openInventoryLinkModal(linkBtn.dataset.partLink, true); return }
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
       if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.childPartFab, true); return }
-      if (cartBtn) { await addPartToCart(cartBtn.dataset.childPartCart, true); return }
+      if (orderBtn) { await openSendToOrderModal(orderBtn.dataset.childPartOrder, true); return }
+
     })
   }
 }
@@ -846,7 +856,25 @@ function fabJobBadgeHTML(job) {
     </span>`
   }
 
-function childPartRowHTML(p, job = null) {
+function totalPromisedQty(job, orders) {
+  const fromJob    = job ? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
+  const fromOrders = (orders || []).reduce((sum, o) => sum + Math.max(0, o.quantityOrdered - o.quantityReceived), 0)
+  return fromJob + fromOrders
+}
+
+function orderBadgesHTML(orders) {
+  if (!orders || !orders.length) return ''
+  return orders.map(o => {
+    const label = o.status === 'cart'
+      ? 'In cart'
+      : `Ordered${o.vendor ? ' — ' + o.vendor : ''} (${o.quantityReceived}/${o.quantityOrdered})`
+    return `<span class="fab-job-badge fab-job-badge--${o.status === 'cart' ? 'queued' : 'committed'}" title="Part order: ${o.quantityOrdered} ordered">
+      <i class="ti ti-truck-delivery" aria-hidden="true"></i> ${label}
+    </span>`
+  }).join('')
+}
+
+function childPartRowHTML(p, job = null, orders = []) {
   const status = computePartStatus(p)
   const statusBadge = {
     complete: '<span class="part-badge part-badge--complete">Complete</span>',
@@ -865,15 +893,16 @@ function childPartRowHTML(p, job = null) {
   // promised = whatever this part's active job still owes beyond what
   // it's already machined - those units aren't "collected" yet, but
   // they're not un-accounted-for either.
-  const promisedQty = job ? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
+  const promisedQty = totalPromisedQty(job, orders)
   const gapRemaining = p.quantityNeeded - collectedQty - promisedQty
-  const canSendToFab = !job && gapRemaining > 0
+  const canPromiseMore = gapRemaining < 0;
   return `<tr data-part-id="${p.id}">
     <td>
       <div class="part-name-cell">
         <div>
           <div class="part-name">${p.partName}</div>
           ${fabJobBadgeHTML(job)}
+          ${orderBadgesHTML(orders)}
         </div>
         <button class="btn-icon btn-link-inventory" data-part-link="${p.id}" aria-label="Link to inventory" title="Link to inventory component">
           <i class="ti ti-link" style="font-size:14px"></i>
@@ -891,7 +920,11 @@ function childPartRowHTML(p, job = null) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-child-part-cart="${p.id}" aria-label="Add to cart" title="Add to Part Orders"><i class="ti ti-shopping-cart-plus" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-order="${p.id}" aria-label="Add to cart" title="Send to Part Orders" 
+        title="${p.componentId ? 'Order remaining Quantity' : 'Link this part to a component first (via Link inventory or Send to Fabricate)'}"
+        ${canPromiseMore ? '' : 'disabled'}>
+          <i class="ti ti-truck-delivery" style="font-size:13px"></i>
+      </button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
@@ -899,7 +932,7 @@ function childPartRowHTML(p, job = null) {
   </tr>`
 }
 
-function partRowHTML(p, job = null) {
+function partRowHTML(p, job = null, orders = []) {
   const status = computePartStatus(p)
   const statusBadge = {
     complete: '<span class="part-badge part-badge--complete">Complete</span>',
@@ -915,9 +948,9 @@ function partRowHTML(p, job = null) {
        </button>`
     : ''
 
-  const promisedQty = job? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
+  const promisedQty = totalPromisedQty(job, orders)
   const gapRemaining = p.quantityNeeded - collectedQty - promisedQty
-  const canSendToFab = !job && gapRemaining > 0
+  const canPromiseMore = gapRemaining > 0
 
   return `<tr data-part-id="${p.id}">
     <td>
@@ -926,6 +959,7 @@ function partRowHTML(p, job = null) {
           <div class="part-name">${p.partName}</div>
           ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
           ${fabJobBadgeHTML(job)}
+          ${orderBadgesHTML(orders)}
         </div>
         <button class="btn-icon btn-link-inventory" data-part-link="${p.id}" aria-label="Link to inventory" title="Link to inventory component">
           <i class="ti ti-link" style="font-size:14px"></i>
@@ -943,7 +977,11 @@ function partRowHTML(p, job = null) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-cart="${p.id}" aria-label="Add to cart" title="Add to Part Orders"><i class="ti ti-shopping-cart-plus" style="font-size:13px"></i></button>      
+      <button class="btn-icon" data-part-order="${p.id}" aria-label="Add to order" title="Add to Part Orders"
+        title="${p.componentId ? 'Order remaining quantity' : 'Link this part to a component first (via Link inventory or Send to Fabricate)'}"
+        ${canPromiseMore ? '':'disabled'}>
+        <i class="ti ti-shopping-cart-plus" style="font-size:13px"></i>
+      </button>      
       <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canSendToFab ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
@@ -976,8 +1014,8 @@ function bindPartRowEvents() {
     const fabDetectBtn = e.target.closest('[data-part-fabdetect]')
     if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.partFabdetect, false); return }
 
-    const cartBtn = e.target.closest('[data-part-cart]')
-    if (cartBtn) { await addPartToCart(cartBtn.dataset.partCart, false); return }
+    const orderBtn = e.target.closest('[data-part-order]')
+    if (orderBtn) { await openSendToOrderModal(orderBtn.dataset.partOrder, false); return }
   })
 }
 
@@ -3294,17 +3332,24 @@ export function bindDesignerEvents() {
     if (e.target === e.currentTarget) closeFabDetectConfirmModal()
   })
 
-  document.getElementById('btn-close-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
-  document.getElementById('btn-cancel-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
-  document.getElementById('btn-confirm-new-listing').addEventListener('click', confirmNewListing)
-  document.getElementById('btn-close-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
-  document.getElementById('btn-cancel-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
-  document.getElementById('btn-close-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
-  document.getElementById('btn-cancel-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
-  let listingSearchTimer
-  document.getElementById('listing-search-input').addEventListener('input', e => {
-    clearTimeout(listingSearchTimer)
-    listingSearchTimer = setTimeout(() => renderListingSearchResults(e.target.value), 150)
+  // document.getElementById('btn-close-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
+  // document.getElementById('btn-cancel-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
+  // document.getElementById('btn-confirm-new-listing').addEventListener('click', confirmNewListing)
+  // document.getElementById('btn-close-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+  // document.getElementById('btn-cancel-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+  // document.getElementById('btn-close-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
+  // document.getElementById('btn-cancel-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
+  // let listingSearchTimer
+  // document.getElementById('listing-search-input').addEventListener('input', e => {
+  //   clearTimeout(listingSearchTimer)
+  //   listingSearchTimer = setTimeout(() => renderListingSearchResults(e.target.value), 150)
+  // })
+
+  document.getElementById('btn-close-order-modal').addEventListener('click', closeSendToOrderModal)
+  document.getElementById('btn-cancel-order').addEventListener('click', closeSendToOrderModal)
+  document.getElementById('btn-confirm-order').addEventListener('click', confirmSendToOrder)
+  document.getElementById('part-order-modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeSendToOrderModal()
   })
 
   let invLinkSearchTimer
@@ -3628,4 +3673,91 @@ function partSearchToolbarHTML() {
       <input type="checkbox" id="chk-part-number-only" ${partNumberOnly ? 'checked' : ''}>
       <span>Has part #</span>
     </label>`
+}
+function currentOrderPart() {
+  return orderIsChildPart
+    ? currentChildParts.find(p => p.id === orderPartId)
+    : currentParts.find(p => p.id === orderPartId)
+}
+
+function openSendToOrderModal(partId, isChildPart = false) {
+  orderPartId      = partId
+  orderIsChildPart = isChildPart
+  const part = currentOrderPart()
+  if (!part) return
+
+  if (!part.componentId) {
+    toastFn('Link this part to a component first — use "Link inventory" or "Send to Fabricate" to establish one.')
+    return
+  }
+
+  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
+  document.getElementById('order-modal-subtitle').textContent =
+    `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
+  document.getElementById('order-field-qty').value = gap
+  document.getElementById('order-field-vendor').value = ''
+  document.getElementById('order-field-cost').value = ''
+  document.getElementById('order-field-notes').value = ''
+  document.getElementById('order-field-earmark').checked = true
+
+  document.getElementById('part-order-modal-overlay').style.display = 'flex'
+  setTimeout(() => document.getElementById('order-field-qty').focus(), 80)
+}
+
+function closeSendToOrderModal() {
+  document.getElementById('part-order-modal-overlay').style.display = 'none'
+  orderPartId = null
+}
+
+async function confirmSendToOrder() {
+  const part = currentOrderPart()
+  if (!part) return
+
+  const qty    = Math.max(1, parseInt(document.getElementById('order-field-qty').value, 10) || 1)
+  const vendor = document.getElementById('order-field-vendor').value.trim()
+  const costRaw = document.getElementById('order-field-cost').value
+  const cost   = costRaw !== '' ? parseFloat(costRaw) : null
+  const notes  = document.getElementById('order-field-notes').value.trim()
+  const earmark = document.getElementById('order-field-earmark').checked
+
+  const btn = document.getElementById('btn-confirm-order')
+  btn.disabled = true; btn.textContent = 'Adding…'
+
+  try {
+    // Straight to 'ordered' rather than leaving it in 'cart' — this modal
+    // is reached from a part that already needs the quantity now, so a
+    // silent cart stop-off would just be an extra click for the common
+    // case. The Part Orders view (Stage 4) is where a true pre-commit
+    // cart workflow (building up several lines before placing) belongs;
+    // this entry point is "I need this, order it."
+    const order = await createPartOrder({
+      componentId:       part.componentId,
+      assemblyPartId:    earmark ? part.id : null,
+      quantityOrdered:   qty,
+      vendor,
+      cost,
+      notes,
+      genId,
+    })
+    const placed = await placePartOrder(order.id)
+
+    if (earmark) {
+      if (orderIsChildPart) {
+        currentChildPartOrders[part.id] = [...(currentChildPartOrders[part.id] || []), placed]
+        renderChildDetail()
+      } else {
+        currentPartOrders[part.id] = [...(currentPartOrders[part.id] || []), placed]
+        renderAssemblyDetail()
+      }
+    }
+
+    closeSendToOrderModal()
+    toastFn(`Ordered ${qty} × "${part.partName}"${vendor ? ' from ' + vendor : ''}`)
+  } catch (e) {
+    console.error(e)
+    toastFn('Error creating part order')
+  } finally {
+    btn.disabled = false
+    btn.innerHTML = '<i class="ti ti-truck-delivery" aria-hidden="true"></i> Order'
+  }
 }
