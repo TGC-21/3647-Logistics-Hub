@@ -1667,3 +1667,12 @@ export function resolveCartItemDisplay(item, listing, component, partNameFallbac
     price: listing?.purchasePrice ?? item.priceOverride ?? null,
   }
 }
+
+// db.js
+export async function fetchRootAssemblyIdForChild(childId) {
+  let current = await fetchAssemblyChildById(childId)
+  while (current.parentChildId) {
+    current = await fetchAssemblyChildById(current.parentChildId)
+  }
+  return current.parentAssemblyId  // guaranteed set once we hit the top
+}

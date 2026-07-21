@@ -661,6 +661,29 @@ async function runFabricationDetection() {
   }
 }
 
+async function runFabricationDetectionForChild() {
+  if (fabDetectRunning) return
+  fabDetectRunning = true
+  try {
+    const rootAssemblyId = await fetchRootAssemblyIdForChild(viewingChildId)
+    const res = await fetch('/api/onshape-detect-fabrication', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assemblyId: rootAssemblyId }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Detection failed')
+    currentChildParts = await fetchChildParts(viewingChildId)
+    renderChildDetail()
+    toastFn(data.message || 'Detection complete')
+  } catch (e) {
+    console.error(e)
+    toastFn(e.message || 'Error running fabrication detection')
+  } finally {
+    fabDetectRunning = false
+  }
+}
+
 // ── Subassembly node detail (isolated window only) ─────────────
 // A subassembly is never a row in `assemblies` — this renders directly
 // from assembly_children + assembly_parts (assembly_child_id). It's
@@ -797,7 +820,7 @@ async function renderChildDetail() {
     if (isolatedMode) { window.close(); return }
     exitChildAssembly()
   })
-  document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetection)
+  document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetectionForChild)
 
   document.getElementById('tab-btn-parts')?.addEventListener('click', () => { childDetailTab = 'parts'; renderChildDetail() })
   document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
