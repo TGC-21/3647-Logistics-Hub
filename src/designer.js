@@ -532,7 +532,7 @@ async function renderAssemblyDetail() {
                 </tr>
               </thead>
               <tbody id="parts-tbody">
-                ${currentParts.filter(partRowVisible).map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartorders[p.id] || [])).join('')}
+                ${currentParts.filter(partRowVisible).map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || [])).join('')}
               </tbody>
             </table>
           </div>`
