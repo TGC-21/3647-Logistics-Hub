@@ -692,7 +692,7 @@ async function renderChildDetail() {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading subassembly</div></div>`
     return
   }
-
+  const isLinked = !!child.onshapeElementId
   currentChildName = child.name
   const parentLabel = childNavStack.length ? childNavStack[childNavStack.length - 1].name : ''
 
@@ -700,6 +700,11 @@ async function renderChildDetail() {
   meta.innerHTML    = `<span class="asm-badge asm-badge--draft"><i class="ti ti-git-branch" aria-hidden="true"></i> Subassembly${parentLabel ? ' of ' + parentLabel : ''}</span>`
   const prog = partsProgress(currentChildParts)
 
+  const detectFabBtn = isLinked
+     ? `<button class="btn btn-sm" id="btn-detect-fabrication">
+          <i class="ti ti-scan" aria-hidden="true"></i><span> Detect fabrication candidates</span>
+        </button>`
+     : ''
   const onshapeBtn = child.onshapeUrl
     ? `<a class="btn btn-sm" href="${child.onshapeUrl}" target="_blank" rel="noreferrer">
         <i class="ti ti-external-link" aria-hidden="true"></i> Onshape
@@ -774,6 +779,7 @@ async function renderChildDetail() {
         <button class="btn btn-sm" id="btn-back-asm">${backLabel}</button>
         <span class="asm-linked-badge asm-linked-badge--detail"><i class="ti ti-link" aria-hidden="true"></i> From Onshape</span>
         <div style="flex:1"></div>
+        ${detectFabBtn}
         ${onshapeBtn}
       </div>
 
@@ -791,6 +797,7 @@ async function renderChildDetail() {
     if (isolatedMode) { window.close(); return }
     exitChildAssembly()
   })
+  document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetection)
 
   document.getElementById('tab-btn-parts')?.addEventListener('click', () => { childDetailTab = 'parts'; renderChildDetail() })
   document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { childDetailTab = 'subassemblies'; renderChildDetail() })
@@ -3338,18 +3345,18 @@ export function bindDesignerEvents() {
     if (e.target === e.currentTarget) closeFabDetectConfirmModal()
   })
 
-  // document.getElementById('btn-close-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
-  // document.getElementById('btn-cancel-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
-  // document.getElementById('btn-confirm-new-listing').addEventListener('click', confirmNewListing)
-  // document.getElementById('btn-close-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
-  // document.getElementById('btn-cancel-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
-  // document.getElementById('btn-close-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
-  // document.getElementById('btn-cancel-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
-  // let listingSearchTimer
-  // document.getElementById('listing-search-input').addEventListener('input', e => {
-  //   clearTimeout(listingSearchTimer)
-  //   listingSearchTimer = setTimeout(() => renderListingSearchResults(e.target.value), 150)
-  // })
+  document.getElementById('btn-close-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-new-listing').addEventListener('click', () => document.getElementById('new-listing-modal-overlay').style.display = 'none')
+  document.getElementById('btn-confirm-new-listing').addEventListener('click', confirmNewListing)
+  document.getElementById('btn-close-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-listing-picker').addEventListener('click', () => document.getElementById('listing-picker-overlay').style.display = 'none')
+  document.getElementById('btn-close-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
+  document.getElementById('btn-cancel-listing-search').addEventListener('click', () => document.getElementById('listing-search-overlay').style.display = 'none')
+  let listingSearchTimer
+  document.getElementById('listing-search-input').addEventListener('input', e => {
+    clearTimeout(listingSearchTimer)
+    listingSearchTimer = setTimeout(() => renderListingSearchResults(e.target.value), 150)
+  })
 
   let invLinkSearchTimer
   document.getElementById('inv-link-search-input').addEventListener('input', e => {
