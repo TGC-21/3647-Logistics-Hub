@@ -1,4 +1,4 @@
-// designer.js — Designer workflow (assemblies + BOM management)
+
 import {
   fetchAssemblies, upsertAssembly, deleteAssembly,
   fetchAssemblyParts, upsertAssemblyPart, bulkInsertAssemblyParts, deleteAssemblyPart,
@@ -13,7 +13,7 @@ import {
   ensurePartNumberStub, linkPartNumberToComponent,
   findOrCreateCartForVendor, findOrCreateVendor,
   fetchListingsForPartNumber, upsertVendorListing,
-  fetchAllPartNumbersWithListings, fetchActiveOrdersForParts, createPartOrder, placePartOrder
+  fetchAllPartNumbersWithListings, fetchActiveCartItemsForParts,
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
@@ -78,12 +78,8 @@ let cartLinkIsChild = false
 let cartLinkPartNumber = null   // the resolved part_numbers row
 let cartLinkListings = []
 
-let currentPartOrders      = {}   // assembly_part id -> array of active part_orders, for the currently open root assembly
+let currentPartOrders      = {}   // assembly_part id -> array of active (non-received) cart_items, for the currently open root assembly
 let currentChildPartOrders = {}   // same, for a subassembly node
-
-// Send to Part Order modal state — mirrors fabJobPartId/fabJobIsChildPart
-let orderPartId      = null
-let orderIsChildPart = false
 
 let partSearchQuery = ''
 let partNumberOnly  = false   // "has part number" filter
@@ -418,7 +414,7 @@ async function renderAssemblyDetail() {
       fetchAssemblyChildren(currentAssemblyId),
     ])
     currentPartJobs = await fetchActiveJobsForParts(currentParts.map(p => p.id))
-    currentPartOrders = await fetchActiveOrdersForParts(currentParts.map(p => p.id))
+    currentPartOrders = await fetchActiveCartItemsForParts(currentParts.map(p => p.id))
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading assembly</div></div>`
     return
@@ -691,7 +687,7 @@ async function renderChildDetail() {
       fetchChildrenOfChild(viewingChildId),
     ])
     currentChildPartJobs = await fetchActiveJobsForParts(currentChildParts.map(p => p.id))
-    currentChildPartOrders = await fetchActiveOrdersForParts(currentChildParts.map(p => p.id))
+    currentChildPartOrders = await fetchActiveCartItemsForParts(currentChildParts.map(p => p.id))
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading subassembly</div></div>`
     return
@@ -759,7 +755,7 @@ async function renderChildDetail() {
                 </tr>
               </thead>
               <tbody id="child-parts-tbody">
-                ${currentChildParts.filter(partRowVisible).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentPartOrders[p.id] || [])).join('')}
+                ${currentChildParts.filter(partRowVisible).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || [])).join('')}
               </tbody>
             </table>
           </div>`
@@ -837,7 +833,7 @@ async function renderChildDetail() {
       if (viewLinkedBtn) { await toggleLinkedDetail(viewLinkedBtn.dataset.viewLinked, true); return }
       if (delBtn) { await deleteChildPart(delBtn.dataset.childPartDel); return }
       if (fabBtn) { openSendToFabricateModal(fabBtn.dataset.childPartFab, true); return }
-      if (orderBtn) { await openSendToOrderModal(orderBtn.dataset.childPartOrder, true); return }
+      if (orderBtn) { await addPartToCart(orderBtn.dataset.childPartOrder, true); return }
       if (editBtn) { openPartModal(editBtn.dataset.childPartEdit, true); return }
       
     })
@@ -858,19 +854,24 @@ function fabJobBadgeHTML(job) {
     </span>`
   }
 
+// `orders` here is really a list of active (non-received) cart_items —
+// see fetchActiveCartItemsForParts in db.js. Unlike fabrication_jobs'
+// quantity_requested/quantity_machined split, a cart_item has no partial-
+// receipt tracking: it's either outstanding (status 'pending'/'ordered')
+// or fully 'received', so the whole item's quantity counts as promised
+// until it flips to received (at which point fetchActiveCartItemsForParts
+// excludes it from this list entirely).
 function totalPromisedQty(job, orders) {
   const fromJob    = job ? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
-  const fromOrders = (orders || []).reduce((sum, o) => sum + Math.max(0, o.quantityOrdered - o.quantityReceived), 0)
+  const fromOrders = (orders || []).reduce((sum, o) => sum + (o.quantity || 0), 0)
   return fromJob + fromOrders
 }
 
 function orderBadgesHTML(orders) {
   if (!orders || !orders.length) return ''
   return orders.map(o => {
-    const label = o.status === 'cart'
-      ? 'In cart'
-      : `Ordered${o.vendor ? ' — ' + o.vendor : ''} (${o.quantityReceived}/${o.quantityOrdered})`
-    return `<span class="fab-job-badge fab-job-badge--${o.status === 'cart' ? 'queued' : 'committed'}" title="Part order: ${o.quantityOrdered} ordered">
+    const label = o.status === 'pending' ? `In cart (${o.quantity})` : `Ordered (${o.quantity})`
+    return `<span class="fab-job-badge fab-job-badge--${o.status === 'pending' ? 'queued' : 'committed'}" title="Part order: ${o.quantity} pending arrival">
       <i class="ti ti-truck-delivery" aria-hidden="true"></i> ${label}
     </span>`
   }).join('')
@@ -922,10 +923,9 @@ function childPartRowHTML(p, job = null, orders = []) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-child-part-order="${p.id}" aria-label="Add to cart" title="Send to Part Orders" 
-        title="${p.componentId ? 'Order remaining Quantity' : 'Link this part to a component first (via Link inventory or Send to Fabricate)'}"
+      <button class="btn-icon" data-child-part-order="${p.id}" aria-label="Add to Part Orders cart" title="Add remaining quantity to a Part Orders cart"
         ${canPromiseMore ? '' : 'disabled'}>
-          <i class="ti ti-truck-delivery" style="font-size:13px"></i>
+          <i class="ti ti-shopping-cart-plus" style="font-size:13px"></i>
       </button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canPromiseMore ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
@@ -980,8 +980,7 @@ function partRowHTML(p, job = null, orders = []) {
     </td>
     <td style="text-align:center">${statusBadge}</td>
     <td style="text-align:right">
-      <button class="btn-icon" data-part-order="${p.id}" aria-label="Add to order" title="Add to Part Orders"
-        title="${p.componentId ? 'Order remaining quantity' : 'Link this part to a component first (via Link inventory or Send to Fabricate)'}"
+      <button class="btn-icon" data-part-order="${p.id}" aria-label="Add to Part Orders cart" title="Add remaining quantity to a Part Orders cart"
         ${canPromiseMore ? '':'disabled'}>
         <i class="ti ti-shopping-cart-plus" style="font-size:13px"></i>
       </button>      
@@ -1018,7 +1017,7 @@ function bindPartRowEvents() {
     if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.partFabdetect, false); return }
 
     const orderBtn = e.target.closest('[data-part-order]')
-    if (orderBtn) { await openSendToOrderModal(orderBtn.dataset.partOrder, false); return }
+    if (orderBtn) { await addPartToCart(orderBtn.dataset.partOrder, false); return }
   })
 }
 
@@ -3352,13 +3351,6 @@ export function bindDesignerEvents() {
   //   listingSearchTimer = setTimeout(() => renderListingSearchResults(e.target.value), 150)
   // })
 
-  document.getElementById('btn-close-order-modal').addEventListener('click', closeSendToOrderModal)
-  document.getElementById('btn-cancel-order').addEventListener('click', closeSendToOrderModal)
-  document.getElementById('btn-confirm-order').addEventListener('click', confirmSendToOrder)
-  document.getElementById('part-order-modal-overlay').addEventListener('click', e => {
-    if (e.target === e.currentTarget) closeSendToOrderModal()
-  })
-
   let invLinkSearchTimer
   document.getElementById('inv-link-search-input').addEventListener('input', e => {
     invLinkQuery = e.target.value
@@ -3681,90 +3673,9 @@ function partSearchToolbarHTML() {
       <span>Has part #</span>
     </label>`
 }
-function currentOrderPart() {
-  return orderIsChildPart
-    ? currentChildParts.find(p => p.id === orderPartId)
-    : currentParts.find(p => p.id === orderPartId)
-}
-
-function openSendToOrderModal(partId, isChildPart = false) {
-  orderPartId      = partId
-  orderIsChildPart = isChildPart
-  const part = currentOrderPart()
-  if (!part) return
-
-  if (!part.componentId) {
-    toastFn('Link this part to a component first — use "Link inventory" or "Send to Fabricate" to establish one.')
-    return
-  }
-
-  const gap = Math.max(1, part.quantityNeeded - (part.quantityCollected || 0))
-  document.getElementById('order-modal-subtitle').textContent =
-    `${part.partName} — ${part.quantityCollected || 0}/${part.quantityNeeded} collected`
-  document.getElementById('order-field-qty').value = gap
-  document.getElementById('order-field-vendor').value = ''
-  document.getElementById('order-field-cost').value = ''
-  document.getElementById('order-field-notes').value = ''
-  document.getElementById('order-field-earmark').checked = true
-
-  document.getElementById('part-order-modal-overlay').style.display = 'flex'
-  setTimeout(() => document.getElementById('order-field-qty').focus(), 80)
-}
-
-function closeSendToOrderModal() {
-  document.getElementById('part-order-modal-overlay').style.display = 'none'
-  orderPartId = null
-}
-
-async function confirmSendToOrder() {
-  const part = currentOrderPart()
-  if (!part) return
-
-  const qty    = Math.max(1, parseInt(document.getElementById('order-field-qty').value, 10) || 1)
-  const vendor = document.getElementById('order-field-vendor').value.trim()
-  const costRaw = document.getElementById('order-field-cost').value
-  const cost   = costRaw !== '' ? parseFloat(costRaw) : null
-  const notes  = document.getElementById('order-field-notes').value.trim()
-  const earmark = document.getElementById('order-field-earmark').checked
-
-  const btn = document.getElementById('btn-confirm-order')
-  btn.disabled = true; btn.textContent = 'Adding…'
-
-  try {
-    // Straight to 'ordered' rather than leaving it in 'cart' — this modal
-    // is reached from a part that already needs the quantity now, so a
-    // silent cart stop-off would just be an extra click for the common
-    // case. The Part Orders view (Stage 4) is where a true pre-commit
-    // cart workflow (building up several lines before placing) belongs;
-    // this entry point is "I need this, order it."
-    const order = await createPartOrder({
-      componentId:       part.componentId,
-      assemblyPartId:    earmark ? part.id : null,
-      quantityOrdered:   qty,
-      vendor,
-      cost,
-      notes,
-      genId,
-    })
-    const placed = await placePartOrder(order.id)
-
-    if (earmark) {
-      if (orderIsChildPart) {
-        currentChildPartOrders[part.id] = [...(currentChildPartOrders[part.id] || []), placed]
-        renderChildDetail()
-      } else {
-        currentPartOrders[part.id] = [...(currentPartOrders[part.id] || []), placed]
-        renderAssemblyDetail()
-      }
-    }
-
-    closeSendToOrderModal()
-    toastFn(`Ordered ${qty} × "${part.partName}"${vendor ? ' from ' + vendor : ''}`)
-  } catch (e) {
-    console.error(e)
-    toastFn('Error creating part order')
-  } finally {
-    btn.disabled = false
-    btn.innerHTML = '<i class="ti ti-truck-delivery" aria-hidden="true"></i> Order'
-  }
-}
+// (The old "Send to Part Order" modal — currentOrderPart/openSendToOrderModal/
+// closeSendToOrderModal/confirmSendToOrder, backed by the deprecated
+// part_orders table — was removed here. The row buttons now call
+// addPartToCart() directly, which resolves the part's vendor listing
+// (or prompts to create one) and adds it straight to the real
+// carts/cart_items system. See addPartToCart above for the actual flow.)

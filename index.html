@@ -58,10 +58,6 @@
     </div>
 
     <div class="topbar-actions" id="partorders-actions" style="display:none">
-      <button class="btn btn-primary" id="btn-new-cart-topbar"><i class="ti ti-plus" aria-hidden="true"></i><span> New cart</span></button>
-    </div>  
-
-    <div class="topbar-actions" id="partorders-actions" style="display:none">
       <button class="btn" id="btn-manage-vendors"><i class="ti ti-building-store" aria-hidden="true"></i><span> Vendors</span></button>
       <button class="btn btn-primary" id="btn-new-cart-topbar"><i class="ti ti-plus" aria-hidden="true"></i><span> New cart</span></button>
     </div>
@@ -789,53 +785,6 @@
       </button>
     </div>
     <div class="modal-footer"><button class="btn" id="btn-cancel-listing-search">Cancel</button></div>
-  </div>
-</div>
-
-<div class="overlay" id="part-order-modal-overlay" style="display:none">
-  <div class="modal" style="max-width:440px">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title">Send to Part Order</div>
-        <div style="font-size:12px;color:var(--color-text-tertiary)" id="order-modal-subtitle"></div>
-      </div>
-      <button class="btn-icon" id="btn-close-order-modal"><i class="ti ti-x" aria-hidden="true"></i></button>
-    </div>
-    <div class="modal-body">
-      <div class="field">
-        <label>Quantity to order</label>
-        <input type="number" id="order-field-qty" min="1" value="1">
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Vendor <span style="font-weight:400;color:var(--color-text-tertiary)">(optional)</span></label>
-          <input type="text" id="order-field-vendor" placeholder="e.g. McMaster-Carr">
-        </div>
-        <div class="field">
-          <label>Cost <span style="font-weight:400;color:var(--color-text-tertiary)">(optional)</span></label>
-          <input type="number" step="any" id="order-field-cost" placeholder="e.g. 12.50">
-        </div>
-      </div>
-      <div class="field">
-        <label>Notes</label>
-        <input type="text" id="order-field-notes" placeholder="e.g. Order #, tracking info">
-      </div>
-      <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer">
-        <input type="checkbox" id="order-field-earmark" checked>
-        Earmark to this assembly part
-      </label>
-      <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:-4px">
-        When checked, this order counts toward this part's "promised" quantity and, on arrival,
-        the received units link directly to it. Uncheck to just restock inventory generally —
-        useful when you're ordering more than this one part needs.
-      </p>
-    </div>
-    <div class="modal-footer">
-      <button class="btn" id="btn-cancel-order">Cancel</button>
-      <button class="btn btn-primary" id="btn-confirm-order">
-        <i class="ti ti-truck-delivery" aria-hidden="true"></i> Order
-      </button>
-    </div>
   </div>
 </div>
 

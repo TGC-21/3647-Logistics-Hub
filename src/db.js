@@ -625,15 +625,22 @@ export async function archiveFabricationJob(jobId) {
   return dbJobToLocal(data)
 }
 
-// ── Part orders (inventory-first, assembly-optional) ───────────
-// A part_order restocks a COMPONENT (required) and may optionally
-// earmark itself toward one assembly_part (assembly_part_id), the same
-// "promised" concept fabrication_jobs uses — see schema.sql's
-// part_orders migration for the full lifecycle (cart → ordered →
-// received → archived) and why there's no "one active order per part"
-// constraint here (unlike fabrication_jobs' partial unique index):
-// orders are routinely NOT assembly-scoped at all, and a part's gap can
-// legitimately be split across more than one order.
+// ── Part orders — DEPRECATED, superseded by carts/cart_items ────
+// This section (part_orders table + the functions below it) was the
+// original, simpler design for restocking a component with an optional
+// assembly-part earmark. It has since been superseded by the richer
+// vendor-cart system (vendors, part_numbers, vendor_listings, carts,
+// cart_items — see the "Part orders (carts + cart items)" section
+// further down, and fetchActiveCartItemsForParts) which designer.js's
+// "Add to Part Orders" part-row button now actually calls into.
+//
+// Nothing in the app calls these functions anymore. There is also no
+// `part_orders` table in schema.sql — it was never migrated — so these
+// would fail against a live database as-is. Left in place rather than
+// deleted so the design reasoning (inventory-first, assembly-optional,
+// no per-part uniqueness constraint) stays visible; safe to delete in a
+// future cleanup pass once you're confident nothing external depends on
+// them either.
 
 /** All orders, across every component — mirrors fetchAllFabricationJobs.
  *  The Part Orders view groups/filters these client-side (cart vs.
@@ -1613,6 +1620,41 @@ export async function upsertCartItem(item) {
 export async function deleteCartItem(id) {
   const { error } = await supabase.from('cart_items').delete().eq('id', id)
   if (error) throw error
+}
+
+/**
+ * Bulk "promised" lookup for assembly parts — mirrors
+ * fetchActiveJobsForParts's shape/purpose but for cart_items instead of
+ * fabrication_jobs. Returns a map keyed by assembly_part_id → array of
+ * cart items still outstanding (status 'pending' or 'ordered' — anything
+ * not yet 'received'). Plural, not singular: unlike fabrication_jobs
+ * (one active job per part, enforced by a partial unique index),
+ * cart_items has no such constraint — a part's remaining gap can
+ * legitimately be split across more than one cart item (different
+ * vendors, reordered after a cancellation, etc.), same reasoning as the
+ * old part_orders design this replaces.
+ *
+ * Unlike fabrication_jobs' quantity_requested/quantity_machined split,
+ * a cart_item has no partial-receipt tracking — status flips straight
+ * from 'pending'/'ordered' to 'received' for the item's full quantity
+ * (see handleAdvanceStatus in partOrders.js) — so "promised" here is
+ * simply the item's full quantity for any non-received row.
+ */
+export async function fetchActiveCartItemsForParts(assemblyPartIds) {
+  if (!assemblyPartIds || !assemblyPartIds.length) return {}
+  const { data, error } = await supabase
+    .from('cart_items')
+    .select('*')
+    .in('assembly_part_id', assemblyPartIds)
+    .neq('status', 'received')
+  if (error) throw error
+  const map = {}
+  for (const row of data) {
+    const item = dbCartItemToLocal(row)
+    if (!map[item.assemblyPartId]) map[item.assemblyPartId] = []
+    map[item.assemblyPartId].push(item)
+  }
+  return map
 }
 
 /** Resolves a cart item's display fields, preferring the linked listing
