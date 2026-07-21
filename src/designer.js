@@ -13,7 +13,7 @@ import {
   ensurePartNumberStub, linkPartNumberToComponent,
   findOrCreateCartForVendor, findOrCreateVendor,
   fetchListingsForPartNumber, upsertVendorListing,
-  fetchAllPartNumbersWithListings, fetchActiveCartItemsForParts,
+  fetchAllPartNumbersWithListings, fetchActiveCartItemsForParts, fetchRootAssemblyIdForChild,
 } from './db.js'
 
 import { registerNewJob } from './fabricate.js'
