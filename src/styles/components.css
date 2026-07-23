@@ -131,7 +131,7 @@
 }
 
 /* ── Form fields ──────────────────────────────────────────── */
-.field          { display: flex; flex-direction: column; gap: 4px; }
+.field          { display: flex; flex-direction: column; gap: 4px;}
 .field label    { font-size: 12px; font-weight: 500; color: var(--color-text-secondary); display: flex; align-items: center; gap: 5px; }
 .required-star  { color: var(--color-danger); font-size: 13px; }
 .field-row      { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -382,4 +382,55 @@
 @keyframes fadeUp {
   from { opacity: 0; transform: translateX(-50%) translateY(6px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ── Autocomplete (ghost text + dropdown) ────────────────────
+   Host field must be position:relative (attachAutocomplete sets this
+   automatically if needed). Ghost sits directly behind the input at
+   the same padding/font so its dimmed "tail" span lines up exactly
+   with where the real caret would continue typing. */
+.autocomplete-ghost {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  padding: 7px 9px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  line-height: 1.4;
+  white-space: pre;
+  pointer-events: none;
+  display: none;
+  z-index: 1;
+}
+.autocomplete-ghost-tail {
+  color: var(--color-text-tertiary);
+}
+/* Field input must render above the ghost layer and stay opaque so the
+   ghost's hidden "typed" span (visibility:hidden, but still occupies
+   layout width) doesn't show through. */
+.field input { position: relative; z-index: 2; background: var(--color-background-primary); }
+
+.autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+  max-height: 220px;
+  overflow-y: auto;
+  display: none;
+}
+.autocomplete-option {
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.autocomplete-option:hover,
+.autocomplete-option.active {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
 }

@@ -30,6 +30,8 @@ import {
   bindManageVendorsEvents,
 } from './partOrders.js'
 
+import { attachAutocomplete } from './autocomplete.js'
+
 window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
@@ -324,13 +326,18 @@ function cardHTML(it) {
 
 // ── Static event bindings ─────────────────────────────────────
 function bindStaticEvents() {
+
   document.getElementById('search-input').addEventListener('input', render)
   document.getElementById('btn-add').addEventListener('click', () => openAddModal())
   document.getElementById('btn-manage-cats').addEventListener('click', openCatModal)
   document.getElementById('btn-mode-partorders').addEventListener('click', () => setMode('partorders'))
   document.getElementById('btn-new-cart-topbar').addEventListener('click', () => openCartModal())
 
-
+  attachAutocomplete(document.getElementById('field-loc'), {
+    getCandidates: distinctLocations,
+    wrapperEl: document.getElementById('field-loc').closest('.field'),
+  })
+  
   // Sidebar drawer (mobile)
   const sidebarEl   = document.getElementById('sidebar')
   const backdropEl  = document.getElementById('sidebar-backdrop')
@@ -1236,6 +1243,14 @@ async function saveComponentFallback() {
     render()
     showToast('Component defaults updated')
   } catch (e) { showToast('Error updating component defaults') }
+}
+
+// Distinct location strings already in use, derived from the in-memory
+// items list — no extra Supabase query needed, and getCandidates() being
+// a live function (not a snapshot) means it always reflects current
+// state without re-wiring after every save.
+function distinctLocations() {
+  return [...new Set(items.map(it => it.location).filter(Boolean))]
 }
 
 // ── Start ─────────────────────────────────────────────────────
