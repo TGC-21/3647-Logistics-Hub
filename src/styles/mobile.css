@@ -19,6 +19,15 @@
   .topbar-search { display: none !important; }
   .btn-mobile-search { display: flex !important; margin-left: auto; }
 
+    /* Mode toggle (Inventory/Designer/Fabricate/Part Orders) is replaced
+     entirely by the bottom tab bar on mobile — the bottom bar is the
+     only way to switch mode, so don't show this duplicate row up top. */
+  .mode-toggle { display: none !important; }
+
+  /* Categories is a modal trigger, not a mode — lives as a topbar icon
+     next to search, not in the mode-switching bottom tab bar. */
+  .btn-mobile-categories { display: flex !important; }
+
   /* Mode toggle: icons only, smaller */
   .mode-btn       { padding: 5px 8px; }
   .mode-btn span  { display: none; }

@@ -369,10 +369,9 @@ function bindStaticEvents() {
   document.getElementById('tab-btn-designer').addEventListener('click', () => setMode('designer'))
   document.getElementById('tab-btn-fabricate').addEventListener('click', () => setMode('fabricate'))
   document.getElementById('tab-btn-partorders').addEventListener('click', () => setMode('partorders'))
-  document.getElementById('tab-btn-categories').addEventListener('click', () => {
-    openCatModal()
-  })
 
+  // ── Mobile topbar: categories icon opens the category editor modal ──
+  document.getElementById('btn-mobile-categories').addEventListener('click', () => openCatModal())
   // ── Mobile floating action button ──────────────────────────
   // Mirrors whichever "primary create" action applies to the current mode.
   // (Hidden outright outside inventory mode - see setMode - but Designer's
