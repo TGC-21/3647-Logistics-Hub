@@ -14,7 +14,8 @@ import { createClient } from '@supabase/supabase-js'
 import {
   fetchBom, parseBomRows,
   resolveBomWithSubassemblies, fetchDocumentOwnerId,
-  applyCors, genId, MAX_CHILD_DEPTH, MAX_ONSHAPE_CONCURRENCY
+  applyCors, genId, MAX_CHILD_DEPTH, MAX_ONSHAPE_CONCURRENCY,
+  buildSourceKey,
 } from './_lib/onshape.js'
 
 function getSupabase() {
@@ -99,7 +100,6 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
       documentId, workspaceId, elementId, depth: 0, rootOwnerId,
       partsOwner:    { assembly_id: assemblyId },
       childrenOwner: { parent_assembly_id: assemblyId },
-      progressByPartNumber: {},
       resolveCache,
     }))
   } catch (e) {
@@ -126,7 +126,7 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
 
 async function seedAssemblyContents(supabase, {
   documentId, workspaceId, elementId, wvmType = 'w', depth, rootOwnerId,
-  partsOwner, childrenOwner, progressByPartNumber = {}, resolveCache,
+  partsOwner, childrenOwner, resolveCache,
 }) {
   let directParts   = []
   let subassemblies = []
@@ -145,25 +145,28 @@ async function seedAssemblyContents(supabase, {
   }
 
   // ── Insert direct parts ───────────────────────────────────
+  // Every part is inserted fresh at 0 collected / 'pending' — reimport no
+  // longer tries to restore progress at insert time. Instead, once the
+  // WHOLE tree has been rebuilt, reimportAssembly() does a single
+  // source-key-based carry-over pass (see carryOverPromisesAfterReimport
+  // below) that relinks each old part's actual linked_instance_ids,
+  // quantity_collected, fabrication_jobs, and cart_items onto its
+  // replacement — a strictly more accurate mechanism than the old
+  // part-number-keyed quantity snapshot this replaces (that one could
+  // only see root-level parts and collided on duplicate part numbers).
   if (directParts.length) {
-    const rows = directParts.map(p => {
-      const collected = progressByPartNumber[p.partNumber] ?? 0
-      const status    = collected >= p.quantity ? 'complete'
-                      : collected > 0           ? 'partial'
-                      :                           'pending'
-      return {
-        id:                 genId(),
-        ...partsOwner,
-        part_name:          p.partName,
-        part_number:        p.partNumber,
-        quantity_needed:    p.quantity,
-        quantity_collected: collected,
-        status,
-        source:             'onshape',
-        notes:              '',
-        onshape_reference:  p.raw,
-      }
-    })
+    const rows = directParts.map(p => ({
+      id:                 genId(),
+      ...partsOwner,
+      part_name:          p.partName,
+      part_number:        p.partNumber,
+      quantity_needed:    p.quantity,
+      quantity_collected: 0,
+      status:             'pending',
+      source:             'onshape',
+      notes:              '',
+      onshape_reference:  p.raw,
+    }))
     const { error: partsErr } = await supabase.from('assembly_parts').insert(rows)
     if (partsErr) throw new Error(`Parts insert: ${partsErr.message}`)
   }
@@ -236,7 +239,6 @@ async function seedSubassembliesConcurrently(supabase, subassemblies, { depth, r
         rootOwnerId,
         partsOwner:    { assembly_child_id: childId },
         childrenOwner: { parent_child_id: childId },
-        progressByPartNumber: {},
         resolveCache,
       })
     }
@@ -247,11 +249,82 @@ async function seedSubassembliesConcurrently(supabase, subassemblies, { depth, r
 
   return childCount
 }
+// ── walkAssemblyPartsTree ────────────────────────────────────────
+// Shared by reimport and (in designer.js's delete flow) assembly
+// deletion: walks the FULL tree under a root assembly — its own
+// assembly_parts, plus every nested assembly_children's assembly_parts,
+// recursively — and returns the full row set. Selecting every column
+// reimport needs (id, onshape_reference, linked_instance_ids,
+// quantity_collected) means both callers can share one tree-walk
+// instead of each re-implementing the recursive assembly_children
+// traversal (three copies of this walk already existed independently
+// before this change — src/db.js's fetchAllLinkedInstanceIdsForAssembly,
+// this file's old releaseAllLinkedInstances, and
+// onshape-detect-fabrication.js's fetchWholeTreeParts).
+async function walkAssemblyPartsTree(supabase, assemblyId) {
+  const allParts = []
+
+  const { data: rootParts, error: rootErr } = await supabase
+    .from('assembly_parts')
+    .select('id, part_name, part_number, onshape_reference, linked_instance_ids, quantity_collected, quantity_needed')
+    .eq('assembly_id', assemblyId)
+  if (rootErr) throw rootErr
+  allParts.push(...(rootParts ?? []))
+
+  const { data: directChildren, error: childErr } = await supabase
+    .from('assembly_children')
+    .select('id')
+    .eq('parent_assembly_id', assemblyId)
+  if (childErr) throw childErr
+
+  const queue = (directChildren ?? []).map(c => c.id)
+  while (queue.length) {
+    const childId = queue.pop()
+
+    const { data: childParts, error: cpErr } = await supabase
+      .from('assembly_parts')
+      .select('id, part_name, part_number, onshape_reference, linked_instance_ids, quantity_collected, quantity_needed')
+      .eq('assembly_child_id', childId)
+    if (cpErr) throw cpErr
+    allParts.push(...(childParts ?? []))
+
+    const { data: grandchildren, error: gcErr } = await supabase
+      .from('assembly_children')
+      .select('id')
+      .eq('parent_child_id', childId)
+    if (gcErr) throw gcErr
+    queue.push(...(grandchildren ?? []).map(c => c.id))
+  }
+
+  return allParts
+}
+
+function computePartStatus(collected, needed) {
+  return collected >= needed ? 'complete' : collected > 0 ? 'partial' : 'pending'
+}
+
 // ── reimportAssembly ──────────────────────────────────────────
-// Rebuilds in place under the original assemblyId — no new record created.
-// Wiping the root's direct parts + top-level subassembly nodes is enough:
-// cascading FKs (assembly_children.parent_child_id, assembly_parts.assembly_child_id)
-// automatically clean up every nested descendant underneath them.
+// Rebuilds in place under the original assemblyId — no new record
+// created. Every assembly_parts row gets a brand-new id on every
+// reimport (nothing about a part's PK survives), so anything that used
+// to point at the OLD rows — linked inventory instances, fabrication
+// jobs, cart items — has to be explicitly relinked onto the new rows
+// via buildSourceKey(), the one identity that DOES survive across two
+// independent imports of the same underlying Onshape geometry.
+//
+// Deliberately does NOT release inventory on reimport anymore (that was
+// the old behavior, and it was wrong — reimporting is not the same
+// event as deleting the assembly). Release only happens for parts that
+// genuinely no longer exist in the new BOM at all; everything else
+// carries its real links forward. Assembly-level release-on-delete
+// lives in designer.js's deleteCurrentAssembly instead.
+//
+// If quantity_needed shrinks on reimport (e.g. 6 → 5) and the part's
+// promised+collected total now exceeds it, this is deliberately left as
+// an over-count for a human to notice and resolve manually (unlink an
+// instance, cancel a job, remove a cart item) — see the "quantity
+// decrease reconciliation" design discussion. No promise source is ever
+// auto-trimmed by this function.
 
 async function reimportAssembly(supabase, assemblyId) {
   const { data: asm, error: fetchErr } = await supabase
@@ -259,30 +332,33 @@ async function reimportAssembly(supabase, assemblyId) {
   if (fetchErr || !asm) throw new Error('Assembly not found.')
   if (!asm.onshape_element_id) throw new Error('Assembly is not linked to Onshape.')
 
-  // Save progress by part_number before wiping (root-level parts only)
-  const { data: oldParts } = await supabase
-    .from('assembly_parts')
-    .select('part_number, quantity_collected, linked_instance_ids')
-    .eq('assembly_id', assemblyId)
+  // ── 1. Snapshot the OLD tree before anything is wiped ──────────
+  const oldParts = await walkAssemblyPartsTree(supabase, assemblyId)
+  const oldPartIds = oldParts.map(p => p.id)
+  const oldSourceKeyById = Object.fromEntries(
+    oldParts.map(p => [p.id, buildSourceKey(p.onshape_reference)])
+  )
 
-  const progressByPartNumber = {}
-  for (const p of oldParts ?? []) {
-    if (p.part_number && p.quantity_collected > 0) {
-      progressByPartNumber[p.part_number] = p.quantity_collected
-    }
-  }
+  const { data: oldJobs, error: jobsFetchErr } = oldPartIds.length
+    ? await supabase.from('fabrication_jobs').select('*').in('assembly_part_id', oldPartIds)
+    : { data: [], error: null }
+  if (jobsFetchErr) throw jobsFetchErr
 
-  // Release every linked inventory instance under this assembly tree back
-  // to "available" BEFORE the cascade delete wipes the rows that reference
-  // them — otherwise they're left stuck at status: 'in_assembly' forever
-  // with nothing pointing back to them.
-  await releaseAllLinkedInstances(supabase, assemblyId)
+  const { data: oldCartItems, error: cartFetchErr } = oldPartIds.length
+    ? await supabase.from('cart_items').select('id, assembly_part_id').in('assembly_part_id', oldPartIds)
+    : { data: [], error: null }
+  if (cartFetchErr) throw cartFetchErr
 
-
+  // ── 2. Wipe + reseed ─────────────────────────────────────────
+  // fabrication_jobs cascade-deletes with their assembly_part (FK is
+  // ON DELETE CASCADE); cart_items instead get their assembly_part_id
+  // set to null (FK is ON DELETE SET NULL, so they survive as
+  // unearmarked general-restock items) — both are captured above
+  // BEFORE this point specifically so they can be reconstituted/
+  // relinked after reseeding, not lost to the cascade.
   await supabase.from('assembly_parts').delete().eq('assembly_id', assemblyId)
   await supabase.from('assembly_children').delete().eq('parent_assembly_id', assemblyId)
 
-  // Rebuild under the EXISTING assemblyId — no new assembly record
   const rootOwnerId = await fetchDocumentOwnerId(asm.onshape_document_id)
   const resolveCache = new Map()
   const { partCount, childCount } = await seedAssemblyContents(supabase, {
@@ -293,74 +369,234 @@ async function reimportAssembly(supabase, assemblyId) {
     rootOwnerId,
     partsOwner:    { assembly_id: assemblyId },
     childrenOwner: { parent_assembly_id: assemblyId },
-    progressByPartNumber,
     resolveCache,
   })
 
   await supabase.from('assemblies').update({ status: 'draft' }).eq('id', assemblyId)
 
-  const restored = Object.keys(progressByPartNumber).length
+  // ── 3. Build the NEW tree's source-key index ────────────────
+  const newParts = await walkAssemblyPartsTree(supabase, assemblyId)
+  const newBySourceKey = new Map()
+  for (const p of newParts) {
+    const key = buildSourceKey(p.onshape_reference)
+    if (!key) continue
+    if (newBySourceKey.has(key)) {
+      // Shouldn't normally happen — Onshape itself aggregates identical
+      // part instances into one BOM row with a quantity, so two distinct
+      // NEW rows sharing a source key would mean Onshape's own dedup
+      // didn't apply the way we expect. Keep the first match and warn
+      // rather than silently overwriting or throwing.
+      console.warn(`[onshape-bom] Duplicate source key on reimport (${key}) — keeping the first match.`)
+      continue
+    }
+    newBySourceKey.set(key, p)
+  }
+
+  const summary = await carryOverPromisesAfterReimport(supabase, {
+    oldParts, oldSourceKeyById, oldJobs: oldJobs ?? [], oldCartItems: oldCartItems ?? [],
+    newBySourceKey,
+  })
+
+  const parts = [
+    `Re-imported: ${partCount} part(s), ${childCount} subassembly(ies).`,
+    `${summary.relinkedInventoryCount} part(s) kept their existing inventory links.`,
+    summary.relinkedJobsCount ? `${summary.relinkedJobsCount} fabrication job(s) carried forward${summary.geometryChangedJobCount ? ` (${summary.geometryChangedJobCount} flagged for review — geometry changed since)` : ''}.` : null,
+    summary.relinkedCartItemsCount ? `${summary.relinkedCartItemsCount} cart item(s) stayed earmarked to their part.` : null,
+    summary.lostPartsWithLinksCount ? `${summary.lostPartsWithLinksCount} part(s) no longer in the BOM had their reserved inventory released back to available.` : null,
+    summary.lostJobsCount ? `${summary.lostJobsCount} fabrication job(s) could not be carried forward — their part no longer exists in this BOM.` : null,
+  ].filter(Boolean).join(' ')
+
   return {
     assemblyId,
     partCount,
     childCount,
-    restoredProgress: restored,
-    message: `Re-imported: ${partCount} part(s), ${childCount} subassembly(ies). Progress restored for ${restored} part number(s).`,
+    ...summary,
+    message: parts,
   }
 }
 
-// ── releaseAllLinkedInstances ──────────────────────────────────
-// Walks the FULL tree under a root assembly (its own assembly_parts, plus
-// every nested assembly_children's assembly_parts, recursively) and flips
-// every linked inventory_instances row back to "available" with location
-// cleared. Must run BEFORE any cascade delete of assembly_parts/children,
-// since it depends on reading their linked_instance_ids first.
+// ── carryOverPromisesAfterReimport ──────────────────────────────
+// The actual relink pass, run once the new tree fully exists. For every
+// OLD part, resolves whether a NEW part shares its source key:
+//
+//   match found    → inventory links + quantity_collected carry over
+//                     as-is (the real link IS the truth now, replacing
+//                     the old part-number-keyed quantity snapshot);
+//                     fabrication jobs are re-created pointing at the
+//                     new part (see relinkJob); cart items get
+//                     re-earmarked to the new part id.
+//   no match found → the part genuinely no longer exists in this BOM.
+//                     Any inventory it had reserved is released back to
+//                     available (this is the "a specific part vanished"
+//                     case, distinct from "the whole assembly was
+//                     deleted" — both end in release, for the same
+//                     reason: nothing exists anymore for the reservation
+//                     to describe). Its fabrication job(s) already
+//                     cascade-deleted with the old row — nothing to
+//                     insert, just counted for the summary. Its cart
+//                     item(s) already had assembly_part_id set to null
+//                     by the FK — same "un-earmark, don't destroy"
+//                     treatment used on assembly deletion, and no
+//                     explicit action is needed here since the DB
+//                     already did it.
+async function carryOverPromisesAfterReimport(supabase, { oldParts, oldSourceKeyById, oldJobs, oldCartItems, newBySourceKey }) {
+  let relinkedInventoryCount = 0
+  let lostPartsWithLinksCount = 0
+  let relinkedJobsCount = 0
+  let geometryChangedJobCount = 0
+  let lostJobsCount = 0
+  let relinkedCartItemsCount = 0
 
-async function releaseAllLinkedInstances(supabase, assemblyId) {
-  const allInstanceIds = []
+  const instancesToRelease = []
+  // Guards the one-active-job-per-part rule across THIS reimport's
+  // re-inserts specifically — see the duplicate-source-key note above
+  // for why two old parts could theoretically collapse onto one new
+  // part id (shouldn't happen, but re-inserting two active jobs onto
+  // the same new part would violate fabrication_jobs_one_active_per_part
+  // and abort the whole reimport, which is a worse outcome than
+  // dropping the second one with a loud warning).
+  const activeJobClaimedForNewPartId = new Set()
 
-  // Root-level parts
-  const { data: rootParts } = await supabase
-    .from('assembly_parts')
-    .select('linked_instance_ids')
-    .eq('assembly_id', assemblyId)
-  for (const p of rootParts ?? []) {
-    allInstanceIds.push(...(p.linked_instance_ids || []))
-  }
+  for (const oldPart of oldParts) {
+    const key = oldSourceKeyById[oldPart.id]
+    const newPart = key ? newBySourceKey.get(key) : null
 
-  // Walk assembly_children recursively (direct  nested)
-  const { data: directChildren } = await supabase
-    .from('assembly_children')
-    .select('id')
-    .eq('parent_assembly_id', assemblyId)
-
-  const childQueue = (directChildren ?? []).map(c => c.id)
-  while (childQueue.length) {
-    const childId = childQueue.pop()
-
-    const { data: childParts } = await supabase
-      .from('assembly_parts')
-      .select('linked_instance_ids')
-      .eq('assembly_child_id', childId)
-    for (const p of childParts ?? []) {
-      allInstanceIds.push(...(p.linked_instance_ids || []))
+    if (!newPart) {
+      if (oldPart.linked_instance_ids?.length) {
+        instancesToRelease.push(...oldPart.linked_instance_ids)
+        lostPartsWithLinksCount++
+      }
+      continue
     }
 
-    const { data: grandchildren } = await supabase
-      .from('assembly_children')
-      .select('id')
-      .eq('parent_child_id', childId)
-    childQueue.push(...(grandchildren ?? []).map(c => c.id))
+    // ── Inventory: carry the real link + count forward as-is ──
+    if (oldPart.linked_instance_ids?.length || oldPart.quantity_collected > 0) {
+      const { error } = await supabase
+        .from('assembly_parts')
+        .update({
+          linked_instance_ids: oldPart.linked_instance_ids || [],
+          quantity_collected:  oldPart.quantity_collected || 0,
+          status:              computePartStatus(oldPart.quantity_collected || 0, newPart.quantity_needed),
+        })
+        .eq('id', newPart.id)
+      if (error) console.warn(`[onshape-bom] Failed carrying inventory links onto ${newPart.id}: ${error.message}`)
+      else relinkedInventoryCount++
+    }
   }
 
-  if (!allInstanceIds.length) return
+  // ── Fabrication jobs: re-create against the new part id ────────
+  // Every status (queued/committed/in_progress/complete/archived) is
+  // carried forward if its part still exists — a completed or archived
+  // job is historical fact (machining already happened) independent of
+  // whether the geometry now differs, so it's never dropped just
+  // because geometry changed. Only an ACTIVE job (queued/committed/
+  // in_progress) gets geometry-checked, because that's the only case
+  // where "does this job still describe the current part" is still an
+  // open, actionable question.
+  for (const job of oldJobs) {
+    const oldPart = oldParts.find(p => p.id === job.assembly_part_id)
+    const key = oldPart ? oldSourceKeyById[oldPart.id] : null
+    const newPart = key ? newBySourceKey.get(key) : null
 
-  const { error } = await supabase
-    .from('inventory_instances')
-    .update({ status: 'available', location: '' })
-    .in('id', allInstanceIds)
-  if (error) console.warn(`[onshape-bom] Failed releasing ${allInstanceIds.length} instance(s): ${error.message}`)
-  else console.log(`[onshape-bom] Released ${allInstanceIds.length} inventory instance(s) back to available.`)
+    if (!newPart) { lostJobsCount++; continue }
+
+    const isActive = job.status !== 'complete' && job.status !== 'archived'
+    if (isActive) {
+      if (activeJobClaimedForNewPartId.has(newPart.id)) {
+        console.warn(`[onshape-bom] Skipping duplicate active job for part ${newPart.id} on reimport — a source-key collision left two old parts mapping to one new part.`)
+        lostJobsCount++
+        continue
+      }
+      activeJobClaimedForNewPartId.add(newPart.id)
+    }
+
+    const { error: insErr } = await supabase.from('fabrication_jobs').insert({
+      id:                 genId(),
+      batch_id:           job.batch_id,
+      assembly_part_id:   newPart.id,
+      quantity_requested: job.quantity_requested,
+      quantity_machined:  job.quantity_machined,
+      status:             job.status,
+      claimed_by:         job.claimed_by,
+      claimed_at:         job.claimed_at,
+      notes:              job.notes,
+      created_at:         job.created_at,
+    })
+    if (insErr) {
+      console.warn(`[onshape-bom] Failed relinking fabrication job onto ${newPart.id}: ${insErr.message}`)
+      lostJobsCount++
+      continue
+    }
+    relinkedJobsCount++
+
+    // Geometry-changed signal: same source key, different microversion —
+    // something in that Part Studio was edited since the job was
+    // created. Conservative on purpose (this will false-positive on
+    // edits unrelated to this specific part) — the job still relinks
+    // (someone may already be physically machining it), but the new
+    // part row is flagged so a human notices and can decide whether the
+    // job needs re-confirming.
+    if (isActive) {
+      const oldMv = oldPart?.onshape_reference?.sourceElementMicroversionId
+      const newMv = newPart.onshape_reference?.sourceElementMicroversionId
+      if (oldMv && newMv && oldMv !== newMv) {
+        geometryChangedJobCount++
+        const { error: metaErr } = await supabase
+          .from('assembly_parts')
+          .update({
+            fabrication_metadata: {
+              autoDetected: false,
+              status: 'needs_review',
+              source: 'reimport-geometry-changed',
+              warnings: [
+                'A fabrication job was carried forward from before this reimport, but this part\u2019s ' +
+                'geometry has changed in Onshape since (the source Part Studio\u2019s microversion differs). ' +
+                'Confirm the job still matches the current geometry.',
+              ],
+            },
+          })
+          .eq('id', newPart.id)
+        if (metaErr) console.warn(`[onshape-bom] Failed flagging geometry change on ${newPart.id}: ${metaErr.message}`)
+      }
+    }
+  }
+
+  // ── Cart items: re-earmark to the new part id ───────────────────
+  // Any status is relinked if its part still exists — a 'received' or
+  // 'ordered' cart item earmarked to a part that still exists should
+  // keep pointing at it regardless of geometry, since the purchase
+  // itself isn't affected by a dimension change the way a not-yet-cut
+  // fabrication job is.
+  for (const item of oldCartItems) {
+    const oldPart = oldParts.find(p => p.id === item.assembly_part_id)
+    const key = oldPart ? oldSourceKeyById[oldPart.id] : null
+    const newPart = key ? newBySourceKey.get(key) : null
+    if (!newPart) continue   // already un-earmarked to null by the FK — nothing to do
+
+    const { error } = await supabase
+      .from('cart_items')
+      .update({ assembly_part_id: newPart.id })
+      .eq('id', item.id)
+    if (error) console.warn(`[onshape-bom] Failed relinking cart item ${item.id} onto ${newPart.id}: ${error.message}`)
+    else relinkedCartItemsCount++
+  }
+
+  if (instancesToRelease.length) {
+    const { error } = await supabase
+      .from('inventory_instances')
+      .update({ status: 'available', location: '' })
+      .in('id', instancesToRelease)
+    if (error) console.warn(`[onshape-bom] Failed releasing ${instancesToRelease.length} instance(s) for removed parts: ${error.message}`)
+  }
+
+  return {
+    relinkedInventoryCount,
+    lostPartsWithLinksCount,
+    relinkedJobsCount,
+    geometryChangedJobCount,
+    lostJobsCount,
+    relinkedCartItemsCount,
+  }
 }
 
 async function ensurePartNumberStubServer(supabase, value, genId) {

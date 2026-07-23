@@ -908,6 +908,69 @@ export async function fetchAllLinkedInstanceIdsForAssembly(assemblyId) {
   return ids
 }
 
+/** Same tree-walk as fetchAllLinkedInstanceIdsForAssembly, but returns
+ *  assembly_parts ids instead of linked inventory ids — used by
+ *  deleteCurrentAssembly to find every cart_item earmarked anywhere in
+ *  the tree before the cascade delete removes the parts they point to. */
+export async function fetchAllAssemblyPartIdsForAssembly(assemblyId) {
+  const ids = []
+
+  const { data: rootParts, error: rootErr } = await supabase
+    .from('assembly_parts')
+    .select('id')
+    .eq('assembly_id', assemblyId)
+  if (rootErr) throw rootErr
+  ids.push(...rootParts.map(p => p.id))
+
+  const { data: directChildren, error: childErr } = await supabase
+    .from('assembly_children')
+    .select('id')
+    .eq('parent_assembly_id', assemblyId)
+  if (childErr) throw childErr
+
+  const queue = (directChildren || []).map(c => c.id)
+  while (queue.length) {
+    const childId = queue.pop()
+
+    const { data: childParts, error: cpErr } = await supabase
+      .from('assembly_parts')
+      .select('id')
+      .eq('assembly_child_id', childId)
+    if (cpErr) throw cpErr
+    ids.push(...childParts.map(p => p.id))
+
+    const { data: grandchildren, error: gcErr } = await supabase
+      .from('assembly_children')
+      .select('id')
+      .eq('parent_child_id', childId)
+    if (gcErr) throw gcErr
+    queue.push(...(grandchildren || []).map(c => c.id))
+  }
+
+  return ids
+}
+
+/**
+ * On assembly deletion, a 'pending' cart item earmarked into the deleted
+ * tree is safe to delete outright — nothing real (a purchase) has
+ * happened yet. An 'ordered' or 'received' item is left alone here: the
+ * FK (cart_items.assembly_part_id → ON DELETE SET NULL) un-earmarks it
+ * automatically once the cascade removes its assembly_part, demoting it
+ * to a general-restock item rather than destroying the record of a real
+ * purchase. Only 'pending' needs an explicit delete call, since it's the
+ * one status where the default FK behavior (un-earmark, keep the row)
+ * isn't what we want.
+ */
+export async function deletePendingCartItemsForAssemblyPartIds(assemblyPartIds) {
+  if (!assemblyPartIds || !assemblyPartIds.length) return
+  const { error } = await supabase
+    .from('cart_items')
+    .delete()
+    .in('assembly_part_id', assemblyPartIds)
+    .eq('status', 'pending')
+  if (error) throw error
+}
+
 /** Safety-net reconciliation: finds every inventory_instances row marked
  *  'in_assembly' that is NOT referenced by any assembly_parts.linked_instance_ids
  *  anywhere in the database, and releases it back to 'available'. Run this

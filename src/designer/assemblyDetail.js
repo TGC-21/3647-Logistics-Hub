@@ -14,7 +14,8 @@ import {
   fetchAssemblyChildById, fetchChildParts,
   releaseInstances, fetchAllLinkedInstanceIdsForAssembly,
   fetchActiveJobsForParts, fetchActiveCartItemsForParts,
-  fetchRootAssemblyIdForChild, findOrCreateComponent,
+  fetchRootAssemblyIdForChild, findOrCreateComponent, fetchAllAssemblyPartIdsForAssembly,
+  deletePendingCartItemsForAssemblyPartIds, 
 } from '../db.js'
 
 import {
@@ -619,6 +620,9 @@ async function deleteCurrentAssembly() {
   try {
     const linkedIds = await fetchAllLinkedInstanceIdsForAssembly(currentAssemblyId)
     if (linkedIds.length) await releaseInstances(linkedIds)
+
+    const partIds = await fetchAllAssemblyPartIdsForAssembly(currentAssemblyId)
+    if (partIds.length) await deletePendingCartItemsForAssemblyPartIds(partIds)
 
     await deleteAssembly(currentAssemblyId)
     setAssemblies(getAssemblies().filter(x => x.id !== currentAssemblyId))
