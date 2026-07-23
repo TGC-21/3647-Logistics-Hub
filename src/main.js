@@ -138,10 +138,12 @@ function setMode(newMode) {
   const tabComponents = document.getElementById('tab-btn-components')
   const tabDesigner    = document.getElementById('tab-btn-designer')
   const tabFabricate = document.getElementById('tab-btn-fabricate')
+  const tabPartorders = document.getElementById('tab-btn-partorders')
   if (tabComponents && tabDesigner && tabFabricate){
     tabComponents.classList.toggle('active', appMode === 'inventory')
     tabDesigner.classList.toggle('active', appMode ==='designer')
     tabFabricate.classList.toggle('active', appMode === 'fabricate')
+    tabPartorders?.classList.toggle('active', appMode === 'partorders')
   }
   
   // Designer/Fabricate each surface their own create actions elsewhere, so the generic 'add' FAB only makes sense in inventory mode.
@@ -366,9 +368,9 @@ function bindStaticEvents() {
   document.getElementById('tab-btn-components').addEventListener('click', () => setMode('inventory'))
   document.getElementById('tab-btn-designer').addEventListener('click', () => setMode('designer'))
   document.getElementById('tab-btn-fabricate').addEventListener('click', () => setMode('fabricate'))
+  document.getElementById('tab-btn-partorders').addEventListener('click', () => setMode('partorders'))
   document.getElementById('tab-btn-categories').addEventListener('click', () => {
-    setMode('inventory')
-    openSidebar()
+    openCatModal()
   })
 
   // ── Mobile floating action button ──────────────────────────

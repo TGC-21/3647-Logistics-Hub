@@ -233,6 +233,54 @@ function pickOnshapeReference(row) {
   }
 }
 
+// ── Fabrication metadata identity key ───────────────────────────
+//
+// Same identity tuple resolveBomWithSubassemblies/detection already use
+// to group/cache Onshape geometry calls, repurposed as a stable join key
+// for carrying fabrication_metadata across a reimport. partIdentity is
+// used (not partId) — per onshape-bodydetails.js's own note, it's the
+// stronger differentiator for identifying a specific part instance.
+// Returns null when there's nothing safe to key on (no partIdentity
+// recorded — e.g. rows imported before pickOnshapeReference started
+// retaining it), so callers can skip preservation for those rather than
+// risk a false collision.
+export function fabricationIdentityKey(ref) {
+  if (!ref || !ref.partIdentity) return null
+  return [
+    ref.documentId, ref.wvmType, ref.wvmId, ref.elementId,
+    ref.partIdentity, ref.fullConfiguration,
+  ].join('::')
+}
+
+// ── Source key: the stable cross-reimport identity ──────────────
+//
+// Every rebuilt assembly_parts row on reimport gets a brand-new `id` —
+// nothing about a part's PK survives. To relink promises (inventory
+// instances, fabrication jobs, cart items) that were pointing at the OLD
+// row onto its replacement, we need something that identifies "the same
+// underlying Onshape part" across two independent imports. `partNumber`
+// isn't safe (user-editable text, can be blank or duplicated); `partId`
+// alone isn't safe either (see Onshape's own docs — `partIdentity` is
+// the stronger differentiator within a Part Studio, per the
+// spacer-detection roadmap's identical reasoning).
+//
+// This composite is exactly what Onshape itself uses to aggregate
+// repeated identical part instances into one BOM row with a quantity —
+// so if two rows share this key, Onshape already considers them "the
+// same part," which is precisely the identity a relink needs. Returns
+// null if the reference is missing enough fields to trust (e.g. a
+// manually-added, non-Onshape part) — callers must treat null as
+// "never matches," not as a wildcard.
+export function buildSourceKey(ref) {
+  if (!ref || !ref.documentId || !ref.elementId) return null
+  const partKey = ref.partIdentity || ref.partId
+  if (!partKey) return null
+  return [
+    ref.documentId, ref.wvmType || 'w', ref.wvmId, ref.elementId,
+    partKey, ref.fullConfiguration || '',
+  ].join('::')
+}
+
 
 // ── Row value resolver ────────────────────────────────────────
 
