@@ -15,7 +15,7 @@ import {
   fetchBom, parseBomRows,
   resolveBomWithSubassemblies, fetchDocumentOwnerId,
   applyCors, genId, MAX_CHILD_DEPTH, MAX_ONSHAPE_CONCURRENCY,
-  buildSourceKey,
+  buildSourceKey, fabricationIdentityKey,
 } from './_lib/onshape.js'
 
 function getSupabase() {
@@ -126,7 +126,7 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
 
 async function seedAssemblyContents(supabase, {
   documentId, workspaceId, elementId, wvmType = 'w', depth, rootOwnerId,
-  partsOwner, childrenOwner, resolveCache,
+  partsOwner, childrenOwner, progressByPartNumber = {}, resolveCache, fabricationMetadataByKey = {}
 }) {
   let directParts   = []
   let subassemblies = []
@@ -155,18 +155,27 @@ async function seedAssemblyContents(supabase, {
   // part-number-keyed quantity snapshot this replaces (that one could
   // only see root-level parts and collided on duplicate part numbers).
   if (directParts.length) {
-    const rows = directParts.map(p => ({
+
+    const rows = directParts.map(p => {
+      const collected = progressByPartNumber[p.partNumber] ?? 0
+      const status = collected >= p.quantity ? 'complete' : collected > 0 ? 'partial' : 'pending'
+      const fabKey = fabricationIdentityKey(p.raw)
+      const restoredMeta = fabKey && fabricationMetadataByKey[fabKey] ? reconcileRestoredMetadata(fabricationMetadataByKey[fabKey]) : {}
+
+      return {
       id:                 genId(),
       ...partsOwner,
       part_name:          p.partName,
       part_number:        p.partNumber,
       quantity_needed:    p.quantity,
-      quantity_collected: 0,
-      status:             'pending',
+      quantity_collected: collected,
+      status,
       source:             'onshape',
       notes:              '',
       onshape_reference:  p.raw,
-    }))
+      fabrication_metadata: restoredMeta,
+      }
+    })
     const { error: partsErr } = await supabase.from('assembly_parts').insert(rows)
     if (partsErr) throw new Error(`Parts insert: ${partsErr.message}`)
   }
@@ -190,7 +199,7 @@ async function seedAssemblyContents(supabase, {
   // onshape.js) still protects against two of these siblings turning out
   // to reference the exact same underlying element.
   const childCount = await seedSubassembliesConcurrently(supabase, subassemblies, {
-    depth, rootOwnerId, childrenOwner, resolveCache,
+    depth, rootOwnerId, childrenOwner, resolveCache, fabricationMetadataByKey,
   })
 
   return { partCount: directParts.length, childCount }
@@ -239,7 +248,9 @@ async function seedSubassembliesConcurrently(supabase, subassemblies, { depth, r
         rootOwnerId,
         partsOwner:    { assembly_child_id: childId },
         childrenOwner: { parent_child_id: childId },
+        progressByPartNumber: {},
         resolveCache,
+        fabricationMetadataByKey,
       })
     }
   }
@@ -356,6 +367,11 @@ async function reimportAssembly(supabase, assemblyId) {
   // unearmarked general-restock items) — both are captured above
   // BEFORE this point specifically so they can be reconstituted/
   // relinked after reseeding, not lost to the cascade.
+
+  const fabricationMetadataByKey = await fetchWholeTreeFabricationMetadata(supabase, assemblyId)
+
+  await releaseAllLinkedInstances(supabase, assemblyId)
+
   await supabase.from('assembly_parts').delete().eq('assembly_id', assemblyId)
   await supabase.from('assembly_children').delete().eq('parent_assembly_id', assemblyId)
 
@@ -370,6 +386,7 @@ async function reimportAssembly(supabase, assemblyId) {
     partsOwner:    { assembly_id: assemblyId },
     childrenOwner: { parent_assembly_id: assemblyId },
     resolveCache,
+    fabricationMetadataByKey,
   })
 
   await supabase.from('assemblies').update({ status: 'draft' }).eq('id', assemblyId)
@@ -605,4 +622,75 @@ async function ensurePartNumberStubServer(supabase, value, genId) {
   const { data: existing } = await supabase.from('part_numbers').select('id').eq('value', trimmed).maybeSingle()
   if (existing) return
   await supabase.from('part_numbers').insert({ id: genId(), value: trimmed, component_id: null })
+}
+
+// ── fetchWholeTreeFabricationMetadata ───────────────────────────
+// Walks the FULL tree under a root assembly (its own assembly_parts,
+// plus every nested assembly_children's assembly_parts, recursively)
+// and returns a map of fabricationIdentityKey -> fabrication_metadata,
+// for every row that has both a usable identity key and non-empty
+// metadata. Must run BEFORE the cascade delete wipes these rows.
+async function fetchWholeTreeFabricationMetadata(supabase, assemblyId) {
+  const map = {}
+
+  function absorb(rows) {
+    for (const row of rows) {
+      const key = fabricationIdentityKey(row.onshape_reference)
+      if (!key) continue
+      if (!row.fabrication_metadata || !row.fabrication_metadata.kind) continue
+      map[key] = row.fabrication_metadata
+    }
+  }
+
+  const { data: rootParts } = await supabase
+    .from('assembly_parts')
+    .select('onshape_reference, fabrication_metadata')
+    .eq('assembly_id', assemblyId)
+  absorb(rootParts ?? [])
+
+  const { data: directChildren } = await supabase
+    .from('assembly_children')
+    .select('id')
+    .eq('parent_assembly_id', assemblyId)
+
+  const childQueue = (directChildren ?? []).map(c => c.id)
+  while (childQueue.length) {
+    const childId = childQueue.pop()
+
+    const { data: childParts } = await supabase
+      .from('assembly_parts')
+      .select('onshape_reference, fabrication_metadata')
+      .eq('assembly_child_id', childId)
+    absorb(childParts ?? [])
+
+    const { data: grandchildren } = await supabase
+      .from('assembly_children')
+      .select('id')
+      .eq('parent_child_id', childId)
+    childQueue.push(...(grandchildren ?? []).map(c => c.id))
+  }
+
+  return map
+}
+
+// A row carried forward with status 'queued' or 'confirmed' implies an
+// active fabrication_jobs row — but fabrication_jobs.assembly_part_id is
+// `on delete cascade` (schema.sql), so the reimport's delete of
+// assembly_parts has ALREADY destroyed that job by the time we're
+// restoring metadata onto the new row. Carrying 'queued'/'confirmed'
+// forward as-is would silently claim a job exists when it doesn't (and
+// would also re-trigger the "queued rows are terminal, never rescanned"
+// skip in onshape-detect-fabrication.js for a row nothing is actually
+// tracking anymore). Downgrade back to 'detected' so it's reviewable
+// again, and say why.
+function reconcileRestoredMetadata(meta) {
+  if (meta.status !== 'queued' && meta.status !== 'confirmed') return meta
+  return {
+    ...meta,
+    status: 'detected',
+    warnings: [
+      ...(meta.warnings || []),
+      'This part\'s fabrication job was lost on reimport (assembly parts are rebuilt from scratch) — please re-confirm and re-send to Fabricate.',
+    ],
+  }
 }
