@@ -147,7 +147,7 @@ function setMode(newMode) {
   document.getElementById('btn-mode-inventory').classList.toggle('active', appMode === 'inventory')
   document.getElementById('btn-mode-designer').classList.toggle('active', appMode==='designer')
   document.getElementById('btn-mode-fabricate').classList.toggle('active', appMode === 'fabricate')
-  document.getElementById('inventory-actions').computedStyleMap.display = appMode === 'inventory' ? '' : 'none'
+  document.getElementById('inventory-actions').style.display = appMode === 'inventory' ? '' : 'none'
   document.getElementById('designer-actions').style.display = appMode === 'designer' ? '' : 'none'
   document.getElementById('fabricate-actions').style.display = appMode === 'fabricate' ? '' : 'none'
   document.getElementById('topbar-search-wrap').style.display = appMode === 'inventory' ? '' : 'none'

@@ -20,7 +20,7 @@ let currentMemberName = null
 // ── Boot: restore whoever was logged in last, if any ────────────
 export function restoreMemberSession() {
   try {
-    const saved = sessionStorage.getItem(STORAGE_KEY)
+    const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) currentMemberId = saved
   } catch (e) {
     // sessionStorage unavailable (e.g. embedded/artifact context) — fall
@@ -35,7 +35,7 @@ export function getCurrentMemberName() { return currentMemberName }
 export function logoutMember() {
   currentMemberId = null
   currentMemberName = null
-  try { sessionStorage.removeItem(STORAGE_KEY) } catch (e) {}
+  try { localStorage.removeItem(STORAGE_KEY) } catch (e) {}
 }
 
 function normalizeMemberInput(id, name) {
@@ -84,7 +84,7 @@ export async function loginMember(id) {
 
   currentMemberId   = data.id
   currentMemberName = data.name
-  try { sessionStorage.setItem(STORAGE_KEY, data.id) } catch (e) {}
+  try { localStorage.setItem(STORAGE_KEY, data.id) } catch (e) {}
 
   return data
 }

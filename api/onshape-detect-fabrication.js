@@ -245,6 +245,16 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
 // drew for internalAdd's unit.
 const UNIT_SCALE_METERS_TO_INCHES = 1 / 0.0254
 
+const postGeometryCheckCache = new Map()
+
+function cachedPostGeometryCheck(documentId, wvmType, wvmId, elementId) {
+  const key = `${documentId}::${wvmType}::${wvmId}::${elementId}`
+  if (!postGeometryCheckCache.has(key)) {
+    postGeometryCheckCache.set(key, detector.postGeometryCheck(documentId, wvmType, wvmId, elementId))
+  }
+  return postGeometryCheckCache.get(key)
+}
+
 async function runBodyDetailsBasedDetection(supabase, detector, candidates, { onRowClassified = () => {} } = {}) {
   let detected = 0
   let needsReview = 0
@@ -356,7 +366,7 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates, { on
         if (result.status === 'detected' && typeof detector.postGeometryCheck === 'function') {
           let notExcluded
           try {
-            notExcluded = await detector.postGeometryCheck(group.documentId, group.wvmType, group.wvmId, group.elementId)
+            notExcluded = await cachedPostGeometryCheck(group.documentId, group.wvmType, group.wvmId, group.elementId)
           } catch (e) {
             console.warn(`[onshape-detect-fabrication] ${detector.kind} postGeometryCheck failed for part ${partId}: ${e.message}`)
             notExcluded = null

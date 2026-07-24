@@ -871,41 +871,9 @@ export async function fetchChildParts(childId) {
  *  its own direct parts, plus every nested subassembly's parts. Used to
  *  release inventory before an assembly (and its whole tree) is deleted. */
 export async function fetchAllLinkedInstanceIdsForAssembly(assemblyId) {
-  const ids = []
-
-  const { data: rootParts, error: rootErr } = await supabase
-    .from('assembly_parts')
-    .select('linked_instance_ids')
-    .eq('assembly_id', assemblyId)
-  if (rootErr) throw rootErr
-  rootParts.forEach(p => ids.push(...(p.linked_instance_ids || [])))
-
-  const { data: directChildren, error: childErr } = await supabase
-    .from('assembly_children')
-    .select('id')
-    .eq('parent_assembly_id', assemblyId)
-  if (childErr) throw childErr
-
-  const queue = (directChildren || []).map(c => c.id)
-  while (queue.length) {
-    const childId = queue.pop()
-
-    const { data: childParts, error: cpErr } = await supabase
-      .from('assembly_parts')
-      .select('linked_instance_ids')
-      .eq('assembly_child_id', childId)
-    if (cpErr) throw cpErr
-    childParts.forEach(p => ids.push(...(p.linked_instance_ids || [])))
-
-    const { data: grandchildren, error: gcErr } = await supabase
-      .from('assembly_children')
-      .select('id')
-      .eq('parent_child_id', childId)
-    if (gcErr) throw gcErr
-    queue.push(...(grandchildren || []).map(c => c.id))
-  }
-
-  return ids
+  const { data, error } = await supabase.rpc('get_assembly_part_tree', { p_assembly_id: assemblyId })
+  if (error) throw error
+  return data.flatMap(p => p.linked_instance_ids || [])
 }
 
 /** Same tree-walk as fetchAllLinkedInstanceIdsForAssembly, but returns
@@ -913,41 +881,9 @@ export async function fetchAllLinkedInstanceIdsForAssembly(assemblyId) {
  *  deleteCurrentAssembly to find every cart_item earmarked anywhere in
  *  the tree before the cascade delete removes the parts they point to. */
 export async function fetchAllAssemblyPartIdsForAssembly(assemblyId) {
-  const ids = []
-
-  const { data: rootParts, error: rootErr } = await supabase
-    .from('assembly_parts')
-    .select('id')
-    .eq('assembly_id', assemblyId)
-  if (rootErr) throw rootErr
-  ids.push(...rootParts.map(p => p.id))
-
-  const { data: directChildren, error: childErr } = await supabase
-    .from('assembly_children')
-    .select('id')
-    .eq('parent_assembly_id', assemblyId)
-  if (childErr) throw childErr
-
-  const queue = (directChildren || []).map(c => c.id)
-  while (queue.length) {
-    const childId = queue.pop()
-
-    const { data: childParts, error: cpErr } = await supabase
-      .from('assembly_parts')
-      .select('id')
-      .eq('assembly_child_id', childId)
-    if (cpErr) throw cpErr
-    ids.push(...childParts.map(p => p.id))
-
-    const { data: grandchildren, error: gcErr } = await supabase
-      .from('assembly_children')
-      .select('id')
-      .eq('parent_child_id', childId)
-    if (gcErr) throw gcErr
-    queue.push(...(grandchildren || []).map(c => c.id))
-  }
-
-  return ids
+  const { data, error } = await supabase.rpc('get_assembly_part_tree', { p_assembly_id: assemblyId })
+  if (error) throw error
+  return data.map(p => p.part_id)
 }
 
 /**
@@ -1731,7 +1667,7 @@ export function resolveCartItemDisplay(item, listing, component, partNameFallbac
   }
 }
 
-// db.js
+
 export async function fetchRootAssemblyIdForChild(childId) {
   let current = await fetchAssemblyChildById(childId)
   while (current.parentChildId) {

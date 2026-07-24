@@ -30,6 +30,7 @@ let currentChildren   = []   // assembly_children rows for the current root asse
 let navigationStack   = []   // [{id, name}] trail from root -> current (root assemblies only)
 let isolatedMode      = false
 
+
 export function getAssemblies()          { return assemblies }
 export function setAssemblies(v)         { assemblies = v }
 export function getCurrentAssemblyId()   { return currentAssemblyId }
@@ -58,6 +59,7 @@ let currentChildParts    = []
 let currentChildChildren = []
 let currentChildPartJobs = {}
 let currentChildPartOrders = {}
+let currentChildRecord = null
 
 export function getViewingChildId()        { return viewingChildId }
 export function setViewingChildId(v)       { viewingChildId = v }
@@ -75,6 +77,8 @@ export function getCurrentChildPartJobs()  { return currentChildPartJobs }
 export function setCurrentChildPartJobs(v) { currentChildPartJobs = v }
 export function getCurrentChildPartOrders()  { return currentChildPartOrders }
 export function setCurrentChildPartOrders(v) { currentChildPartOrders = v }
+export function getCurrentChildRecord() { return currentChildRecord }
+export function setCurrentChildRecord(v) { currentChildRecord = v }
 
 // ── Detail tab (root assembly view) ─────────────────────────────
 let detailTab = 'parts'

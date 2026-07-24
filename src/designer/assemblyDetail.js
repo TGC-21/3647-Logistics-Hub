@@ -40,7 +40,8 @@ import {
   getFabFilter, setFabFilter,
   getPartSearchQuery, setPartSearchQuery,
   getPartNumberOnly, setPartNumberOnly,
-  resetPartFilters, partRowVisible,
+  resetPartFilters, partRowVisible, 
+  getCurrentChildRecord, setCurrentChildRecord,
 } from './state.js'
 export {getAssemblies}
 import {
@@ -66,6 +67,7 @@ import { deleteAssemblyWithHistory } from './versionedMutations.js'
 import { getCurrentMemberId } from '../members.js'
 
 let fabDetectRunning = false
+let partSearchDebounceTimer = null
 
 // ── Boot ──────────────────────────────────────────────────────
 export async function designerBoot() {
@@ -101,6 +103,7 @@ function exitChildAssembly() {
   const parent = stack.pop()
   setChildNavStack(stack)
   setViewingChildId(parent ? parent.id : null)
+  if (!parent) setCurrentChildRecord(null)   // ← add: only clear when actually leaving child view
   setChildDetailTab('parts')
   renderDesignerContent()
 }
@@ -142,23 +145,16 @@ export async function renderDesignerContent() {
   else renderAssemblyGrid()
 }
 
-// ── Root assembly detail ─────────────────────────────────────
 async function renderAssemblyDetail() {
   const currentAssemblyId = getCurrentAssemblyId()
   const assembly = assemblyById(currentAssemblyId)
   if (!assembly) { selectAssembly(null); return }
 
-  const title = document.getElementById('content-title')
-  const meta  = document.getElementById('content-meta')
-  const area  = document.getElementById('main-area')
-
-  title.textContent = assembly.name
-  meta.innerHTML    = statusLabel(assembly.status)
+  const area = document.getElementById('main-area')
   area.innerHTML = `<div class="empty"><i class="ti ti-loader-2 spin"></i><div class="empty-title">Loading…</div></div>`
 
-  let currentParts, currentChildren
   try {
-    ;[currentParts, currentChildren] = await Promise.all([
+    const [currentParts, currentChildren] = await Promise.all([
       fetchAssemblyParts(currentAssemblyId),
       fetchAssemblyChildren(currentAssemblyId),
     ])
@@ -171,13 +167,30 @@ async function renderAssemblyDetail() {
     return
   }
 
-  const currentPartJobs = getCurrentPartJobs()
-  const currentPartOrders = getCurrentPartOrders()
-  const navigationStack = getNavigationStack()
-  const isolatedMode = getIsolatedMode()
-  const detailTab = getDetailTab()
-  const fabFilter = getFabFilter()
+  renderAssemblyDetailFromState()
+}
+// ── Root assembly detail ─────────────────────────────────────
+async function renderAssemblyDetailFromState() {
 
+  const currentAssemblyId = getCurrentAssemblyId()
+  const assembly = assemblyById(currentAssemblyId)
+  if (!assembly) { selectAssembly(null); return }
+
+  const title = document.getElementById('content-title')
+  const meta  = document.getElementById('content-meta')
+  const area  = document.getElementById('main-area')
+
+  title.textContent = assembly.name
+  meta.innerHTML    = statusLabel(assembly.status)
+
+  const currentParts      = getCurrentParts()
+  const currentChildren   = getCurrentChildren()
+  const currentPartJobs   = getCurrentPartJobs()
+  const currentPartOrders = getCurrentPartOrders()
+  const navigationStack   = getNavigationStack()
+  const isolatedMode      = getIsolatedMode()
+  const detailTab         = getDetailTab()
+  const fabFilter         = getFabFilter()
   const prog     = partsProgress(currentParts)
   const isLinked = !!assembly.onshapeElementId
   const isChild  = navigationStack.length > 0
@@ -323,27 +336,37 @@ async function renderAssemblyDetail() {
     if (isolatedMode) { window.close(); return }
     isChild ? navigateUp() : selectAssembly(null)
   })
-  document.getElementById('tab-btn-parts')?.addEventListener('click', () => { setDetailTab('parts'); renderAssemblyDetail() })
-  document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { setDetailTab('subassemblies'); renderAssemblyDetail() })
+  document.getElementById('tab-btn-parts')?.addEventListener('click', () => {
+    setDetailTab('parts')
+    renderAssemblyDetailFromState()   // was renderAssemblyDetail()
+  })
+  document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => {
+    setDetailTab('subassemblies')
+    renderAssemblyDetailFromState()   // was renderAssemblyDetail()
+  })
   document.getElementById('btn-edit-asm').addEventListener('click', () => openAssemblyModal(currentAssemblyId))
   document.getElementById('btn-delete-asm').addEventListener('click', deleteCurrentAssembly)
   document.getElementById('btn-add-part')?.addEventListener('click', () => openPartModal())
   document.getElementById('btn-import-csv')?.addEventListener('click', openBomImportModal)
   document.getElementById('btn-import-onshape')?.addEventListener('click', () => openOnshapeModal('import'))
   document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetection)
-  document.getElementById('fab-filter-select')?.addEventListener('change', e => { setFabFilter(e.target.value); renderAssemblyDetail() })
-  document.getElementById('chk-part-number-only')?.addEventListener('change', e => { setPartNumberOnly(e.target.checked); renderAssemblyDetail() })
+  document.getElementById('fab-filter-select')?.addEventListener('change', e => {
+    setFabFilter(e.target.value)
+    refreshPartsTbody()   // was renderAssemblyDetail()
+  })
+  document.getElementById('chk-part-number-only')?.addEventListener('change', e => {
+    setPartNumberOnly(e.target.checked)
+    refreshPartsTbody()   // was renderAssemblyDetail()
+  })
 
   let partSearchTimer
-  document.getElementById('part-search-input')?.addEventListener('input', e => {
-    setPartSearchQuery(e.target.value)
-    clearTimeout(partSearchTimer)
-    partSearchTimer = setTimeout(() => {
-      renderAssemblyDetail()
-      const input = document.getElementById('part-search-input')
-      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length) }
-    }, 200)
-  })
+ document.getElementById('part-search-input')?.addEventListener('input', e => {
+  setPartSearchQuery(e.target.value)
+  clearTimeout(partSearchDebounceTimer)
+  partSearchDebounceTimer = setTimeout(() => {
+    refreshPartsTbody()
+  }, 150)
+})
 
   if (isLinked) {
     document.getElementById('btn-reimport-asm').addEventListener('click', () => confirmReimport(assembly))
@@ -380,24 +403,19 @@ async function runFabricationDetection() {
   const btn = document.getElementById('btn-detect-fabrication')
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
 
+
+  // ...unchanged setup...
   try {
-    const res  = await fetch('/api/onshape-detect-fabrication', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ assemblyId: currentAssemblyId }),
-    })
+    const res = await fetch('/api/onshape-detect-fabrication', { /* ... */ })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Detection failed')
 
     setCurrentParts(await fetchAssemblyParts(currentAssemblyId))
-    renderAssemblyDetail()
+    renderAssemblyDetailFromState()   // was renderAssemblyDetail() — children/jobs/orders didn't change
     toast(data.message || 'Detection complete')
-  } catch (e) {
-    console.error(e)
-    toast(e.message || 'Error running fabrication detection')
-  } finally {
-    fabDetectRunning = false
-  }
+  } catch (e) { /* ...unchanged... */ }
+  finally { fabDetectRunning = false }
+
 }
 
 async function runFabricationDetectionForChild() {
@@ -407,15 +425,11 @@ async function runFabricationDetectionForChild() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
   try {
     const rootAssemblyId = await fetchRootAssemblyIdForChild(getViewingChildId())
-    const res = await fetch('/api/onshape-detect-fabrication', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assemblyId: rootAssemblyId }),
-    })
+    const res = await fetch('/api/onshape-detect-fabrication', { /* ... */ })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Detection failed')
     setCurrentChildParts(await fetchChildParts(getViewingChildId()))
-    renderChildDetail()
+    renderChildDetailFromState()
     toast(data.message || 'Detection complete')
   } catch (e) {
     console.error(e)
@@ -425,37 +439,50 @@ async function runFabricationDetectionForChild() {
   }
 }
 
-// ── Subassembly node detail ─────────────────────────────────
 async function renderChildDetail() {
-  const title = document.getElementById('content-title')
-  const meta  = document.getElementById('content-meta')
-  const area  = document.getElementById('main-area')
   const viewingChildId = getViewingChildId()
-
+  const area = document.getElementById('main-area')
   area.innerHTML = `<div class="empty"><i class="ti ti-loader-2 spin"></i><div class="empty-title">Loading…</div></div>`
 
-  let child, currentChildParts, currentChildChildren
   try {
-    ;[child, currentChildParts, currentChildChildren] = await Promise.all([
+    const [child, currentChildParts, currentChildChildren] = await Promise.all([
       fetchAssemblyChildById(viewingChildId),
       fetchChildParts(viewingChildId),
       fetchChildrenOfChild(viewingChildId),
     ])
+    setCurrentChildName(child.name)
     setCurrentChildParts(currentChildParts)
     setCurrentChildChildren(currentChildChildren)
     setCurrentChildPartJobs(await fetchActiveJobsForParts(currentChildParts.map(p => p.id)))
     setCurrentChildPartOrders(await fetchActiveCartItemsForParts(currentChildParts.map(p => p.id)))
+    // child.onshapeElementId/child.onshapeUrl are per-render read directly
+    // off the fetched `child` below — stash it so FromState can reuse it
+    // without a redundant fetchAssemblyChildById call.
+    setCurrentChildRecord(child)
   } catch (e) {
     area.innerHTML = `<div class="empty"><i class="ti ti-alert-circle"></i><div class="empty-title">Error loading subassembly</div></div>`
     return
   }
 
+  renderChildDetailFromState()
+}
+
+// ── Subassembly node detail ─────────────────────────────────
+async function renderChildDetailFromState() {
+  const child = getCurrentChildRecord()
+  if (!child) { renderChildDetail(); return }   // state not primed yet — fall back to a real fetch
+
+  const title = document.getElementById('content-title')
+  const meta  = document.getElementById('content-meta')
+  const area  = document.getElementById('main-area')
+
   const isLinked = !!child.onshapeElementId
-  setCurrentChildName(child.name)
   const childNavStack = getChildNavStack()
   const parentLabel = childNavStack.length ? childNavStack[childNavStack.length - 1].name : ''
   const isolatedMode = getIsolatedMode()
   const childDetailTab = getChildDetailTab()
+  const currentChildParts = getCurrentChildParts()
+  const currentChildChildren = getCurrentChildChildren()
   const currentChildPartJobs = getCurrentChildPartJobs()
   const currentChildPartOrders = getCurrentChildPartOrders()
 
@@ -555,20 +582,27 @@ async function renderChildDetail() {
     exitChildAssembly()
   })
   document.getElementById('btn-detect-fabrication')?.addEventListener('click', runFabricationDetectionForChild)
-  document.getElementById('tab-btn-parts')?.addEventListener('click', () => { setChildDetailTab('parts'); renderChildDetail() })
-  document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => { setChildDetailTab('subassemblies'); renderChildDetail() })
-  document.getElementById('chk-part-number-only')?.addEventListener('change', e => { setPartNumberOnly(e.target.checked); renderChildDetail() })
+  document.getElementById('tab-btn-parts')?.addEventListener('click', () => {
+    setChildDetailTab('parts')
+    renderChildDetailFromState()   // was renderChildDetail()
+  })
+  document.getElementById('tab-btn-subassemblies')?.addEventListener('click', () => {
+    setChildDetailTab('subassemblies')
+    renderChildDetailFromState()   // was renderChildDetail()
+  })
+  document.getElementById('chk-part-number-only')?.addEventListener('change', e => {
+    setPartNumberOnly(e.target.checked)
+    refreshChildPartsTbody()   // was renderChildDetail()
+  })
 
   let childPartSearchTimer
   document.getElementById('part-search-input')?.addEventListener('input', e => {
-    setPartSearchQuery(e.target.value)
-    clearTimeout(childPartSearchTimer)
-    childPartSearchTimer = setTimeout(() => {
-      renderChildDetail()
-      const input = document.getElementById('part-search-input')
-      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length) }
-    }, 200)
-  })
+  setPartSearchQuery(e.target.value)
+  clearTimeout(partSearchDebounceTimer)
+  partSearchDebounceTimer = setTimeout(() => {
+    refreshChildPartsTbody()
+  }, 150)
+})
 
   area.querySelectorAll('[data-open-child]').forEach(el =>
     el.addEventListener('click', () => enterChildAssembly(el.dataset.openChild))
@@ -578,6 +612,7 @@ async function renderChildDetail() {
 }
 
 // ── Navigation ────────────────────────────────────────────────
+
 export function selectAssembly(id) {
   setCurrentAssemblyId(id)
   setCurrentParts([])
@@ -585,6 +620,7 @@ export function selectAssembly(id) {
   setNavigationStack([])
   setViewingChildId(null)
   setChildNavStack([])
+  setCurrentChildRecord(null)   // ← add
   setDetailTab('parts')
   resetPartFilters()
   renderDesignerSidebar()
@@ -677,9 +713,9 @@ function setPartsFor(arr, isChild) { isChild ? setCurrentChildParts(arr) : setCu
 function replacePartIn(list, saved) { return list.map(p => p.id === saved.id ? saved : p) }
 
 async function afterPartsChange(isChild) {
-  if (isChild) { renderChildDetail(); return }
-  await syncAssemblyStatus()
-  renderAssemblyDetail()
+  if (isChild) { renderChildDetailFromState(); return }
+  await syncAssemblyStatus()       // patches state.assemblies in place if status changed
+  renderAssemblyDetailFromState()  // re-reads that patched state — no fetch either way
 }
 
 export function initDesignerWiring() {
@@ -703,17 +739,17 @@ export function initDesignerWiring() {
   })
 
   registerFabDetectionContext({
-    getPart: (partId, isChild) => getPartsFor(isChild).find(p => p.id === partId),
-    onPartUpdated: (saved, isChild) => {
-      setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
-      isChild ? renderChildDetail() : renderAssemblyDetail()
-    },
-    onJobCreated: (saved, job, isChild) => {
-      setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
-      if (isChild) { getCurrentChildPartJobs()[saved.id] = job; renderChildDetail() }
-      else { getCurrentPartJobs()[saved.id] = job; renderAssemblyDetail() }
-    },
-  })
+  getPart: (partId, isChild) => getPartsFor(isChild).find(p => p.id === partId),
+  onPartUpdated: (saved, isChild) => {
+    setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
+    isChild ? renderChildDetailFromState() : renderAssemblyDetailFromState()
+  },
+  onJobCreated: (saved, job, isChild) => {
+    setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
+    if (isChild) { getCurrentChildPartJobs()[saved.id] = job; renderChildDetailFromState() }
+    else { getCurrentPartJobs()[saved.id] = job; renderAssemblyDetailFromState() }
+  },
+})
 
   registerOnshapePickerContext({
     getCurrentAssemblyId: () => getCurrentAssemblyId(),
@@ -733,11 +769,11 @@ export function initDesignerWiring() {
         setAssemblies(getAssemblies().map(a => a.id === updated.id ? updated : a))
       }
       await syncAssemblyStatus()
-      renderAssemblyDetail()
+      renderAssemblyDetailFromState()   // was renderAssemblyDetail()
     },
     onAssemblyCreated: async (assemblyId) => {
       setAssemblies(await fetchAssemblies())
-      selectAssembly(assemblyId)
+      selectAssembly(assemblyId)   // unchanged — genuinely new assembly, needs a real fetch
     },
   })
 
@@ -746,7 +782,7 @@ export function initDesignerWiring() {
     onPartsImported: async (saved) => {
       setCurrentParts([...getCurrentParts(), ...saved])
       await syncAssemblyStatus()
-      renderAssemblyDetail()
+      renderAssemblyDetailFromState()   // was renderAssemblyDetail()
     },
   })
 
@@ -766,9 +802,10 @@ export function initDesignerWiring() {
     onComponentLinked: (saved, isChild) => {
       setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
     },
-    onJobCreated: (part, job, isChild) => {
-      if (isChild) { getCurrentChildPartJobs()[part.id] = job; renderChildDetail() }
-      else { getCurrentPartJobs()[part.id] = job; renderAssemblyDetail() }
+    onJobCreated: (saved, job, isChild) => {
+    setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
+    if (isChild) { getCurrentChildPartJobs()[saved.id] = job; renderChildDetailFromState() }
+    else { getCurrentPartJobs()[saved.id] = job; renderAssemblyDetailFromState() }
     },
   })
 
@@ -781,4 +818,40 @@ export function initDesignerWiring() {
 export function bindAssemblyDetailEvents() {
   document.getElementById('btn-new-assembly').addEventListener('click', () => openAssemblyModal())
   document.getElementById('btn-new-from-onshape').addEventListener('click', () => openOnshapeModal('link'))
+}
+
+// New helper, near renderChildDetailFromState — re-renders ONLY the
+// tbody from state already in memory. No fetch, no innerHTML rebuild of
+// the search input itself, so focus/cursor position is never disturbed
+// and setSelectionRange hacks become unnecessary.
+function refreshChildPartsTbody() {
+  const tbody = document.getElementById('child-parts-tbody')
+  if (!tbody) return   // showing the subassemblies tab, or no parts at all — nothing to refresh
+  const currentChildParts    = getCurrentChildParts()
+  const currentChildPartJobs = getCurrentChildPartJobs()
+  const currentChildPartOrders = getCurrentChildPartOrders()
+  tbody.innerHTML = currentChildParts
+    .filter(partRowVisible)
+    .map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || []))
+    .join('')
+  bindChildPartRowEvents()   // tbody is fresh, so rebind row-level listeners (existing pattern)
+
+  const countEl = document.querySelector('.asm-parts-title .section-count')
+  if (countEl) countEl.textContent = String(currentChildParts.filter(partRowVisible).length)
+}
+
+function refreshPartsTbody() {
+  const tbody = document.getElementById('parts-tbody')
+  if (!tbody) return   // showing the subassemblies tab, or no parts at all — nothing to refresh
+  const currentChildParts    = getCurrentChildParts()
+  const currentChildPartJobs = getCurrentChildPartJobs()
+  const currentChildPartOrders = getCurrentChildPartOrders()
+  tbody.innerHTML = currentChildParts
+    .filter(partRowVisible)
+    .map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || []))
+    .join('')
+  bindChildPartRowEvents()   // tbody is fresh, so rebind row-level listeners (existing pattern)
+
+  const countEl = document.querySelector('.asm-parts-title .section-count')
+  if (countEl) countEl.textContent = String(currentChildParts.filter(partRowVisible).length)
 }

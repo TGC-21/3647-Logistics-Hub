@@ -156,21 +156,6 @@ export async function renderPartOrdersContent() {
 }
 
 async function primeListingsForItems(cartItems) {
-  const pnIds = new Set()
-  for (const item of cartItems) {
-    const listing = item.vendorListingId ? cachedListing(item.vendorListingId) : null
-    if (item.vendorListingId && !listing) {
-      // We only have the id — fetch by walking part_numbers is wasteful;
-      // instead fetch listings keyed by the part number once we know it.
-      // Simplify: fetch every part number's listings lazily as items ask
-      // for them, keyed by part_number_id — but items only carry
-      // vendor_listing_id, so resolve via a direct listing fetch instead.
-    }
-  }
-  // Simpler and correct: fetch listings for every part number in
-  // `partNumbers` that appears on a cart item indirectly isn't knowable
-  // without the listing row itself, so just fetch-by-id for any
-  // uncached vendor_listing_id.
   const uncachedIds = [...new Set(cartItems.map(i => i.vendorListingId).filter(Boolean))]
     .filter(id => !cachedListing(id))
   await Promise.all(uncachedIds.map(fetchAndCacheListingById))

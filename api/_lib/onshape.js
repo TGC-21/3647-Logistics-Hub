@@ -538,3 +538,11 @@ async function resolveBomWithSubassembliesUncached(documentId, workspaceId, elem
   console.log(`[onshape] Resolved: ${directParts.length} direct part(s), ${subassemblies.length} child subassembly(ies)`)
   return { headers, directParts, subassemblies }
 }
+
+// api/_lib/onshape.js (or a shared api/_lib/assemblyTree.js), used by both
+// onshape-bom.js and onshape-detect-fabrication.js server-side
+export async function fetchAssemblyPartTree(supabase, assemblyId) {
+  const { data, error } = await supabase.rpc('get_assembly_part_tree', { p_assembly_id: assemblyId })
+  if (error) throw error
+  return data
+}
