@@ -15,6 +15,12 @@
 import { upsertAssemblyPart, deleteAssemblyPart, releaseInstances } from '../db.js'
 import { genId, toast, computePartStatus, totalPromisedQty } from './state.js'
 import { fabDetectionBadgeHTML, fabDetectActionable, openFabDetectConfirmModal } from './fabDetection.js'
+import { upsertAssemblyPartVersioned } from '../versionedMutations.js'
+import {getCurrentMemberId } from '../member.js'
+
+import { fetchEntityHistory, fetchCascadeChildren } from './changeLog.js'
+import { openHistoryModal } from '../historyPanel.js'
+
 
 /**
  * `ctx` is:
@@ -28,6 +34,7 @@ import { fabDetectionBadgeHTML, fabDetectActionable, openFabDetectConfirmModal }
  *   onAddToCart(partId, isChild)           -> add remaining qty to a Part Orders cart
  */
 let ctx = null
+const saved = await upsertAssemblyPartVersioned(payload, getCurrentMemberId())
 export function registerPartsTableContext(c) { ctx = c }
 
 // ── Badges ────────────────────────────────────────────────────
@@ -106,6 +113,7 @@ export function partRowHTML(p, job = null, orders = []) {
       </button>
       <button class="btn-icon" data-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canPromiseMore ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-part-history="${p.id}" aria-label="History" title="View change history"><i class="ti ti-history" style="font-size:13px"></i></button>
       <button class="btn-icon" data-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate">     <i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
       </td>
@@ -162,6 +170,7 @@ export function childPartRowHTML(p, job = null, orders = []) {
       </button>
       <button class="btn-icon" data-child-part-fab="${p.id}" aria-label="Send to Fabricate" title="${p.componentId ? 'Send remaining quantity to Fabricate' : 'Send to Fabricate — you\'ll be asked to identify the component first'}" ${canPromiseMore ? '' : 'disabled'}><i class="ti ti-tool" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-edit="${p.id}" aria-label="Edit"><i class="ti ti-edit" style="font-size:13px"></i></button>
+      <button class="btn-icon" data-child-part-history="${p.id}" aria-label="History" title="View change history"><i class="ti ti-history" style="font-size:13px"></i></button>
       <button class="btn-icon" data-child-part-del="${p.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>
       ${fabDetectActionable(p) ? `<button class="btn-icon" data-child-part-fabdetect="${p.id}" aria-label="Review spacer detection" title="Review auto-detected fabrication candidate"><i class="ti ti-scan" style="font-size:13px"></i></button>` : ''}
       </td>
@@ -198,6 +207,9 @@ export function bindPartRowEvents() {
 
     const orderBtn = e.target.closest('[data-part-order]')
     if (orderBtn) { await ctx.onAddToCart(orderBtn.dataset.partOrder, false); return }
+
+    const historyBtn = e.target.closest('[data-part-history]')
+    if (historyBtn) { openHistoryModal('assembly-part', historyBtn.dataset.partHistory, null); return }
   })
 }
 
@@ -213,6 +225,7 @@ export function bindChildPartRowEvents() {
     const fabBtn = e.target.closest('[data-child-part-fab]')
     const fabDetectBtn = e.target.closest('[data-child-part-fabdetect]')
     const orderBtn = e.target.closest('[data-child-part-order]')
+    const historyBtn = e.target.closest('[data-child-part-history')
 
     if (fabDetectBtn) { openFabDetectConfirmModal(fabDetectBtn.dataset.childPartFabdetect, true); return }
     if (linkBtn) { ctx.onLinkInventory(linkBtn.dataset.partLink, true); return }
@@ -221,6 +234,7 @@ export function bindChildPartRowEvents() {
     if (fabBtn) { ctx.onSendToFabricate(fabBtn.dataset.childPartFab, true); return }
     if (orderBtn) { await ctx.onAddToCart(orderBtn.dataset.childPartOrder, true); return }
     if (editBtn) { openPartModal(editBtn.dataset.childPartEdit, true); return }
+    if (historyBtn) { openHistoryModal('assembly_part', historyBtn.dataset.childPartHistory, null); return }
   })
 }
 
@@ -353,4 +367,16 @@ export function bindPartsTableEvents() {
   document.getElementById('part-modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closePartModal()
   })
+}
+
+async function openHistoryModal(entityType, entityId) {
+  const rows = await fetchEntityHistory(entityType, entityId)
+  // group by commit_id for display, render newest-first, one card per commit
+  // showing actor_id, created_at, and each field's old_value -> new_value
+}
+
+async function openCascadeHistoryModal(entityType, entityId) {
+  const rows = await fetchCascadeChildren(entityType, entityId)
+  // "This assembly's deletion also removed: N parts, M subassemblies" —
+  // list grouped by entity_type
 }

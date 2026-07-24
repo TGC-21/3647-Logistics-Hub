@@ -62,6 +62,8 @@ import { registerInventoryLinkContext, openInventoryLinkModal, toggleLinkedDetai
 import { registerFabricateFlowContext, openSendToFabricateModal } from './fabricateFlow.js'
 import { registerPartOrdersCartContext, addPartToCart } from './partOrdersCart.js'
 import { renderAssemblyGrid, openAssemblyModal, registerAssemblyGridContext } from './assemblyGrid.js'
+import { deleteAssemblyWithHistory } from './versionedMutations.js'
+import { getCurrentMemberId } from '../members.js'
 
 let fabDetectRunning = false
 
@@ -618,16 +620,10 @@ async function deleteCurrentAssembly() {
   const a = assemblyById(currentAssemblyId)
   if (!a || !confirm(`Delete assembly "${a.name}" and all its parts? This cannot be undone.`)) return
   try {
-    const linkedIds = await fetchAllLinkedInstanceIdsForAssembly(currentAssemblyId)
-    if (linkedIds.length) await releaseInstances(linkedIds)
-
-    const partIds = await fetchAllAssemblyPartIdsForAssembly(currentAssemblyId)
-    if (partIds.length) await deletePendingCartItemsForAssemblyPartIds(partIds)
-
-    await deleteAssembly(currentAssemblyId)
+    const result = await deleteAssemblyWithHistory(currentAssemblyId, getCurrentMemberId())
     setAssemblies(getAssemblies().filter(x => x.id !== currentAssemblyId))
     selectAssembly(null)
-    toast('Assembly deleted')
+    toast(`Assembly deleted (${result.deletedPartCount} part(s) logged, ${result.deletedChildCount} subassembly(ies) logged)`)
   } catch (e) { console.error(e); toast('Error deleting assembly') }
 }
 

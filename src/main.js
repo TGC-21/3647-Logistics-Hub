@@ -32,6 +32,13 @@ import {
 
 import { attachAutocomplete } from './autocomplete.js'
 
+import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from './members.js'
+import { upsertInventoryInstanceVersioned } from './versionedMutations.js'
+import { getCurrentMemberId, restoreMemberSession } from './members.js'
+
+import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
+import { bindHistoryPanelEvents } from './historyPanel.js'
+
 window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
@@ -50,6 +57,12 @@ let appMode = 'inventory' //'inventory' | 'designer' | 'fabricate'
 
 // ── Boot ──────────────────────────────────────────────────────
 async function boot() {
+  bindLoginScreenEvents()
+  restoreMemberSession()
+  await requireLogin()
+  if (!getCurrentMemberId()){
+
+  }
   setToast(showToast)
   setFabricateToast(showToast)
   setPartOrdersToast(showToast)
@@ -105,6 +118,7 @@ async function boot() {
   try { bindFabricateEvents() } catch (e) { console.error('[boot] bindFabricateEvents failed', e) }
   try { bindPartOrdersEvents() } catch (e) { console.error('[boot] bindPartOrdersEvents failed', e) }
   try { bindManageVendorsEvents()} catch (e) { console.error('[boot] bindManageVendorsEvents failed', e)}
+  try { bindHistoryPanelEvents() } catch (e) { console.error('[boot] bindHistoryPanelEvents failed', e )}
   
 }
 
@@ -729,7 +743,7 @@ async function confirmNewCat() {
   const name = document.getElementById('new-cat-input').value.trim(); if (!name) return
   const cat = { id: genId(), name, requiredKeysConfig: [] }
   try {
-    const saved = await upsertCategory(cat)
+    const saved = await upsertCategoryVersioned(cat, getCurrentMemberId())
     categories.push(saved)
     populateCatSelect(saved.id)
     document.getElementById('field-cat').value = saved.id
@@ -938,11 +952,11 @@ async function saveItem() {
       genId,
     })
 
-    const saved = await upsertInventoryInstance({
+    const saved = await upsertInventoryInstanceVersioned({
       id, componentId: component.id, name, description: desc,
       image: imageUrl, location: loc, quantity: parseInt(qty, 10) || 0,
       tags: [...editingTags], component,
-    })
+    }, getCurrentMemberId())
 
     // If editing re-parented this instance to a different (forked or
     // pre-existing) component, clean up the old one if now unreferenced.
@@ -1200,7 +1214,7 @@ async function saveEditCat() {
 
   const updated = { ...categories[idx], name, requiredKeysConfig: cleanConfigs }
   try {
-    const saved = await upsertCategory(updated)
+    const saved = await upsertCategoryVersioned(updated, getCurrentMemberId())
     categories[idx] = saved
     closeEditCat(); renderCatModal(); render(); showToast('Category saved')
   } catch (e) { showToast('Error saving category') }
@@ -1255,3 +1269,13 @@ function distinctLocations() {
 
 // ── Start ─────────────────────────────────────────────────────
 boot()
+
+async function handleLogin(id) {
+  try {
+    await loginMember(id)
+    closeLoginOverlay()
+    boot()   // proceed with normal boot now that someone's identified
+  } catch (e) {
+    showToast(e.message)
+  }
+}

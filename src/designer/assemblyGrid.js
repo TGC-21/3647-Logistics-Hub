@@ -8,6 +8,9 @@
 
 import { upsertAssembly } from '../db.js'
 import { genId, toast, statusLabel, getAssemblies, setAssemblies, assemblyById } from './state.js'
+import { upsertAssemblyVersioned } from '../versionedMutations.js'
+import { getCurrentMemberId } from '../members.js'
+import { openHistoryModal, openCascadeHistoryModal } from '../historyPanel.js'
 
 let editingAssemblyId = null
 
@@ -44,7 +47,10 @@ export function renderAssemblyGrid() {
 
   area.innerHTML = `<div class="asm-grid">${assemblies.map(asmCardHTML).join('')}</div>`
   area.querySelectorAll('[data-open-asm]').forEach(el =>
-    el.addEventListener('click', () => ctx.selectAssembly(el.dataset.openAsm))
+    el.addEventListener('click', () => {
+      const a = assemblies.find(x => x.id === el.dataset.historyAsm)
+      openHistoryModal('assembly', el.dataset.historyAsm, a?.name)
+    })
   )
 }
 
@@ -71,6 +77,9 @@ export function asmCardHTML(a) {
       <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
         ${linkedBadge}
         ${statusLabel(a.status)}
+        <button class="btn-icon" data-history-asm="${a.id}" aria-label="History" title="View change history" onclick="event.stopPropagation()">
+          <i class="ti ti-history" style="font-size:13px"></i>
+        </button>
       </div>
     </div>
     ${a.description ? `<div class="asm-card-desc">${a.description}</div>` : ''}
@@ -121,7 +130,7 @@ async function saveAssembly() {
   }
 
   try {
-    const saved = await upsertAssembly(payload)
+    const saved = await upsertAssemblyVersioned(payload, getCurrentMemberId())
     const wasNew = !editingAssemblyId
     const assemblies = getAssemblies()
     setAssemblies(wasNew ? [saved, ...assemblies] : assemblies.map(a => a.id === saved.id ? saved : a))
