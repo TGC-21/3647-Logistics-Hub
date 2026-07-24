@@ -8,7 +8,7 @@
 
 import { upsertAssembly } from '../db.js'
 import { genId, toast, statusLabel, getAssemblies, setAssemblies, assemblyById } from './state.js'
-import { upsertAssemblyVersioned } from '../versionedMutations.js'
+import { upsertAssemblyVersioned } from './versionedMutations.js'
 import { getCurrentMemberId } from '../members.js'
 import { openHistoryModal, openCascadeHistoryModal } from '../historyPanel.js'
 
@@ -47,7 +47,13 @@ export function renderAssemblyGrid() {
 
   area.innerHTML = `<div class="asm-grid">${assemblies.map(asmCardHTML).join('')}</div>`
   area.querySelectorAll('[data-open-asm]').forEach(el =>
-    el.addEventListener('click', () => {
+    el.addEventListener('click', () => ctx.selectAssembly(el.dataset.openAsm))
+  )
+ 
+  area.querySelectorAll('[data-history-asm]').forEach(el =>
+    el.addEventListener('click', e => {
+      e.stopPropagation()   // must run before the click bubbles to the
+                             // ancestor .asm-card's data-open-asm listener
       const a = assemblies.find(x => x.id === el.dataset.historyAsm)
       openHistoryModal('assembly', el.dataset.historyAsm, a?.name)
     })

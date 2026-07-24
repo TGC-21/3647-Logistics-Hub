@@ -15,10 +15,10 @@
 import { upsertAssemblyPart, deleteAssemblyPart, releaseInstances } from '../db.js'
 import { genId, toast, computePartStatus, totalPromisedQty } from './state.js'
 import { fabDetectionBadgeHTML, fabDetectActionable, openFabDetectConfirmModal } from './fabDetection.js'
-import { upsertAssemblyPartVersioned } from '../versionedMutations.js'
-import {getCurrentMemberId } from '../member.js'
+import { upsertAssemblyPartVersioned, deleteAssemblyPartVersioned } from './versionedMutations.js'
+import {getCurrentMemberId } from '../members.js'
 
-import { fetchEntityHistory, fetchCascadeChildren } from './changeLog.js'
+import { fetchEntityHistory, fetchCascadeChildren } from '../changeLog.js'
 import { openHistoryModal } from '../historyPanel.js'
 
 
@@ -34,7 +34,6 @@ import { openHistoryModal } from '../historyPanel.js'
  *   onAddToCart(partId, isChild)           -> add remaining qty to a Part Orders cart
  */
 let ctx = null
-const saved = await upsertAssemblyPartVersioned(payload, getCurrentMemberId())
 export function registerPartsTableContext(c) { ctx = c }
 
 // ── Badges ────────────────────────────────────────────────────
@@ -244,7 +243,7 @@ async function deletePart(partId) {
   if (!part || !confirm(`Remove "${part.partName}" from this assembly?`)) return
   try {
     if (part.linkedInstanceIds?.length) await releaseInstances(part.linkedInstanceIds)
-    await deleteAssemblyPart(partId)
+    await deleteAssemblyPartVersioned(partId, getCurrentMemberId())
     ctx.setParts?.(ctx.getParts(false).filter(p => p.id !== partId), false)
     await ctx.afterChange(false)
     toast('Part removed')
@@ -256,7 +255,7 @@ async function deleteChildPart(partId) {
   if (!part || !confirm(`Remove "${part.partName}" from this subassembly?`)) return
   try {
     if (part.linkedInstanceIds?.length) await releaseInstances(part.linkedInstanceIds)
-    await deleteAssemblyPart(partId)
+    await deleteAssemblyPartVersioned(partId, getCurrentMemberId())
     ctx.setParts?.(ctx.getParts(true).filter(p => p.id !== partId), true)
     await ctx.afterChange(true)
     toast('Part removed')
@@ -367,16 +366,4 @@ export function bindPartsTableEvents() {
   document.getElementById('part-modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closePartModal()
   })
-}
-
-async function openHistoryModal(entityType, entityId) {
-  const rows = await fetchEntityHistory(entityType, entityId)
-  // group by commit_id for display, render newest-first, one card per commit
-  // showing actor_id, created_at, and each field's old_value -> new_value
-}
-
-async function openCascadeHistoryModal(entityType, entityId) {
-  const rows = await fetchCascadeChildren(entityType, entityId)
-  // "This assembly's deletion also removed: N parts, M subassemblies" —
-  // list grouped by entity_type
 }

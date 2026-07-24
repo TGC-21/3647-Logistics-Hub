@@ -9,6 +9,7 @@
 
 import { bulkInsertAssemblyParts, upsertAssembly, fetchAssemblies } from '../db.js'
 import { genId, toast } from './state.js'
+import { getCurrentMemberId } from '../members.js'
 
 // ── State ─────────────────────────────────────────────────────
 let onshapeMode       = 'import'   // 'import' | 'link'
@@ -389,6 +390,7 @@ async function confirmLinkAssembly() {
       elementId:    asm.id,
       assemblyName: name,
       thumbnailUrl: doc?.thumbnailUrl || null,
+      actorId: getCurrentMemberId()
     }),
   })
   const data = await res.json()

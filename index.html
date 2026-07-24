@@ -794,6 +794,84 @@
   </div>
 </div>
 
+<!-- ── Login / Create Member Overlay ──────────────────────────
+     Paste this block into index.html, as a sibling of the other
+     top-level <div class="overlay" ...> blocks (e.g. right after the
+     closing </div> of #modal-overlay). It uses the same .overlay/.modal/
+     .field/.btn classes as every other modal in the app, so no new CSS
+     is needed.
+
+     Two panes toggled by JS (login-pane / create-pane), not two separate
+     overlays — keeps state simple and avoids a flash between them. -->
+<div class="overlay" id="login-overlay" style="display:none">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <div class="modal-title" id="login-modal-title">Sign in</div>
+      <!-- No close button — this overlay is not dismissible; the app
+           requires a signed-in member before boot() proceeds. -->
+    </div>
+
+    <!-- ── Pane: sign in with existing 7-digit ID ─────────────── -->
+    <div class="modal-body" id="login-pane">
+      <div class="field">
+        <label>Member ID <span class="required-star">*</span></label>
+        <input type="text" id="login-field-id" placeholder="7-digit ID" inputmode="numeric" maxlength="7" autocomplete="off">
+      </div>
+      <p id="login-error" style="font-size:12px;color:var(--color-danger);display:none"></p>
+      <button class="btn btn-primary" id="btn-login-submit" style="justify-content:center">
+        <i class="ti ti-login" aria-hidden="true"></i> Sign in
+      </button>
+      <button class="btn btn-sm" id="btn-show-create-member" style="align-self:center;margin-top:2px">
+        New here? Create a member
+      </button>
+    </div>
+
+    <!-- ── Pane: create a new member ───────────────────────────── -->
+    <div class="modal-body" id="create-pane" style="display:none">
+      <div class="field">
+        <label>Name <span class="required-star">*</span></label>
+        <input type="text" id="create-field-name" placeholder="Your name" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Enter your 7-digit SDUHSD ID (or make up a memorable ID if you are not from SDUHSD) <span class="required-star">*</span></label>
+        <input type="text" id="create-field-id" placeholder="e.g. 1234567" inputmode="numeric" maxlength="7" autocomplete="off">
+      </div>
+      <p id="create-error" style="font-size:12px;color:var(--color-danger);display:none"></p>
+      <button class="btn btn-primary" id="btn-create-submit" style="justify-content:center">
+        <i class="ti ti-user-plus" aria-hidden="true"></i> Create & sign in
+      </button>
+      <button class="btn btn-sm" id="btn-show-login" style="align-self:center;margin-top:2px">
+        Already have an ID? Sign in
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── History Modal ───────────────────────────────────────────
+     Paste into index.html alongside the other overlays. One modal
+     serves both "entity history" (an assembly/part/component's own
+     create/update/delete timeline, grouped by commit) and "cascade
+     history" (what got deleted alongside a parent) — historyPanel.js
+     swaps the body content based on which was requested; the header/
+     footer chrome stays the same either way. -->
+<div class="overlay" id="history-overlay" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="history-modal-title">History</div>
+        <div style="font-size:12px;color:var(--color-text-tertiary)" id="history-modal-subtitle"></div>
+      </div>
+      <button class="btn-icon" id="btn-close-history"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body" id="history-modal-body" style="min-height:120px">
+      <!-- populated by historyPanel.js -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-close-history-2">Close</button>
+    </div>
+  </div>
+</div>
+
 <script type="module" src="/src/main.js"></script>
 </body>
 </html>

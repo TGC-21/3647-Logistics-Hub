@@ -15,7 +15,7 @@
 // ── Toast ─────────────────────────────────────────────────────
 let toastFn = msg => console.warn('[toast]', msg)
 export function setToast(fn) { toastFn = fn }
-export function toast(msg) { toastFn(msg) }
+export function toast(msg, onClick) { toastFn(msg, onClick) }
 
 // ── Shared id helper ─────────────────────────────────────────
 export function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }

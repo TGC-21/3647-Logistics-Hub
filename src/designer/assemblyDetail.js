@@ -623,7 +623,10 @@ async function deleteCurrentAssembly() {
     const result = await deleteAssemblyWithHistory(currentAssemblyId, getCurrentMemberId())
     setAssemblies(getAssemblies().filter(x => x.id !== currentAssemblyId))
     selectAssembly(null)
-    toast(`Assembly deleted (${result.deletedPartCount} part(s) logged, ${result.deletedChildCount} subassembly(ies) logged)`)
+    toast(
+      `Assembly deleted (${result.deletedPartCount} part(s), ${result.deletedChildCount} subassembly(ies)) — click to review`,
+      () => openCascadeHistoryModal('assembly', currentAssemblyId, a.name)
+    )
   } catch (e) { console.error(e); toast('Error deleting assembly') }
 }
 
@@ -644,7 +647,7 @@ async function confirmReimport(assembly) {
     const res  = await fetch('/api/onshape-bom', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ assemblyId: assembly.id, reimport: true }),
+      body:    JSON.stringify({ assemblyId: assembly.id, reimport: true, actorId: getCurrentMemberId() }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Re-import failed')

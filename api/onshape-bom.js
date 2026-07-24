@@ -18,6 +18,8 @@ import {
   buildSourceKey, fabricationIdentityKey,
 } from './_lib/onshape.js'
 
+import { recordChangeServer, genCommitId } from './_lib/changeLog.js'
+
 function getSupabase() {
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_KEY
@@ -107,6 +109,12 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
     await supabase.from('assemblies').delete().eq('id', assemblyId)
     throw e
   }
+
+  const commitId = genCommitId()
+  await recordChangeServer(supabase, {
+    entityType: 'assembly', entityId: assemblyId, action: 'create',
+    newValue: { id: assemblyId, name: assemblyName }, actorId: body.actorId || null, commitId,
+  })
 
   return {
     assemblyId,
@@ -414,6 +422,8 @@ async function reimportAssembly(supabase, assemblyId) {
     newBySourceKey,
   })
 
+  await logReimportChanges(supabase, { assemblyId, oldParts, newParts, actorId: body.actorId || null })
+
   const parts = [
     `Re-imported: ${partCount} part(s), ${childCount} subassembly(ies).`,
     `${summary.relinkedInventoryCount} part(s) kept their existing inventory links.`,
@@ -692,5 +702,47 @@ function reconcileRestoredMetadata(meta) {
       ...(meta.warnings || []),
       'This part\'s fabrication job was lost on reimport (assembly parts are rebuilt from scratch) — please re-confirm and re-send to Fabricate.',
     ],
+  }
+}
+
+// Logs one commit summarizing a reimport: the assembly's own part/child
+// counts before → after, plus one 'delete' row for every part that
+// genuinely dropped out of the BOM (no source-key match in the new
+// tree) and one 'create' row for every part that's genuinely new (no
+// source-key match in the old tree). Parts that carried over as-is
+// (same source key, same or changed quantity_collected) are NOT
+// re-logged as updates here — carryOverPromisesAfterReimport's job is
+// to make the new row match the old, so nothing about them changed
+// that's worth a diff entry; only real gains/losses are commit-worthy.
+async function logReimportChanges(supabase, { assemblyId, oldParts, newParts, actorId }) {
+  const commitId = genCommitId()
+
+  const oldKeys = new Set(oldParts.map(p => buildSourceKey(p.onshape_reference)).filter(Boolean))
+  const newKeys = new Set(newParts.map(p => buildSourceKey(p.onshape_reference)).filter(Boolean))
+
+  await recordChangeServer(supabase, {
+    entityType: 'assembly', entityId: assemblyId, action: 'update',
+    field: 'reimport', oldValue: { partCount: oldParts.length }, newValue: { partCount: newParts.length },
+    actorId, commitId,
+  })
+
+  for (const p of oldParts) {
+    const key = buildSourceKey(p.onshape_reference)
+    if (key && newKeys.has(key)) continue   // survived — not a delete
+    await recordChangeServer(supabase, {
+      entityType: 'assembly_part', entityId: p.id, action: 'delete',
+      oldValue: p, actorId, commitId,
+      causedByEntityType: 'assembly', causedByEntityId: assemblyId,
+    })
+  }
+
+  for (const p of newParts) {
+    const key = buildSourceKey(p.onshape_reference)
+    if (key && oldKeys.has(key)) continue   // carried over — not a fresh create
+    await recordChangeServer(supabase, {
+      entityType: 'assembly_part', entityId: p.id, action: 'create',
+      newValue: p, actorId, commitId,
+      causedByEntityType: 'assembly', causedByEntityId: assemblyId,
+    })
   }
 }

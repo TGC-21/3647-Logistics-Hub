@@ -33,8 +33,7 @@ import {
 import { attachAutocomplete } from './autocomplete.js'
 
 import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from './members.js'
-import { upsertInventoryInstanceVersioned } from './versionedMutations.js'
-import { getCurrentMemberId, restoreMemberSession } from './members.js'
+import { upsertInventoryInstanceVersioned } from './designer/versionedMutations.js'
 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'
@@ -128,12 +127,17 @@ function catById(id)     { return categories.find(c => c.id === id) }
 function itemsForCat(id) { return items.filter(it => it.categoryId === id) }
 function uncategorized() { return items.filter(it => !it.categoryId || !catById(it.categoryId)) }
 
-function showToast(msg) {
+function showToast(msg, onClick) {
   const t = document.createElement('div')
   t.className = 'toast'
   t.textContent = msg
+  if (onClick) {
+    t.style.cursor = 'pointer'
+    t.title = 'Click to view details'
+    t.addEventListener('click', onClick)
+  }
   document.body.appendChild(t)
-  setTimeout(() => t.remove(), 2600)
+  setTimeout(() => t.remove(), onClick ? 5000 : 2600)   // longer window if it's clickable
 }
 
 // ── Mode switching ─────────────────────────────────────────────
