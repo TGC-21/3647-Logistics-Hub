@@ -647,6 +647,24 @@
   </div>
 </div>
 
+<!-- ── Carousel nav bar — shown only when a bulk action (Edit /
+     Send to Fabricate / Review detected) is running across more
+     than one selected part row. Floats above whichever single-part
+     modal is currently open; partsTable.js drives its label/
+     enabled-state and owns the Prev/Next/Close handlers. ── -->
+<div id="carousel-nav-bar" style="display:none">
+  <button class="btn-icon" id="btn-carousel-prev" aria-label="Previous part">
+    <i class="ti ti-chevron-left" aria-hidden="true"></i>
+  </button>
+  <span id="carousel-position-label"></span>
+  <button id="btn-carousel-next">
+    <i class="ti ti-chevron-right" aria-hidden="true"></i> Next
+  </button>
+  <button class="btn-icon" id="btn-carousel-close" aria-label="Close">
+    <i class="ti ti-x" aria-hidden="true"></i>
+  </button>
+</div>
+
 <div class="overlay" id="cart-modal-overlay" style="display:none">
   <div class="modal" style="max-width:460px">
     <div class="modal-header">
@@ -871,6 +889,8 @@
     </div>
   </div>
 </div>
+
+
 
 <script type="module" src="/src/main.js"></script>
 </body>

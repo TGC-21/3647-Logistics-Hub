@@ -42,12 +42,14 @@ import {
   getPartNumberOnly, setPartNumberOnly,
   resetPartFilters, partRowVisible, 
   getCurrentChildRecord, setCurrentChildRecord,
+  clearPartSelection,
 } from './state.js'
 export {getAssemblies}
 import {
   partRowHTML, childPartRowHTML, bindPartRowEvents, bindChildPartRowEvents,
   fabFilterSelectHTML, partSearchToolbarHTML,
   registerPartsTableContext, openPartModal,
+  selectionToolbarHTML, bindSelectionToolbarEvents, bindPartsTableHeaderEvents,
 } from './partsTable.js'
 
 import {
@@ -95,6 +97,7 @@ function enterChildAssembly(childId) {
   setChildNavStack([...getChildNavStack(), { id: getViewingChildId(), name: fromLabel }])
   setViewingChildId(childId)
   setChildDetailTab('parts')
+  clearPartSelection()   // switching tables — selection never crosses views
   renderDesignerContent()
 }
 
@@ -105,6 +108,7 @@ function exitChildAssembly() {
   setViewingChildId(parent ? parent.id : null)
   if (!parent) setCurrentChildRecord(null)   // ← add: only clear when actually leaving child view
   setChildDetailTab('parts')
+  clearPartSelection()   // switching tables — selection never crosses views
   renderDesignerContent()
 }
 
@@ -270,6 +274,7 @@ async function renderAssemblyDetailFromState() {
   const showSubTab = detailTab === 'subassemblies' && currentChildren.length
 
   const partsSectionHTML = showSubTab ? '' : `
+      ${selectionToolbarHTML(false)}
       <div class="asm-parts-toolbar">
         ${tabsHTML ? '' : `<div class="asm-parts-title">Parts <span class="section-count">${currentParts.length}</span></div>`}
         ${partSearchToolbarHTML(getPartSearchQuery(), getPartNumberOnly())}
@@ -285,6 +290,7 @@ async function renderAssemblyDetailFromState() {
             <table class="parts-table">
               <thead>
                 <tr>
+                  <th class="select-col"><input type="checkbox" id="select-all-parts" aria-label="Select all visible parts"></th>
                   <th>Part name</th>
                   <th>Part #</th>
                   <th style="text-align:center">Needed</th>
@@ -383,6 +389,7 @@ async function renderAssemblyDetailFromState() {
       setCurrentAssemblyId(target.id)
       setCurrentParts([])
       setCurrentChildren([])
+      clearPartSelection()
       renderDesignerSidebar()
       renderDesignerContent()
     })
@@ -393,6 +400,8 @@ async function renderAssemblyDetailFromState() {
   )
 
   bindPartRowEvents()
+  bindPartsTableHeaderEvents(false)
+  bindSelectionToolbarEvents(false)
 }
 
 // ── Fabrication detection trigger ────────────────────────────
@@ -539,12 +548,14 @@ async function renderChildDetailFromState() {
   const showSubTab = childDetailTab === 'subassemblies' && currentChildChildren.length
 
   const partsSectionHTML = showSubTab ? '' : `
+      ${selectionToolbarHTML(true)}
       ${tabsHTML ? '' : `<div class="asm-parts-toolbar"><div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div>${partSearchToolbarHTML(getPartSearchQuery(), getPartNumberOnly())}</div>`}
       ${currentChildParts.length
         ? `<div class="parts-table-wrap">
             <table class="parts-table">
               <thead>
                 <tr>
+                  <th class="select-col"><input type="checkbox" id="select-all-child-parts" aria-label="Select all visible parts"></th>
                   <th>Part name</th>
                   <th>Linked Part(s)</th>
                   <th>Part #</th>
@@ -617,6 +628,8 @@ async function renderChildDetailFromState() {
   )
 
   bindChildPartRowEvents()
+  bindPartsTableHeaderEvents(true)
+  bindSelectionToolbarEvents(true)
 }
 
 // ── Navigation ────────────────────────────────────────────────
@@ -631,6 +644,7 @@ export function selectAssembly(id) {
   setCurrentChildRecord(null)   // ← add
   setDetailTab('parts')
   resetPartFilters()
+  clearPartSelection()
   renderDesignerSidebar()
   renderDesignerContent()
 }
@@ -644,6 +658,7 @@ function navigateUp() {
   setCurrentParts([])
   setCurrentChildren([])
   setDetailTab('parts')
+  clearPartSelection()
   renderDesignerSidebar()
   renderDesignerContent()
 }

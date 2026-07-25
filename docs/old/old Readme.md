@@ -1,8 +1,7 @@
+
 # Partshelf
 
 Inventory manager with a Designer workflow for tracking assembly parts collection, plus a built-in picker for importing BOMs directly from Onshape.
-
-This README reflects the current, shipped architecture. If you have older copies of `IMPLEMENTATION_GUIDE.md`, `CHANGES_SUMMARY.md`, or a `public/onshape-tab.html` file lying around from earlier iterations — discard them. The integration approach changed twice during development (Custom Tab → OAuth App Store app → this) and those described dead ends.
 
 ---
 

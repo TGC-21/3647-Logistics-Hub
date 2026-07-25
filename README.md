@@ -3,7 +3,27 @@
 ## Goal: create a centralized logistics hub for tracking inventory parts, Onshape assemblies, fabrication jobs, and part orders. The user base is pretty small, at around 25 people, and parts are limited in scope; either COTS parts or custom machined parts, which fall under the categories of custom spacers, custom shafts, and custom plates. At some point, the system will also expand to incorporate users in a more direct way: including an agenda, tasks, and assignments for project management. This will replace spreadsheets, hand drawings, and memory with a single system.
 
 
-## Philosophy: The system should be easy to use, balancing the act of requiring minimum input from the user with the act of respecting users' data and choices. The system should comprehensively cover every single part of the timeline from CAD to a finished assembly, otherwise users will go back to using multiple systems alongside partshelf therefore defeating the goal and purpose.
+## Engineering Philosophy: 
+
+The software should adapt to the team's workflow—not require the team to adapt to the software.
+
+Users already spend significant effort designing, manufacturing, purchasing, assembling, and maintaining assemblies. Every additional spreadsheet, notebook, whiteboard, or chat message increases friction and decreases reliability. Whenever possible, information should naturally flow from one stage to the next instead of requiring users to manually duplicate work.
+
+Examples include:
+
+- Importing assemblies directly from Onshape instead of manually recreating BOMs.
+- Tracking fabricated parts alongside purchased parts.
+- Linking physical inventory directly to assemblies.
+- Automatically determining which parts still need to be fabricated or ordered.
+
+The application intentionally prioritizes simplicity and maintainability over enterprise-scale optimization. Partshelf is expected to serve roughly twenty-five users with inventories measured in hundreds—not millions—of parts.
+
+Every architectural decision should support one or more of the following goals:
+
+• Reduce duplicate work.
+• Maintain a single source of truth.
+• Make workflows obvious.
+• Keep the interface responsive.
 
 ## System Diagram: Onshape --> Assembly Import --> Designer workflow --> Link existing inventory parts to the assembly, send custom parts to fabrication, order COTS parts --> Assemblying in real life
 
@@ -49,10 +69,13 @@ _lib/
 shared backend utilities
 ------------------------------------------------------------------------------------
 docs/
-project documentation
+project documentation - work in progress, don't expect anything yet
 ------------------------------------------------------------------------------------
-fixes/
-engineering roadmap
+docs/fixes/
+known issues/ - work in progress, don't expect anything yet
+------------------------------------------------------------------------------------
+docs/development/
+new features to implement down the road
 ------------------------------------------------------------------------------------
 
 ## Documentation guide
@@ -60,12 +83,13 @@ README.md - project overview
 docs/ARCHITECTURE.md - overall architecture
 docs/DATABASE.md - Database schema
 docs/DESIGNER.md - Assembly system
-fixes/TODO.md - Prioritized engineering backlog
-fixes/architecture/*.md - detailed refactor designs
+docs/fixes/TODO.md - Prioritized engineering backlog
+docs/fixes/architecture/*.md - detailed refactor designs
+docs/development/*.md - writeups for new features
 
 If you want to understand the project, I suggest you read the docs in this order: 
 1. README.md
 2. ARCHITECTURE.md
-3.DATABASE.md
+3. DATABASE.md
 4. DESIGNER.md
 5. API.md

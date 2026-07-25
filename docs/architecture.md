@@ -1,115 +1,241 @@
-# Partshelf
+This document explains Partshelf's internal organization. It focuses on concepts and workflows rather than implementation details. Reading this document should provide enough understanding to navigate most of the codebase without reading individual source files.
 
-Inventory manager with a Designer workflow for tracking assembly parts collection, plus a built-in picker for importing BOMs directly from Onshape.
 
----
+## High level architecture:
+                    Onshape
+                        │
+                        ▼
+              Assembly Import API
+                        │
+                        ▼
+                  Designer System
+                        │
+         ┌──────────────┼──────────────┐
+         ▼              ▼              ▼
+ Inventory Links   Fabrication Jobs   Part Orders
+         │              │              │
+         └──────────────┼──────────────┘
+                        ▼
+                 Real Robot Assembly
 
-## How the Onshape integration actually works
+## Core Design philosophy
 
-Partshelf does the browsing. Nothing is installed inside Onshape.
+Partshelf intentionally models the physical world.
 
-```
-Designer mode → assembly detail → "Import from Onshape"
-    ↓
-Search documents (api/onshape-documents.js)
-    ↓ pick one
-List its assemblies (api/onshape-elements.js)
-    ↓ pick one
-Preview the BOM (api/onshape-bom-preview.js)
-    ↓ confirm
-Parts added to the currently-open assembly
-```
+Rather than treating inventory, fabrication, and purchasing as independent systems, they are simply different stages in a part's lifecycle.
 
-All three endpoints authenticate to Onshape with a single Access Key / Secret Key pair (server-side only, never exposed to the browser). There is no OAuth, no Onshape Developer Portal app, no App Store listing, and no Custom Tab — which means none of this depends on Onshape plan tier or Custom Tab availability.
+A part may begin as:
 
-**Known limitation:** because it's one shared key pair rather than per-user OAuth, the document picker shows whatever that Onshape account can see — not each individual Partshelf user's own private documents. Fine for a single team/classroom sharing documents in one Onshape org. If you ever need per-user document visibility, that requires OAuth, which is a separate, larger undertaking not part of this build.
+an imported BOM line,
+a fabricated component,
+or a purchased COTS item,
 
----
+but eventually all three become inventory that can be assembled into a robot.
 
-## File structure
+Because of this, all major systems share common abstractions rather than duplicating information.
 
-```
-partshelf/
-├── index.html                    Entry point, all modals (incl. Onshape picker)
-├── schema.sql                    Supabase tables + RLS policies
-├── package.json
-├── vite.config.js
-├── .env.example
-├── src/
-│   ├── main.js                   Inventory mode + mode routing
-│   ├── designer.js                Designer mode: assemblies, parts, CSV import, Onshape picker
-│   ├── db.js                      Supabase CRUD
-│   └── style.css                  Styles for both modes
-└── api/
-    ├── _lib/
-    │   └── onshape.js              Shared Onshape auth + BOM parsing (onshapeGet, fetchBom, parseBomRows)
-    ├── onshape-documents.js        GET — search/list Onshape documents
-    ├── onshape-elements.js         GET — list assembly elements in a document
-    ├── onshape-bom-preview.js      GET — parse a BOM for preview (no DB writes)
-    └── onshape-bom.js              POST — create a new assembly from a BOM (used for direct/external imports)
-```
+# Domain Model
 
----
+## Categories
 
-## Environment variables (6 total, all already in use)
+Categories describe families of components.
 
-**Local `.env` (client-side, prefixed `VITE_`):**
-```
-VITE_SUPABASE_URL=https://your-project-ref.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-public-key
-```
+Examples include:
 
-**Vercel (server-side, set in Project Settings → Environment Variables):**
-```
-SUPABASE_URL=https://your-project-ref.supabase.co
-SUPABASE_SERVICE_KEY=your-service-role-key
-ONSHAPE_ACCESS_KEY=your-onshape-access-key
-ONSHAPE_SECRET_KEY=your-onshape-secret-key
-```
+Bearings
+Bolts
+Shafts
+Plates
+Belts
 
-Get the Onshape keys from **https://dev.onshape.com/keys** — create an **API key pair**, not an OAuth app. That distinction matters: API keys are what this integration uses; OAuth apps are a different, unused feature here.
+Categories also define required attributes.
 
----
+Example:
+> - Bolt
+> - Thread Size
+> - Length
+> - Head Style
+> - Material
 
-## Setup
+Every component belonging to the Bolt category must provide those attributes. Categories provide structure without defining individual parts.
 
-1. **Supabase** — create a project, run `schema.sql` in the SQL Editor, copy the URL + anon key into `.env`.
-2. **Onshape** — create an API key pair at the link above, copy Access Key + Secret Key into Vercel env vars.
-3. **Local dev:**
-   ```bash
-   npm install
-   npm run dev
-   ```
-4. **Deploy:** push to GitHub, Vercel auto-builds. The `api/` folder deploys as serverless functions automatically — no separate configuration needed.
+## Components
+Components describe what a part is. Components intentionally do not represent physical inventory. Instead, they describe one unique real-world part.
 
----
+Example:
+> - Socket Head Bolt
+> - 1/4-20
+> - 2"
+> - Steel
+> - Black Oxide
 
-## Manual test checklist
+There is exactly one Component representing that bolt. Every physical copy references it. This abstraction eliminates duplicate descriptions throughout the application.
 
-Run through this after any change to the Onshape integration or before a deploy you care about:
+## Inventory Instances
+Inventory Instances represent where parts exist. Each instance references exactly one Component.  
+Example:
+> Component
+> ↓
+> 1/4-20 × 2" Bolt
+> ↓
+> Inventory Instance
+> 
+> Location:
+> Drawer C4
+> 
+> Quantity:
+> 18
 
-- [ ] `npm run dev` boots with no console errors
-- [ ] Inventory mode: add, edit, delete a component (unaffected by any of the Onshape work — should still work exactly as before)
-- [ ] Designer mode: create an assembly
-- [ ] Designer mode: add a part manually
-- [ ] Designer mode: import a BOM via CSV upload
-- [ ] Designer mode: click **Import from Onshape** → search returns real documents
-- [ ] Selecting a document with zero assemblies shows the "No assemblies in this document" state, not an error
-- [ ] Selecting an assembly with an empty BOM shows the warning + "No parts to import" state, not a crash
-- [ ] Selecting a real assembly with parts shows an accurate preview table
-- [ ] Clicking **Import parts** adds them to the open assembly's parts table with `source: onshape`
-- [ ] If the assembly had no Onshape URL before, it now shows an "Onshape" link in the toolbar pointing to the right document/assembly
-- [ ] Qty stepper still increments/decrements correctly on Onshape-imported parts (no different from manual/CSV parts)
-- [ ] Progress bar and assembly status (draft/active/complete) update correctly after the import
-- [ ] Deployed `/api/onshape-documents`, `/api/onshape-elements`, `/api/onshape-bom-preview` all return correctly via `curl` against production, not just localhost
+Separating Components from Inventory allows multiple storage locations for the same part.
 
----
+## Assemblies
+Assemblies describe how Components combine into larger systems. Assemblies originate primarily from Onshape BOM imports.
 
-## What's NOT built (intentionally out of scope)
+Assemblies may contain:
+- Components
+- Child Assemblies
 
-- **Per-user OAuth** — would let each Partshelf user browse their own private Onshape documents instead of one shared account's documents. Bigger undertaking, not needed for current single-team use.
-- **Mapping BOM parts to existing Inventory components** — imported Onshape/CSV parts currently live only in the assembly's part list; they aren't auto-linked to matching Inventory items. `onshape_reference` (the raw BOM row) is stored on each part for this to be built later.
-- **Pagination on document search** — capped at 20 results per search. Fine for typical use; if your Onshape account has hundreds of matching documents, narrow the search query rather than scroll.
-- **Stock-level checking on import** — no warning today if an imported BOM needs more of a part than Inventory has on hand.
+allowing recursive structures.
 
-None of these block current use — they're natural next features if you want to keep building.
+Example:
+> Robotic Arm
+> ↓
+> Arm Base
+> ↓
+> Arm Gearbox
+
+Each level remains independently manageable.
+
+## Assembly Parts
+
+Assembly Parts represent requirements. Unlike Inventory, they describe:
+
+> "This assembly requires three of this Component."
+
+Assembly Parts become satisfied by exactly one of three workflows:
+
+> Inventory 
+> Fabrication
+> Purchase
+
+The designer is responsible for deciding which path each part follows.
+
+## Fabrication Jobs
+
+Fabrication Jobs promise future inventory. When an assembly requires a custom part that does not yet exist, the Designer creates a Fabrication Job. Once completed, the resulting Inventory Instance satisfies the Assembly requirement. This allows manufacturing to be planned before inventory exists.
+
+## Part Orders
+
+Purchased components follow a similar workflow. Assembly requirements become Cart Items. Cart Items are grouped by vendor.
+Example:
+> McMaster
+> ↓
+> Cart
+> ↓
+> Purchase
+> ↓
+> Receive
+> ↓
+> Inventory
+
+# System responsibilities
+
+## Inventory
+Responsible for:
+
+- Components
+- Categories
+- Inventory Instances
+- Locations
+- Searching
+- Images
+
+Inventory never concerns itself with CAD.
+
+## Designer
+Responsible for: 
+
+- Assemblies
+- BOM imports
+- Child assemblies
+- Assembly requirements
+- Linking inventory
+- Creating fabrication jobs
+- Creating purchase requests
+
+Designer is the bridge between CAD and reality.
+
+## Fabrication
+
+Responsible for:
+
+- Manufacturing queues
+- Batching
+- Claiming work
+- Tracking progress
+- Creating finished inventory
+
+Fabrication should never need to understand Onshape. It only receives manufacturing requirements.
+
+## Part Orders
+
+Responsible for:
+
+- Vendor grouping
+- Purchasing
+- Receiving
+- Updating inventory
+
+# Data Flow
+The most important workflow in Partshelf is:
+> Onshape
+> ↓
+> Assembly import
+> ↓
+> Assembly Parts
+> ↓
+> Resolve Requirements
+> ↓
+> Inventory
+> Fabrication
+> Purchase
+> ↓
+> Finished Inventory
+> ↓
+> Physical Assembly
+
+Every major feature exists somewhere in this pipeline.
+
+# Architectural Principles
+
+## Agent-first priority
+This codebase is maintained and developed mainly through artificial intelligence agents. The frontend/UI is directly interacted with by users, and should cater to users. Everything else including the code is mainly engineered by agents, and thus future code and documentation should be written for *agents* to best promote their understanding and productivity. 
+
+## Single Source of Truth
+Every piece of information should exist in exactly one place.
+
+Inventory should never duplicate Component definitions. Assemblies should never duplicate Inventory. Fabrication should never duplicate Assembly data.
+
+## Domain Separation
+Inventory, Designer, Fabrication, Orders, and Onshape integration should remain independent. Communication should occur through well-defined interfaces rather than shared implementation.
+
+## Workflow First
+
+The user interface should reflect the team's real manufacturing process. Every additional click, dialog, or manual data entry should have a clear justification. If users begin maintaining parallel spreadsheets or notes, the application has failed its primary objective.
+
+# Future Direction 
+The long-term vision is to evolve Partshelf into a complete logistics platform supporting:
+
+- Inventory
+- CAD
+- Fabrication
+- Purchasing
+- Assembly
+- Project management
+- Task assignment
+- Team coordination
+
+while preserving the same underlying philosophy:
+
+One system from CAD to a finished assembly.
+

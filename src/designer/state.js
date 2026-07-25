@@ -103,6 +103,31 @@ export function resetPartFilters() {
   partNumberOnly = false
 }
 
+// ── Row multi-select (Designer parts tables only) ────────────────
+// Selection is deliberately scoped to "whichever table is on screen right
+// now" rather than tracked separately per root/child table — a selection
+// made in the root parts table and one made inside a subassembly's parts
+// table can never coexist, by product decision. Every place that swaps
+// currentParts/currentChildParts wholesale (selectAssembly, entering/
+// exiting a child, breadcrumb/navigateUp) must also call
+// clearPartSelection() — see assemblyDetail.js.
+let selectedPartIds = new Set()
+
+export function getSelectedPartIds()      { return selectedPartIds }
+export function setSelectedPartIds(v)     { selectedPartIds = v }
+export function clearPartSelection()      { selectedPartIds = new Set() }
+export function isPartSelected(id)        { return selectedPartIds.has(id) }
+export function togglePartSelected(id) {
+  const next = new Set(selectedPartIds)
+  next.has(id) ? next.delete(id) : next.add(id)
+  selectedPartIds = next
+}
+export function setPartsSelected(ids, selected) {
+  const next = new Set(selectedPartIds)
+  ids.forEach(id => selected ? next.add(id) : next.delete(id))
+  selectedPartIds = next
+}
+
 // ── Small pure helpers used across many modules ──────────────────
 export function partsProgress(parts) {
   if (!parts.length) return { collected: 0, total: 0, pct: 0 }
@@ -137,6 +162,17 @@ export function totalPromisedQty(job, orders) {
   const fromJob    = job ? Math.max(0, job.quantityRequested - job.quantityMachined) : 0
   const fromOrders = (orders || []).reduce((sum, o) => sum + (o.quantity || 0), 0)
   return fromJob + fromOrders
+}
+
+/** Whether a part still has room to promise more (via Fabricate or a
+ *  cart) — the same gate the row-level "Send to Fabricate"/"Add to
+ *  cart" buttons already disable on individually. Shared here so the
+ *  bulk-action toolbar can compute eligibility across a selection
+ *  without duplicating the arithmetic. */
+export function partCanPromiseMore(p, job, orders) {
+  const collected = p.quantityCollected || 0
+  const promised   = totalPromisedQty(job, orders)
+  return (p.quantityNeeded - collected - promised) > 0
 }
 
 // ── Part-row filter predicates (used by partsTable.js's render) ───
