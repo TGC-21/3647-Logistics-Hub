@@ -843,15 +843,15 @@ function refreshChildPartsTbody() {
 function refreshPartsTbody() {
   const tbody = document.getElementById('parts-tbody')
   if (!tbody) return   // showing the subassemblies tab, or no parts at all — nothing to refresh
-  const currentChildParts    = getCurrentChildParts()
-  const currentChildPartJobs = getCurrentChildPartJobs()
-  const currentChildPartOrders = getCurrentChildPartOrders()
+  const currentParts    = getCurrentParts()
+  const currentPartJobs = getCurrentPartJobs()
+  const currentPartOrders = getCurrentPartOrders()
   tbody.innerHTML = currentChildParts
     .filter(partRowVisible)
-    .map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || []))
+    .map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || []))
     .join('')
-  bindChildPartRowEvents()   // tbody is fresh, so rebind row-level listeners (existing pattern)
+  bindPartRowEvents()   // tbody is fresh, so rebind row-level listeners (existing pattern)
 
   const countEl = document.querySelector('.asm-parts-title .section-count')
-  if (countEl) countEl.textContent = String(currentChildParts.filter(partRowVisible).length)
+  if (countEl) countEl.textContent = String(currentParts.filter(partRowVisible).length)
 }
