@@ -380,6 +380,18 @@ export function candidateFilter(row) {
   const partNumber = (row.partNumber || '').toLowerCase()
   if (!name.includes('plate') && !partNumber.includes('plate')) return false
   if (row.raw?.isStandardContent) return false
+
+  // Defer to the spacer detector for any name that ALSO matches its own
+  // keyword (e.g. "Plate Spacer") — spacer has explicit priority over
+  // plate (see fabrication-detectors.js's DETECTORS order and
+  // PLATE_DETECTION_ROADMAP.md's resolved "spacer claims first" rule).
+  // This is a cheap, local, no-request short-circuit; the persisted-state
+  // priority check in onshape-detect-fabrication.js is the authoritative
+  // backstop for cases this substring check doesn't catch (renamed parts,
+  // partial matches, etc.) — this just avoids ever firing plate's
+  // classifyGeometry on an obvious spacer-named part to begin with.
+  if (name.includes('spacer') || partNumber.includes('spacer')) return false
+
   return true
 }
 

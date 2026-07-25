@@ -143,6 +143,7 @@ async function fetchWholeTreeParts(supabase, assemblyId) {
       partName:    row.part_name,
       partNumber:  row.part_number,
       raw:         row.onshape_reference || {},
+      existingMetadata: row.fabrication_metadata || null,   // ← add
     })),
     skippedCount,
   }
@@ -156,36 +157,43 @@ async function detectAndPersist(supabase, { rows, rootDocumentId }) {
   let ignoredCount = 0
   const warnings = []
 
-  // Rows whose name matches more than one detector's keyword filter
-  // (e.g. "Spacer Plate", a hex-profile spacer matching axial-shaft's
-  // "hex" keyword) are structurally ambiguous by name alone. This set
-  // tracks every row ANY earlier detector in DETECTORS' order has
-  // already classified as 'detected' — every later detector's candidate
-  // list is filtered against it before that detector's bodydetails pass
-  // even runs, so a confirmed-good classification from an earlier
-  // detector is never re-fetched, re-classified, or overwritten by a
-  // later detector's (necessarily worse, since it wasn't the first
-  // match) read of the same geometry. This replaces what used to be a
-  // spacer-only special case checked only by axial-shaft.
   const claimedByEarlierDetector = new Set()
+
+  // Detector priority as an index lookup — DETECTORS' array order
+  // (spacer, axial-shaft, plate) is the single source of truth. Used
+  // below to check a row's PERSISTED classification from a prior run,
+  // not just detectors that ran earlier in this same pass — a row that
+  // was already classified 'detected' as a spacer in some earlier click
+  // of "Detect fabrication candidates" must stay off-limits to a later
+  // detector even on a completely fresh run where claimedByEarlierDetector
+  // starts empty (e.g. "Plate Spacer" landing on spacer 'needs_review'
+  // one run, then getting reclassified as 'plate' on the next run).
+  const detectorRank = Object.fromEntries(DETECTORS.map((d, i) => [d.kind, i]))
+
+  function claimedByHigherPriorityDetector(row, detector) {
+    const existingKind = row.existingMetadata?.kind
+    if (!existingKind || existingKind === detector.kind) return false
+    // Only a 'detected' (confirmed-good) prior classification blocks a
+    // later detector — 'needs_review'/'failed' shouldn't permanently
+    // lock a row to the wrong kind forever, just to a kind that already
+    // succeeded.
+    if (row.existingMetadata?.status !== 'detected' && row.existingMetadata?.status !== 'confirmed' && row.existingMetadata?.status !== 'queued') return false
+    const existingRank = detectorRank[existingKind]
+    const thisRank     = detectorRank[detector.kind]
+    return existingRank !== undefined && existingRank < thisRank
+  }
 
   for (const detector of DETECTORS) {
     let candidates = candidateRowsForDetector(detector, rows, rootDocumentId)
-    candidates = candidates.filter(r => !claimedByEarlierDetector.has(r.id))
+    candidates = candidates.filter(r =>
+      !claimedByEarlierDetector.has(r.id) && !claimedByHigherPriorityDetector(r, detector)
+    )
     candidateCount += candidates.length
 
-    // Rows filtered out by candidateFilter/isFromRootDocument but whose
-    // name still mentions the detector's kind get marked 'ignored' so the
-    // UI can distinguish "we looked and it's not ours" from "never
-    // considered". Cheap and just a name-substring check. Rows already
-    // claimed by an earlier detector are deliberately excluded from this
-    // ignored-marking too — they're not "ignored," they're already
-    // correctly classified by someone else, and re-marking them here
-    // would overwrite that correct metadata just as surely as running
-    // the detector's geometry pass would.
     const ignoredRows = rows.filter(r =>
       !candidates.includes(r) &&
       !claimedByEarlierDetector.has(r.id) &&
+      !claimedByHigherPriorityDetector(r, detector) &&
       detector.candidateFilter(r) &&
       !detector.isFromRootDocument(r, rootDocumentId)
     )
@@ -247,8 +255,8 @@ const UNIT_SCALE_METERS_TO_INCHES = 1 / 0.0254
 
 const postGeometryCheckCache = new Map()
 
-function cachedPostGeometryCheck(documentId, wvmType, wvmId, elementId) {
-  const key = `${documentId}::${wvmType}::${wvmId}::${elementId}`
+function cachedPostGeometryCheck(detector, documentId, wvmType, wvmId, elementId) {
+  const key = `${detector.kind}::${documentId}::${wvmType}::${wvmId}::${elementId}`
   if (!postGeometryCheckCache.has(key)) {
     postGeometryCheckCache.set(key, detector.postGeometryCheck(documentId, wvmType, wvmId, elementId))
   }
@@ -366,7 +374,7 @@ async function runBodyDetailsBasedDetection(supabase, detector, candidates, { on
         if (result.status === 'detected' && typeof detector.postGeometryCheck === 'function') {
           let notExcluded
           try {
-            notExcluded = await cachedPostGeometryCheck(group.documentId, group.wvmType, group.wvmId, group.elementId)
+            notExcluded = await cachedPostGeometryCheck(detector, group.documentId, group.wvmType, group.wvmId, group.elementId)
           } catch (e) {
             console.warn(`[onshape-detect-fabrication] ${detector.kind} postGeometryCheck failed for part ${partId}: ${e.message}`)
             notExcluded = null

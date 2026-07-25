@@ -15,6 +15,7 @@ import {
   moveJobToBatch, updateQueuedJobQuantity, deleteQueuedFabricationJob,
   claimFabricationJob, releaseFabricationJobClaim, recordMachinedUnits,
   archiveFabricationJob,
+  upsertAssemblyPart,   // ← add
 } from './db.js'
 import { getAssemblies } from './designer.js'
 
@@ -510,6 +511,33 @@ async function handleDeleteJob(jobId) {
   if (!confirm(`Delete this unclaimed job${part ? ` for "${part.partName}"` : ''}? This cannot be undone.`)) return
   try {
     await deleteQueuedFabricationJob(jobId)
+
+    // part.fabricationMetadata.status was set to 'queued' when this job
+    // was confirmed — that status is TERMINAL as far as
+    // /api/onshape-detect-fabrication.js's fetchWholeTreeParts is
+    // concerned (see TERMINAL_DETECTION_STATUSES), so the part is
+    // permanently excluded from future detection scans. Deleting the job
+    // without reopening the part here leaves it silently unscannable
+    // forever. Reset it to 'detected' so it's picked up again.
+    if (part?.fabricationMetadata?.autoDetected && part.fabricationMetadata.status === 'queued') {
+      try {
+        const updatedPart = await upsertAssemblyPart({
+          ...part,
+          fabricationMetadata: {
+            ...part.fabricationMetadata,
+            status: 'detected',
+            warnings: [
+              ...(part.fabricationMetadata.warnings || []),
+              'Fabrication job was deleted — re-confirm to send to Fabricate again.',
+            ],
+          },
+        })
+        partsCache[job.assemblyPartId] = updatedPart
+      } catch (metaErr) {
+        console.warn('[fabricate] Failed reopening part for re-detection after job delete', metaErr)
+      }
+    }
+
     jobs = jobs.filter(j => j.id !== jobId)
     renderFabricateSidebar(); renderFabricateContent()
     toastFn('Job deleted')
