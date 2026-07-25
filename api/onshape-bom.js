@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     const supabase = getSupabase()
 
     if (body.reimport && body.assemblyId) {
-      const result = await reimportAssembly(supabase, body.assemblyId)
+      const result = await reimportAssembly(supabase, body.assemblyId, body.actorId || null)
       return res.status(200).json({ success: true, ...result })
     }
 
@@ -54,7 +54,7 @@ export default async function handler(req, res) {
       documentId, workspaceId, elementId,
       name: assemblyName || null,
       thumbnailUrl: thumbnailUrl || null,
-      rootOwnerId,
+      rootOwnerId, actorId: body.actorId || null,
     })
     return res.status(200).json({ success: true, ...result })
 
@@ -74,7 +74,7 @@ export default async function handler(req, res) {
 // Subassemblies discovered underneath it are written to assembly_children,
 // never as their own `assemblies` rows.
 
-async function buildAssembly(supabase, { documentId, workspaceId, elementId, name, thumbnailUrl, rootOwnerId }) {
+async function buildAssembly(supabase, { documentId, workspaceId, elementId, name, thumbnailUrl, rootOwnerId }, actorId) {
   const assemblyId   = genId()
   const onshapeUrl   = `https://cad.onshape.com/documents/${documentId}/w/${workspaceId}/e/${elementId}`
   const assemblyName = name || `Onshape assembly — ${new Date().toLocaleDateString()}`
@@ -113,7 +113,7 @@ async function buildAssembly(supabase, { documentId, workspaceId, elementId, nam
   const commitId = genCommitId()
   await recordChangeServer(supabase, {
     entityType: 'assembly', entityId: assemblyId, action: 'create',
-    newValue: { id: assemblyId, name: assemblyName }, actorId: body.actorId || null, commitId,
+    newValue: { id: assemblyId, name: assemblyName }, actorId: actorId || null, commitId,
   })
 
   return {
@@ -222,7 +222,7 @@ async function seedAssemblyContents(supabase, {
  * simultaneous requests at Onshape — onshapeGet's own 429 backoff is a
  * safety net, not a substitute for capping fan-out at the source.
  */
-async function seedSubassembliesConcurrently(supabase, subassemblies, { depth, rootOwnerId, childrenOwner, resolveCache }) {
+async function seedSubassembliesConcurrently(supabase, subassemblies, { depth, rootOwnerId, childrenOwner, resolveCache, fabricationMetadataByKey }) {
   let childCount = 0
   let cursor = 0
 
@@ -318,6 +318,22 @@ async function walkAssemblyPartsTree(supabase, assemblyId) {
   return allParts
 }
 
+// Server-side equivalent of src/db.js's fetchAllLinkedInstanceIdsForAssembly
+// + releaseInstances, combined — reuses the tree-walk this file already
+// has (walkAssemblyPartsTree) rather than the client-only get_assembly_part_tree
+// RPC path, since this runs with the service-role client, not the browser's.
+async function releaseAllLinkedInstances(supabase, assemblyId) {
+  const parts = await walkAssemblyPartsTree(supabase, assemblyId)
+  const instanceIds = parts.flatMap(p => p.linked_instance_ids || [])
+  if (!instanceIds.length) return
+
+  const { error } = await supabase
+    .from('inventory_instances')
+    .update({ status: 'available', location: '' })
+    .in('id', instanceIds)
+  if (error) throw new Error(`Releasing linked instances: ${error.message}`)
+}
+
 function computePartStatus(collected, needed) {
   return collected >= needed ? 'complete' : collected > 0 ? 'partial' : 'pending'
 }
@@ -345,7 +361,7 @@ function computePartStatus(collected, needed) {
 // decrease reconciliation" design discussion. No promise source is ever
 // auto-trimmed by this function.
 
-async function reimportAssembly(supabase, assemblyId) {
+async function reimportAssembly(supabase, assemblyId, actorId) {
   const { data: asm, error: fetchErr } = await supabase
     .from('assemblies').select('*').eq('id', assemblyId).single()
   if (fetchErr || !asm) throw new Error('Assembly not found.')
@@ -422,7 +438,7 @@ async function reimportAssembly(supabase, assemblyId) {
     newBySourceKey,
   })
 
-  await logReimportChanges(supabase, { assemblyId, oldParts, newParts, actorId: body.actorId || null })
+  await logReimportChanges(supabase, { assemblyId, oldParts, newParts, actorId: actorId || null })
 
   const parts = [
     `Re-imported: ${partCount} part(s), ${childCount} subassembly(ies).`,

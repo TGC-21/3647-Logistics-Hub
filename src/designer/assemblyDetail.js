@@ -403,17 +403,21 @@ async function runFabricationDetection() {
   const btn = document.getElementById('btn-detect-fabrication')
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
 
-
-  // ...unchanged setup...
   try {
-    const res = await fetch('/api/onshape-detect-fabrication', { /* ... */ })
+    const res = await fetch('/api/onshape-detect-fabrication', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assemblyId: currentAssemblyId }),
+    })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Detection failed')
 
     setCurrentParts(await fetchAssemblyParts(currentAssemblyId))
     renderAssemblyDetailFromState()   // was renderAssemblyDetail() — children/jobs/orders didn't change
     toast(data.message || 'Detection complete')
-  } catch (e) { /* ...unchanged... */ }
+  } catch (e) { 
+    console.error(e)
+    toast(e.message || 'Error running fabrication detection')}
   finally { fabDetectRunning = false }
 
 }
@@ -425,7 +429,11 @@ async function runFabricationDetectionForChild() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
   try {
     const rootAssemblyId = await fetchRootAssemblyIdForChild(getViewingChildId())
-    const res = await fetch('/api/onshape-detect-fabrication', { /* ... */ })
+    const res = await fetch('/api/onshape-detect-fabrication', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assemblyId: rootAssemblyId }),
+    })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Detection failed')
     setCurrentChildParts(await fetchChildParts(getViewingChildId()))
@@ -846,7 +854,7 @@ function refreshPartsTbody() {
   const currentParts    = getCurrentParts()
   const currentPartJobs = getCurrentPartJobs()
   const currentPartOrders = getCurrentPartOrders()
-  tbody.innerHTML = currentChildParts
+  tbody.innerHTML = currentParts
     .filter(partRowVisible)
     .map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || []))
     .join('')
