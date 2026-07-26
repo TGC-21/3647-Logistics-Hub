@@ -30,6 +30,12 @@ import {
   bindManageVendorsEvents,
 } from './partOrders.js'
 
+// ── new import, alongside the existing fabricate/partOrders imports ──
+import {
+  agendaBoot, setAgendaToast, renderAgendaSidebar, renderAgendaContent,
+  bindAgendaEvents, consumeAgendaDeepLink,
+} from './agenda.js'
+
 import { attachAutocomplete } from './autocomplete.js'
 
 import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from './members.js'
@@ -65,6 +71,9 @@ async function boot() {
   setToast(showToast)
   setFabricateToast(showToast)
   setPartOrdersToast(showToast)
+  setAgendaToast(showToast)
+
+  const hasTaskDeepLink = consumeAgendaDeepLink()
 
   // "?asm=<id>" opens a single ROOT assembly full-screen; "?child=<id>"
   // opens a single SUBASSEMBLY node full-screen. Both have no sidebar/other
@@ -106,16 +115,19 @@ async function boot() {
     await designerBoot()
     await fabricateBoot()
     await partOrdersBoot()
+    await agendaBoot()
 
   } catch (e) {
     console.error(e)
     showToast('Could not connect to database — check your .env file')
   }
+  appMode = 'agenda'
   render()
   try { bindStaticEvents() }    catch (e) { console.error('[boot] bindStaticEvents failed', e) }
   try { bindDesignerEvents() }  catch (e) { console.error('[boot] bindDesignerEvents failed', e) }
   try { bindFabricateEvents() } catch (e) { console.error('[boot] bindFabricateEvents failed', e) }
   try { bindPartOrdersEvents() } catch (e) { console.error('[boot] bindPartOrdersEvents failed', e) }
+  try { bindAgendaEvents() } catch (e) {console.error('[boot] bindAgendaEvents failed', e)}
   try { bindManageVendorsEvents()} catch (e) { console.error('[boot] bindManageVendorsEvents failed', e)}
   try { bindHistoryPanelEvents() } catch (e) { console.error('[boot] bindHistoryPanelEvents failed', e )}
   
@@ -144,22 +156,26 @@ function showToast(msg, onClick) {
 function setMode(newMode) {
   appMode = newMode // 'inventory' | 'designer' | 'fabricate'
 
+  document.getElementById('btn-mode-agenda').classList.toggle('active', appMode === 'agenda')
   document.getElementById('btn-mode-inventory').classList.toggle('active', appMode === 'inventory')
   document.getElementById('btn-mode-designer').classList.toggle('active', appMode==='designer')
   document.getElementById('btn-mode-fabricate').classList.toggle('active', appMode === 'fabricate')
+  document.getElementById('btn-mode-partorders').classList.toggle('active', appMode === 'partorders')
+
   document.getElementById('inventory-actions').style.display = appMode === 'inventory' ? '' : 'none'
   document.getElementById('designer-actions').style.display = appMode === 'designer' ? '' : 'none'
   document.getElementById('fabricate-actions').style.display = appMode === 'fabricate' ? '' : 'none'
   document.getElementById('topbar-search-wrap').style.display = appMode === 'inventory' ? '' : 'none'
-  document.getElementById('btn-mode-partorders').classList.toggle('active', appMode === 'partorders')
   document.getElementById('partorders-actions').style.display = appMode === 'partorders' ? '' : 'none'
 
   // Mobile bottom tab bar + FAB mirror the same mode
+  const tabAgenda     = document.getElementById('tab-btn-agenda')
   const tabComponents = document.getElementById('tab-btn-components')
   const tabDesigner    = document.getElementById('tab-btn-designer')
   const tabFabricate = document.getElementById('tab-btn-fabricate')
   const tabPartorders = document.getElementById('tab-btn-partorders')
-  if (tabComponents && tabDesigner && tabFabricate){
+  if (tabComponents && tabDesigner && tabFabricate && tabAgenda){
+    tabAgenda?.classList.toggle('active', appMode === 'agenda')           
     tabComponents.classList.toggle('active', appMode === 'inventory')
     tabDesigner.classList.toggle('active', appMode ==='designer')
     tabFabricate.classList.toggle('active', appMode === 'fabricate')
@@ -179,7 +195,10 @@ function setMode(newMode) {
 
 // ── Render ────────────────────────────────────────────────────
 function render() {
-  if (appMode === 'designer') {
+  if (appMode === 'agenda'){
+    renderAgendaSidebar()
+    renderAgendaContent()
+  } else if (appMode === 'designer') {
     renderDesignerSidebar()
     renderDesignerContent()
   } else if (appMode === 'fabricate'){
@@ -383,6 +402,7 @@ function bindStaticEvents() {
   })
 
   // Mode toggle
+  document.getElementById('btn-mode-agenda').addEventListener('click', () => setMode('agenda'))
   document.getElementById('btn-mode-inventory').addEventListener('click', () => setMode('inventory'))
   document.getElementById('btn-mode-designer').addEventListener('click', () => setMode('designer'))
   document.getElementById('btn-mode-fabricate').addEventListener('click', () => setMode('fabricate'))
@@ -390,6 +410,7 @@ function bindStaticEvents() {
   document.getElementById('btn-new-from-onshape').addEventListener('click', () => openOnshapeModal('link'))
 
   // ── Mobile bottom tab bar ──────────────────────────────────
+  document.getElementById('tab-btn-agenda').addEventListener('click', () => setMode('agenda'))
   document.getElementById('tab-btn-components').addEventListener('click', () => setMode('inventory'))
   document.getElementById('tab-btn-designer').addEventListener('click', () => setMode('designer'))
   document.getElementById('tab-btn-fabricate').addEventListener('click', () => setMode('fabricate'))
@@ -426,6 +447,7 @@ function bindStaticEvents() {
 
   // nav-all: route by mode
   document.getElementById('nav-all').addEventListener('click', () => {
+    if (appMode === 'agenda') { return }
     if (appMode === 'designer') { selectAssembly(null); return }
     if (appMode === 'fabricate') { selectBatch(null); return }
     setView('all', null, null)
