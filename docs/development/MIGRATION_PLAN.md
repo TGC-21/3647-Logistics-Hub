@@ -9,10 +9,13 @@
 - Errors: only typed errors from repositories/errors.js cross the service boundary; routes translate via statusForError.
 - Change-log stays a known wart until its own pass (see Phase 1 below) — don't invent a second copy per service.
 
-### Phase 0 — Shared infrastructure debt (do first, unblocks everything else)
-1. ChangeLogRepository — wraps recordChangeServer/genCommitId behind a repository so services stop constructing getSupabase() themselves just to pass it through. Every subsequent service should depend on this, not on a raw client.
-2. Confirm the "services are plain modules imported by Vercel functions" answer (open question in AGENTIC_HARNESS.md) before scaling — if it flips to "services as their own HTTP-exposed functions," every route file's shape changes. Decide once, apply everywhere.
-3. Establish a repository test convention (using resetSupabaseClientForTests) before the second domain lands, so it's not retrofitted later.
+### Phase 0 — Shared infrastructure debt (do first, unblocks everything else) — ✅ DONE
+
+1. ✅ **ChangeLogRepository** — `repositories/ChangeLogRepository.js`. `FabricationJobService` now takes `changeLogRepo` in its constructor instead of a raw `supabase` client; it has zero references to `@supabase/supabase-js`, even indirectly, as a result. Every subsequent service should depend on this the same way.
+2. ✅ **Confirmed**: services are plain modules imported directly by Vercel functions (`AGENTIC_HARNESS.md`'s Decisions section). The harness itself never imports these modules — it's an external process on a home server and reaches Partshelf over HTTP through the routes, same surface the browser uses. This didn't change any file's shape, it just made the existing choice load-bearing.
+3. ✅ **Repository test convention established, not just described.** `repositories/__tests__/testUtils/fakeSupabase.js` is a minimal fake chainable query-builder client (`.calledWith({ table, method, args })` for assertions) — used by `repositories/__tests__/FabricationJobRepository.test.js` and `repositories/__tests__/ChangeLogRepository.test.js`. Went with constructor-injected fakes over `resetSupabaseClientForTests` for the actual test files, since every repository already accepts a client via its constructor and that's simpler to reason about per-test than a module-level singleton reset in `beforeEach`/`afterEach`; `resetSupabaseClientForTests` stays available in `supabaseClient.js` for the rarer case something can't take a constructor arg. One level up, `services/__tests__/FabricationJobService.test.js` never touches even the fake Supabase client — only plain fake repository objects — which is only possible now that item 1 above removed the service's last direct Supabase dependency. Run with `npm test` (vitest; added as a devDependency).
+
+**Also shipped alongside Phase 0** (agreed in the same conversation, cheap enough not to defer): a shared-secret gate for harness-only routes — `api/_lib/harnessAuth.js` (`assertHarnessToken`, throws the new `UnauthorizedError` from `repositories/errors.js`), wired into `api/fabrication-jobs.js`. Requires `HARNESS_API_TOKEN` to be set identically in Vercel's env vars and the harness's own `.env`; fails closed if unset. This is explicitly NOT the Phase 3 auth boundary — it only answers "may this process call this route at all," not "which member should this action be attributed to."
 
 ### Phase 1 — Domain migration order
 

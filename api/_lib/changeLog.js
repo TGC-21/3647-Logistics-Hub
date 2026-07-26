@@ -1,7 +1,7 @@
 // api/_lib/changeLog.js
 //
 // Server-side counterpart to src/changeLog.js. Vercel functions
-// (api/onshape-bom.js, api/onshape-detect-fabrication.js, etc) run with
+// (api/onshape-bom.js, api/onshape-detect-fabrication.js, etc.) run with
 // the Supabase SERVICE-ROLE key via their own createClient() call — they
 // never share a JS bundle with the browser, so src/changeLog.js (which
 // imports the browser's anon-key `supabase` from src/db.js) is

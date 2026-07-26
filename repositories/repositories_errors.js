@@ -37,6 +37,14 @@ export class ConflictError extends Error {
   }
 }
 
+export class UnauthorizedError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'UnauthorizedError'
+    this.statusCode = 401
+  }
+}
+
 export class DatabaseError extends Error {
   constructor(message, cause) {
     super(message)

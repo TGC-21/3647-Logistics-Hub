@@ -24,6 +24,7 @@
 //   { action: 'deleteQueued',   jobId, actorId? }
 
 import { applyCors } from './_lib/onshape.js'
+import { assertHarnessToken } from './_lib/harnessAuth.js'
 import { FabricationJobService } from '../services/FabricationJobService.js'
 import { statusForError } from '../repositories/errors.js'
 
@@ -36,6 +37,13 @@ export default async function handler(req, res) {
   const service = new FabricationJobService()
 
   try {
+    // This route has no client (browser) callers yet — see
+    // MIGRATION_EXAMPLE.md — so it's safe to gate behind the harness
+    // shared secret from day one. When client cutover happens for this
+    // route, this line needs a real decision (see api/_lib/harnessAuth.js),
+    // not just removal.
+    assertHarnessToken(req)
+
     switch (body.action) {
       case 'create': {
         const job = await service.createJob({

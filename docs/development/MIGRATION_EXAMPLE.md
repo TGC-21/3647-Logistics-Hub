@@ -65,30 +65,59 @@ function's three-table transaction in JavaScript: the DB function
 already *is* the atomic unit of work; the repository's job is to give
 it a clean name and a mapped return shape, not to re-derive it.
 
+## Update — Phase 0 (MIGRATION_PLAN.md) is done
+
+Since this doc was first written, `MIGRATION_PLAN.md`'s Phase 0 shipped:
+
+- **`repositories/ChangeLogRepository.js`** exists and
+  `FabricationJobService` now depends on it instead of a raw Supabase
+  client — debt item 1 below is resolved, kept in the list crossed out
+  rather than deleted so the "why" is still visible.
+- **The service-shape question is confirmed** (plain modules imported
+  directly by Vercel functions — see `AGENTIC_HARNESS.md`'s Decisions
+  section). Nothing changes shape as a result; it's now load-bearing
+  instead of provisional.
+- **A repository test convention exists and is exercised**, not just
+  described: `repositories/__tests__/testUtils/fakeSupabase.js` is a
+  minimal fake query-builder client (chainable, `.calledWith(...)` for
+  assertions) that every repository test constructs instead of touching
+  real Supabase. Service tests go one level further and never even see
+  a fake Supabase client — they inject plain fake repository objects
+  directly, which is only possible now that `ChangeLogRepository`
+  removed the service's last direct Supabase dependency. See
+  `repositories/__tests__/FabricationJobRepository.test.js`,
+  `repositories/__tests__/ChangeLogRepository.test.js`, and
+  `services/__tests__/FabricationJobService.test.js` for the pattern to
+  copy on the next domain. Run with `npm test` (vitest).
+- **`api/fabrication-jobs.js` is now gated behind a shared harness
+  token** (`api/_lib/harnessAuth.js`) — see that file's own doc comment
+  for why this is scoped narrowly and isn't a substitute for real
+  per-member auth.
+
 ## Known debt this example intentionally leaves in place
 
 Don't "fix" these while copying the pattern elsewhere — they're called
 out on purpose so the next migration doesn't quietly diverge:
 
-1. **`recordChangeServer` still takes a raw Supabase client, not a
-   repository.** `FabricationJobService` constructs `getSupabase()`
-   itself just to pass it through to the change-log helper. The clean
-   fix is a `ChangeLogRepository` with a `record(...)` method — left out
-   here to keep this example to one domain; do it once, in its own pass,
-   and every service (including this one) can drop the `supabase`
-   constructor param entirely.
+1. ~~`recordChangeServer` still takes a raw Supabase client, not a
+   repository.~~ **Resolved by Phase 0** — see above.
 2. **Nothing on the client (`src/db.js`, `src/fabricate.js`,
    `src/designer/fabricateFlow.js`, `src/designer/fabDetection.js`) has
    been switched to call `/api/fabrication-jobs` yet.** They still call
    Supabase directly with the anon key, exactly as before. Swapping them
-   over is a separate, deliberately later step — do it only after this
-   route has been exercised for real, so a bad migration doesn't take
-   down a working UI flow at the same time as the refactor.
-3. **Auth is a no-op.** `actorId` is trusted as whatever the caller
-   sends, same as the rest of the app today (`getCurrentMemberId()` is
-   client-supplied, not verified). This example doesn't attempt to
-   invent an auth boundary Partshelf doesn't have yet — see
-   AGENTIC_HARNESS.md's open questions on that.
+   over is a separate, deliberately later step (`MIGRATION_PLAN.md`
+   Phase 2) — do it only after this route has been exercised for real,
+   so a bad migration doesn't take down a working UI flow at the same
+   time as the refactor. Note this is now ALSO gated behind the harness
+   token, so a client cutover for this specific route needs its own
+   auth decision first, not just a fetch() call added to the frontend.
+3. **Auth (for humans) is still a no-op.** `actorId` is trusted as
+   whatever the caller sends, same as the rest of the app today
+   (`getCurrentMemberId()` is client-supplied, not verified). The
+   harness token added in Phase 0 only gates *which process* may call
+   the route at all — it says nothing about which member the action
+   should be attributed to. That's `MIGRATION_PLAN.md`'s Phase 3, still
+   open.
 4. **`AssemblyPartRepository` only has two methods.** It is not a port
    of every `assembly_parts` query in `src/db.js`. Grow it (or add
    sibling repositories) only when the next service actually needs

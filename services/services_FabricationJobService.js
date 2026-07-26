@@ -28,29 +28,28 @@
 
 import { FabricationJobRepository } from '../repositories/FabricationJobRepository.js'
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
+import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError, ConflictError } from '../repositories/errors.js'
-import { recordChangeServer, genCommitId } from '../api/_lib/changeLog.js'
-import { getSupabase } from '../repositories/supabaseClient.js'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
 export class FabricationJobService {
   // Every dependency has a default so `new FabricationJobService()` is
   // enough for a normal route, but a test (or a future service that
-  // already has repository instances) can inject its own.
-  //
-  // `supabase` is only here because recordChangeServer (the change-log
-  // helper) takes a raw client, not a repository — see the "known debt"
-  // note in MIGRATION_EXAMPLE.md. Everything else in this file only
-  // ever touches jobRepo/partRepo, never `this.supabase` directly.
+  // already has repository instances) can inject its own — including
+  // fake ones, with no real Supabase client anywhere in sight. This is
+  // the payoff of Phase 0's ChangeLogRepository: this file has zero
+  // knowledge of @supabase/supabase-js now, not even indirectly via a
+  // passed-through client (compare to the previous version of this
+  // file, which held `this.supabase` purely to feed recordChangeServer).
   constructor({
-    jobRepo  = new FabricationJobRepository(),
-    partRepo = new AssemblyPartRepository(),
-    supabase = getSupabase(),
+    jobRepo       = new FabricationJobRepository(),
+    partRepo      = new AssemblyPartRepository(),
+    changeLogRepo = new ChangeLogRepository(),
   } = {}) {
-    this.jobRepo  = jobRepo
-    this.partRepo = partRepo
-    this.supabase = supabase
+    this.jobRepo       = jobRepo
+    this.partRepo      = partRepo
+    this.changeLogRepo = changeLogRepo
   }
 
   /**
@@ -78,9 +77,9 @@ export class FabricationJobService {
 
     const job = await this.jobRepo.insert({ id: genId(), assemblyPartId, quantityRequested, batchId })
 
-    await recordChangeServer(this.supabase, {
+    await this.changeLogRepo.record({
       entityType: 'fabrication_job', entityId: job.id, action: 'create',
-      newValue: job, actorId, commitId: genCommitId(),
+      newValue: job, actorId, commitId: this.changeLogRepo.newCommitId(),
     })
 
     return job
@@ -109,10 +108,10 @@ export class FabricationJobService {
 
     const updated = await this.jobRepo.recordMachinedUnits(jobId, quantity)
 
-    await recordChangeServer(this.supabase, {
+    await this.changeLogRepo.record({
       entityType: 'fabrication_job', entityId: jobId, action: 'update', field: 'quantityMachined',
       oldValue: job.quantityMachined, newValue: updated.quantityMachined,
-      actorId, commitId: genCommitId(),
+      actorId, commitId: this.changeLogRepo.newCommitId(),
     })
 
     return updated
@@ -155,9 +154,9 @@ export class FabricationJobService {
       })
     }
 
-    await recordChangeServer(this.supabase, {
+    await this.changeLogRepo.record({
       entityType: 'fabrication_job', entityId: jobId, action: 'delete',
-      oldValue: job, actorId, commitId: genCommitId(),
+      oldValue: job, actorId, commitId: this.changeLogRepo.newCommitId(),
     })
 
     return { deletedJobId: jobId, reopenedPart }
