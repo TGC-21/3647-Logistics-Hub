@@ -1,18 +1,13 @@
 // repositories/FabricationJobRepository.js
 //
 // The ONLY file that knows the `fabrication_jobs` table's column names
-// or query shape. Every method takes/returns already-mapped camelCase
-// objects, mirroring src/db.js's dbJobToLocal() mapping convention
-// exactly — field names never change here, so a future client-side
-// swap-over (pointing src/db.js's createFabricationJob at
-// /api/fabrication-jobs instead of Supabase directly) doesn't ripple
-// into every module that reads a job.
-//
-// "Repository" does NOT mean "one method per query the app happens to
-// need everywhere" — this file only has what FabricationJobService
-// actually calls. Add methods here as new services need them; don't
-// pre-port every fabrication_jobs query from src/db.js speculatively
-// (see MIGRATION_EXAMPLE.md's "start narrow" note).
+// or query shape. Phase 1 part 4 (see MIGRATION_EXAMPLE.md) shipped the
+// core CRUD; Phase 1 part 6 (Onshape import/reimport) adds the two
+// carry-over methods OnshapeReimportService needs — finding every job
+// belonging to a soon-to-be-wiped part tree, and re-creating a job
+// against its replacement row after reimport rebuilds the tree (every
+// assembly_parts row gets a brand-new id on reimport, so nothing about
+// a job's assembly_part_id survives the rebuild on its own).
 
 import { getSupabase } from './supabaseClient.js'
 import { DatabaseError } from './errors.js'
@@ -44,13 +39,6 @@ export class FabricationJobRepository {
     return data ? toLocal(data) : null
   }
 
-  /** The active (non-archived) job for a part, or null. Lets the
-   *  service enforce "one active job per part" with a friendly error
-   *  BEFORE hitting the DB — the real backstop against a race between
-   *  two simultaneous requests is still the partial unique index
-   *  (fabrication_jobs_one_active_per_part, schema.sql); this is a
-   *  UX nicety layered on top of it, same intent as src/db.js's
-   *  existing fetchActiveJobForPart. */
   async findActiveForPart(assemblyPartId) {
     const { data, error } = await this.db
       .from('fabrication_jobs').select('*')
@@ -59,6 +47,18 @@ export class FabricationJobRepository {
       .maybeSingle()
     if (error) throw new DatabaseError(`active job lookup failed: ${error.message}`, error)
     return data ? toLocal(data) : null
+  }
+
+  /** Every job (any status) belonging to any part in a given set — used
+   *  by reimport to snapshot ALL jobs for the whole old tree before it
+   *  gets wiped, not just the active ones (a completed/archived job is
+   *  historical fact and still needs to carry forward). */
+  async findByAssemblyPartIds(assemblyPartIds) {
+    if (!assemblyPartIds || !assemblyPartIds.length) return []
+    const { data, error } = await this.db
+      .from('fabrication_jobs').select('*').in('assembly_part_id', assemblyPartIds)
+    if (error) throw new DatabaseError(`fabrication_jobs lookup failed: ${error.message}`, error)
+    return (data || []).map(toLocal)
   }
 
   async insert({ id, assemblyPartId, quantityRequested, batchId }) {
@@ -76,10 +76,26 @@ export class FabricationJobRepository {
     return toLocal(data)
   }
 
-  /** Only a queued job may be deleted outright — the same status guard
-   *  src/db.js's deleteQueuedFabricationJob enforces, kept at the query
-   *  layer (not "fetch then check status in JS") so a job claimed a
-   *  moment ago can't be deleted out from under whoever claimed it. */
+  /** Re-creates a job verbatim against a NEW assembly_part_id, preserving
+   *  every field (status, quantities, claim info, timestamps) — this is
+   *  a carry-over, not a fresh job, so it must not reset any of that.
+   *  Used once per surviving old job during reimport. */
+  async insertCarryOver({ id, batchId, assemblyPartId, quantityRequested, quantityMachined, status, claimedBy, claimedAt, notes, createdAt }) {
+    const { error } = await this.db.from('fabrication_jobs').insert({
+      id,
+      batch_id:            batchId,
+      assembly_part_id:    assemblyPartId,
+      quantity_requested:  quantityRequested,
+      quantity_machined:   quantityMachined,
+      status,
+      claimed_by:          claimedBy,
+      claimed_at:          claimedAt,
+      notes,
+      created_at:          createdAt,
+    })
+    if (error) throw new DatabaseError(`fabrication_jobs carry-over insert failed: ${error.message}`, error)
+  }
+
   async deleteIfQueued(id) {
     const { data, error } = await this.db
       .from('fabrication_jobs').delete().eq('id', id).eq('status', 'queued').select()
@@ -96,12 +112,6 @@ export class FabricationJobRepository {
     return data ? toLocal(data) : null
   }
 
-  /** Wraps the existing atomic record_machined_units() Postgres function
-   *  (schema.sql) rather than re-deriving its transaction in JS —
-   *  Supabase's JS client has no multi-statement transaction API, so
-   *  the DB function IS the real unit of work. The repository's job is
-   *  just to expose it under a clean name and mapped return shape, not
-   *  to reimplement what it does. */
   async recordMachinedUnits(jobId, quantity) {
     const { data, error } = await this.db.rpc('record_machined_units', {
       p_job_id: jobId, p_quantity: quantity,

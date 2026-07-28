@@ -1,13 +1,13 @@
 // repositories/AssemblyPartRepository.js
 //
-// Started narrow (Fabrication Jobs example: look up a part, patch its
-// fabrication_metadata). Migration Plan Phase 1 items 1 (Inventory
-// Reservation) and 2 (Assembly Parts core CRUD + status derivation)
-// grow it to cover reservation bookkeeping (linked_instance_ids,
-// quantity_collected, status) and the plain quantity/status fields
-// AssemblyPartService owns — still NOT a full port of every
-// assembly_parts query in src/db.js (onshape import/reimport's bulk
-// tree-walk queries stay put until Plan item 6 touches that file).
+// Only file that touches .from('assembly_parts'). Started narrow
+// (findById, updateFabricationMetadata — see the Fabrication Jobs
+// reference example) and grows on demand rather than being ported
+// wholesale from src/db.js. Phase 1 part 6 (Onshape import/reimport)
+// adds the tree-walk and bulk-write methods OnshapeImportService /
+// OnshapeReimportService need — mirrors onshape-bom.js's
+// walkAssemblyPartsTree, seedAssemblyContents's insert step, and the
+// wipe step of reimportAssembly, just behind a repository boundary.
 
 import { getSupabase } from './supabaseClient.js'
 import { DatabaseError, NotFoundError } from './errors.js'
@@ -22,10 +22,13 @@ function toLocal(row) {
     quantityNeeded:      row.quantity_needed ?? 1,
     quantityCollected:   row.quantity_collected ?? 0,
     status:              row.status ?? 'pending',
+    source:              row.source ?? 'manual',
+    notes:               row.notes ?? '',
+    onshapeReference:    row.onshape_reference ?? null,
     componentId:         row.component_id ?? null,
     linkedInstanceIds:   row.linked_instance_ids ?? [],
-    onshapeReference:    row.onshape_reference ?? null,
     fabricationMetadata: row.fabrication_metadata ?? {},
+    createdAt:           row.created_at,
   }
 }
 
@@ -42,17 +45,6 @@ export class AssemblyPartRepository {
     return toLocal(data)
   }
 
-  /** All direct parts of a root assembly, or all parts of a subassembly
-   *  node — exactly one of the two ids should be provided. Used by
-   *  AssemblyPartService for status-derivation across a whole assembly. */
-  async findForOwner({ assemblyId = null, assemblyChildId = null }) {
-    let query = this.db.from('assembly_parts').select('*')
-    query = assemblyId ? query.eq('assembly_id', assemblyId) : query.eq('assembly_child_id', assemblyChildId)
-    const { data, error } = await query.order('created_at', { ascending: true })
-    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
-    return (data ?? []).map(toLocal)
-  }
-
   async updateFabricationMetadata(id, metadata) {
     const { data, error } = await this.db
       .from('assembly_parts')
@@ -62,48 +54,86 @@ export class AssemblyPartRepository {
     return toLocal(data)
   }
 
-  /** Confirming a detected fabrication candidate resolves a part's
-   *  componentId AND flips fabrication_metadata.status to 'queued' in
-   *  the same logical action — writing them separately would leave a
-   *  window where a part has a componentId but stale metadata (or vice
-   *  versa) if the second write failed. One write, one row returned. */
-  async updateComponentAndMetadata(id, { componentId, fabricationMetadata }) {
+  /** Bulk insert for one node's worth of direct parts (a root assembly
+   *  OR one subassembly node) — `rows` are already shaped with either
+   *  assemblyId or assemblyChildId set, per the DB's
+   *  assembly_parts_exactly_one_owner constraint. */
+  async bulkInsert(rows) {
+    if (!rows.length) return []
     const { data, error } = await this.db
       .from('assembly_parts')
-      .update({ component_id: componentId, fabrication_metadata: fabricationMetadata })
-      .eq('id', id).select().single()
-    if (error) throw new DatabaseError(`assembly_parts update failed: ${error.message}`, error)
-    return toLocal(data)
+      .insert(rows.map(p => ({
+        id:                   p.id,
+        assembly_id:          p.assemblyId ?? null,
+        assembly_child_id:    p.assemblyChildId ?? null,
+        part_name:            p.partName,
+        part_number:          p.partNumber ?? '',
+        quantity_needed:      p.quantityNeeded ?? 1,
+        quantity_collected:   p.quantityCollected ?? 0,
+        status:               p.status ?? 'pending',
+        source:               p.source ?? 'manual',
+        notes:                p.notes ?? '',
+        onshape_reference:    p.onshapeReference ?? null,
+        fabrication_metadata: p.fabricationMetadata ?? {},
+      })))
+      .select()
+    if (error) throw new DatabaseError(`assembly_parts bulk insert failed: ${error.message}`, error)
+    return data.map(toLocal)
   }
 
-  /** Patches whichever reservation-related fields changed
-   *  (componentId / linkedInstanceIds / quantityCollected / status) in
-   *  one write — used by both InventoryReservationService (link/unlink)
-   *  and AssemblyPartService (any other status-affecting edit). Only
-   *  the keys actually present in `patch` are sent to Postgres, so a
-   *  caller that only changes status doesn't clobber linkedInstanceIds
-   *  with a stale copy. */
-  async updateReservationFields(id, patch) {
-    const dbPatch = {}
-    if ('componentId' in patch)       dbPatch.component_id        = patch.componentId
-    if ('linkedInstanceIds' in patch) dbPatch.linked_instance_ids = patch.linkedInstanceIds
-    if ('quantityCollected' in patch) dbPatch.quantity_collected  = patch.quantityCollected
-    if ('status' in patch)            dbPatch.status              = patch.status
+  /** Every assembly_parts row anywhere under a root assembly — its own
+   *  direct parts, plus every nested assembly_children node's parts,
+   *  recursively. Mirrors onshape-bom.js's walkAssemblyPartsTree /
+   *  onshape-detect-fabrication.js's fetchWholeTreeParts (three
+   *  independent copies of this walk existed before repositories
+   *  existed — this is meant to eventually be the one shared version). */
+  async findTreeForAssembly(assemblyId) {
+    const allParts = []
 
-    const { data, error } = await this.db
-      .from('assembly_parts').update(dbPatch).eq('id', id).select().single()
-    if (error) throw new DatabaseError(`assembly_parts update failed: ${error.message}`, error)
-    return toLocal(data)
+    const { data: rootParts, error: rootErr } = await this.db
+      .from('assembly_parts').select('*').eq('assembly_id', assemblyId)
+    if (rootErr) throw new DatabaseError(`assembly_parts tree lookup failed: ${rootErr.message}`, rootErr)
+    allParts.push(...(rootParts || []))
+
+    const { data: directChildren, error: childErr } = await this.db
+      .from('assembly_children').select('id').eq('parent_assembly_id', assemblyId)
+    if (childErr) throw new DatabaseError(`assembly_children lookup failed: ${childErr.message}`, childErr)
+
+    const queue = (directChildren || []).map(c => c.id)
+    while (queue.length) {
+      const childId = queue.pop()
+
+      const { data: childParts, error: cpErr } = await this.db
+        .from('assembly_parts').select('*').eq('assembly_child_id', childId)
+      if (cpErr) throw new DatabaseError(`assembly_parts tree lookup failed: ${cpErr.message}`, cpErr)
+      allParts.push(...(childParts || []))
+
+      const { data: grandchildren, error: gcErr } = await this.db
+        .from('assembly_children').select('id').eq('parent_child_id', childId)
+      if (gcErr) throw new DatabaseError(`assembly_children lookup failed: ${gcErr.message}`, gcErr)
+      queue.push(...(grandchildren || []).map(c => c.id))
+    }
+
+    return allParts.map(toLocal)
   }
 
-  /** Plain quantity-needed edit (Add/Edit part modal) — kept separate
-   *  from updateReservationFields since it's a different business
-   *  action (redefining the requirement, not fulfilling it) even though
-   *  both ultimately touch the same row. */
-  async updateQuantityNeeded(id, quantityNeeded) {
-    const { data, error } = await this.db
-      .from('assembly_parts').update({ quantity_needed: quantityNeeded }).eq('id', id).select().single()
-    if (error) throw new DatabaseError(`assembly_parts update failed: ${error.message}`, error)
-    return toLocal(data)
+  /** Wipes every assembly_parts row directly owned by the root — its
+   *  nested children's parts go with them once
+   *  AssemblyChildRepository.deleteDirectChildren cascades (same
+   *  two-step wipe order reimportAssembly already uses: parts first,
+   *  then children, though the FK cascade would handle either order). */
+  async deleteDirectForAssembly(assemblyId) {
+    const { error } = await this.db.from('assembly_parts').delete().eq('assembly_id', assemblyId)
+    if (error) throw new DatabaseError(`assembly_parts delete failed: ${error.message}`, error)
+  }
+
+  /** Carry-over write used by reimport: an old part's real inventory
+   *  link + collected count, applied onto its NEW replacement row. */
+  async applyCarryOver(id, { linkedInstanceIds, quantityCollected, status }) {
+    const { error } = await this.db
+      .from('assembly_parts')
+      .update({ linked_instance_ids: linkedInstanceIds, quantity_collected: quantityCollected, status })
+      .eq('id', id)
+    if (error) throw new DatabaseError(`assembly_parts carry-over update failed: ${error.message}`, error)
   }
 }

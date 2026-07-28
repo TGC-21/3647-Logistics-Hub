@@ -39,7 +39,7 @@ import {
 import { attachAutocomplete } from './autocomplete.js'
 
 import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from './members.js'
-import { upsertInventoryInstanceVersioned } from './designer/versionedMutations.js'
+import { upsertInventoryInstanceVersioned, upsertCategoryVersioned } from './designer/versionedMutations.js'
 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'

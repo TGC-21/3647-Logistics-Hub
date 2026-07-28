@@ -37,23 +37,34 @@ Extracted into `services/InventoryReservationService.js` (`reserve`, `unreserve`
 
 `services/FabricationDetectionService.js` (`confirmDetection`, `ignoreDetection`) replaces the three near-identical `confirm*Detection` functions in `src/designer/fabDetection.js`. Built entirely on top of items 1–3 rather than re-deriving any of their rules: `ComponentService.findOrCreate` resolves the component, `FabricationJobService.createJob` owns the "one active job per part" rule and its own change-log entry, and `AssemblyPartRepository` grew one new method — `updateComponentAndMetadata` — so `componentId` and `fabrication_metadata` are written in a single call instead of two writes that could tear if the second failed. The three kinds' category name + `requiredKeysConfig` (previously `SPACER_CATEGORY_NAME`/`SPACER_REQUIRED_KEYS_CONFIG`, `AXIAL_SHAFT_*`, `PLATE_*` module-level constants duplicated across the client) now live once, in this service's `KIND_CONFIG` map. `CategoryRepository` grew `insert()` (deriving `requiredKeys` from `requiredKeysConfig`, never trusting a separately-passed list) to support the "ensure category exists" step this needs. Route: `api/fabrication-detection.js` (`confirm` / `ignore` actions), harness-token gated, no client caller yet. Deliberately does **not** own attribute-level validation (OD must be a positive number, etc.) — that stays `src/db.js`'s `validateAttribute`, a UI-form concern the confirm overlay already runs before submitting; this service trusts the `attrs` map it's given. Tests: `api/_lib/__tests__/FabricationDetectionService.test.js`, `api/_lib/__tests__/CategoryRepository.test.js`.
 
-**Phase 1 is now fully done (items 1–4).** Next up per the plan is item 5 (Cart / Part Orders).
+#### 5. Cart / Part Orders (cart_items, part_numbers, vendor_listings) — ✅ DONE
 
-#### 4. Fabrication detection confirm/persist (spacer/shaft/plate)
+Shipped: repositories/CartItemRepository.js, repositories/CartRepository.js, repositories/PartNumberRepository.js, services/CartService.js, api/cart-items.js. Same shape as the Fabrication Jobs reference example:
 
-The three confirm*Detection functions in fabDetection.js each do: ensure category → find-or-create component → upsert part → create job → toast. This is the biggest duplicated-business-logic surface in the repo. One FabricationDetectionService.confirmDetection(kind, ...) replaces all three, built on top of #1–3.
+CartService.createCartItem — cartId + positive-integer quantity required.
+CartService.advanceItemStatus — enforces the pending → ordered → received lifecycle strictly forward, one step at a time (today's client-side handleAdvanceStatus in src/partOrders.js has no guard against calling it again on an already-received item — this closes that gap).
+CartService.deleteItem — refuses to delete a received item outright (it's a completed purchase — same reasoning fabrication_jobs only lets a queued job be deleted). pending/ordered items delete freely.
+CartService.findOrCreateCartForVendor / ensurePartNumberStub — server-side twins of db.js's client versions, for callers (routes, the harness) that aren't the browser's anon-key client.
 
-#### 5. Cart / Part Orders (cart_items, part_numbers, vendor_listings)
+api/cart-items.js is gated behind assertHarnessToken, same as api/fabrication-jobs.js — it has no client (browser) caller yet; src/partOrders.js still talks to Supabase directly via db.js. That cutover is Phase 2 work, done per-domain only after the route is proven out, per the plan's own rule.
 
-Mirrors Fabrication Jobs' shape closely (queued→ordered→received lifecycle, one-active-ish constraints). Good second full worked example beyond the reference — CartItemRepository, PartNumberRepository, CartService.
+vendor_listings itself was deliberately NOT given a repository — nothing in CartService needed to touch it yet (price/link resolution stays a client-side concern via resolveCartItemDisplay). Add a VendorListingRepository when a service actually needs one, not speculatively.
+
+Tests: services/__tests__/CartService.test.js (fake repositories, no Supabase — proves the status-transition and delete-guard rules) and repositories/__tests__/CartItemRepository.test.js (fake Supabase client, proves table/column shape), following the exact convention FabricationJobService.test.js / FabricationJobRepository.test.js established in Phase 0.
 
 #### 6. Onshape BOM import / reimport
 
 The largest, riskiest file (api/onshape-bom.js). Do this after 1–5 are proven, since it depends on assembly-part and change-log patterns already being settled. Split into OnshapeImportService (fetch/seed tree) and ReimportService (snapshot/carry-over/reconcile) rather than one giant service — the file already has this natural seam (buildAssembly vs reimportAssembly).
 
-#### 7. Fabrication detectors (spacer/axial-shaft/plate geometry classifiers)
+#### 7. Fabrication detectors (spacer/axial-shaft/plate geometry classifiers) — ✅ DONE
 
-These (api/_lib/detectors/*.js) are already pure functions with no SQL — they don't need repositories, just need to be called from a DetectionService that owns the Part-Studio-grouping/caching/claim-priority logic currently living directly in onshape-detect-fabrication.js.
+Shipped: services/DetectionService.js, api/onshape-detect-fabrication-v2.js. The three geometry classifiers under api/_lib/detectors/*.js (spacer, axial-shaft, plate) were already pure functions with no SQL and needed no changes — what moved is the orchestration that used to live directly in api/onshape-detect-fabrication.js: DetectionService.detectFabricationCandidates() now owns the whole-part-tree fetch (via AssemblyPartRepository.findTreeForAssembly, reused as-is from item 6), the terminal-status skip (confirmed/queued/ignored rows aren't rescanned), grouping candidates by source Part Studio so bodydetails is fetched once per studio regardless of how many candidate parts it contains, the claim-priority rule (spacer and axial-shaft claim first; plate only classifies rows nothing else claimed, per PLATE_DETECTION_ROADMAP.md), and the plate detector's async postGeometryCheck sheet-metal exclusion (cached per Part Studio for the duration of one detect run, not across requests).
+
+api/_lib/fabrication-detectors.js (the DETECTORS registry) and api/_lib/onshape-bodydetails.js (fetchBodyDetails/bodyDetailsCacheKey/findBodyByPartId) are reused directly, not ported into a repository — same "pure external-API/algorithm layer" reasoning OnshapeImportService already applies to api/_lib/onshape.js. No fabrication_jobs are created here; a 'detected' row still requires a separate confirm step through FabricationDetectionService (item 4).
+
+api/onshape-detect-fabrication-v2.js is gated behind assertHarnessToken and named "-v2", same convention item 6's api/onshape-bom-v2.js established — the existing api/onshape-detect-fabrication.js keeps serving live traffic from src/designer/assemblyDetail.js unchanged; client cutover is Phase 2 work, done only once this path is proven out.
+
+Tests: services/__tests__/DetectionService.test.js — fake repositories plus lightweight mocked detectors/bodydetails fetch (vi.mock), proving the terminal-status skip, the outside-document ignore path, one-fetch-per-Part-Studio grouping, the claim-priority rule (a row spacer already detected never reaches plate's classifyGeometry), and the postGeometryCheck downgrade-to-needs_review path.
 
 #### 8. Assembly / Assembly Children CRUD + cascade delete
 
