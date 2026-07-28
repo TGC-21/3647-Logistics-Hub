@@ -41,6 +41,43 @@ export class AssemblyRepository {
     return found
   }
 
+  /** Plain manual creation (the "New assembly" flow, no Onshape link
+   *  yet) — src/designer/assemblyGrid.js's saveAssembly is the client
+   *  equivalent this mirrors. Every onshape_* field stays null/empty
+   *  until the assembly is later linked via OnshapeImportService or
+   *  the "New from Onshape" flow. */
+  async insert({ id, name, description = '', onshapeUrl = '', status = 'draft' }) {
+    const { data, error } = await this.db
+      .from('assemblies')
+      .insert({
+        id, name, description, onshape_url: onshapeUrl,
+        onshape_document_id: '', onshape_workspace_id: '', onshape_element_id: '',
+        thumbnail_url: null, status,
+      })
+      .select().single()
+    if (error) throw new DatabaseError(`assemblies insert failed: ${error.message}`, error)
+    return toLocal(data)
+  }
+
+  /** Generic partial update for the fields a user can actually edit —
+   *  name/description/onshapeUrl/status — mirroring
+   *  src/designer/assemblyGrid.js's saveAssembly edit path. Onshape
+   *  link fields are deliberately NOT editable here; those only change
+   *  via OnshapeImportService's link flow. */
+  async update(id, { name, description, onshapeUrl, status, thumbnailUrl } = {}) {
+    const patch = {}
+    if (name !== undefined)        patch.name = name
+    if (description !== undefined) patch.description = description
+    if (onshapeUrl !== undefined)  patch.onshape_url = onshapeUrl
+    if (status !== undefined)      patch.status = status
+    if (thumbnailUrl !== undefined) patch.thumbnail_url = thumbnailUrl
+
+    const { data, error } = await this.db
+      .from('assemblies').update(patch).eq('id', id).select().maybeSingle()
+    if (error) throw new DatabaseError(`assemblies update failed: ${error.message}`, error)
+    return data ? toLocal(data) : null
+  }
+
   /** Root assembly creation only — a subassembly node never lives here,
    *  see AssemblyChildRepository. */
   async insertRoot({ id, name, description, onshapeUrl, onshapeDocumentId, onshapeWorkspaceId, onshapeElementId, thumbnailUrl }) {

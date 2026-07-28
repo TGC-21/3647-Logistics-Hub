@@ -63,6 +63,33 @@ export class AssemblyChildRepository {
     return (data || []).map(toLocal)
   }
 
+  /** Every assembly_children row anywhere under a root assembly, at
+   *  ANY depth, as FULL rows (not just ids) — used by AssemblyService's
+   *  cascade delete to snapshot the whole subtree for change-log
+   *  purposes BEFORE the delete cascades it away. Mirrors
+   *  src/designer/versionedMutations.js's deleteAssemblyWithHistory
+   *  tree walk, and AssemblyPartRepository.findTreeForAssembly's shape. */
+  async findWholeTree(parentAssemblyId) {
+    const allChildren = []
+
+    const { data: direct, error: directErr } = await this.db
+      .from('assembly_children').select('*').eq('parent_assembly_id', parentAssemblyId)
+    if (directErr) throw new DatabaseError(`assembly_children lookup failed: ${directErr.message}`, directErr)
+    allChildren.push(...(direct || []))
+
+    const queue = (direct || []).map(c => c.id)
+    while (queue.length) {
+      const childId = queue.pop()
+      const { data: grandchildren, error: gcErr } = await this.db
+        .from('assembly_children').select('*').eq('parent_child_id', childId)
+      if (gcErr) throw new DatabaseError(`assembly_children lookup failed: ${gcErr.message}`, gcErr)
+      allChildren.push(...(grandchildren || []))
+      queue.push(...(grandchildren || []).map(c => c.id))
+    }
+
+    return allChildren.map(toLocal)
+  }
+
   /** Deletes only the ROOT's direct children rows — each row's own
    *  nested children and assembly_parts cascade via FK
    *  (parent_child_id / assembly_child_id both ON DELETE CASCADE in

@@ -52,7 +52,21 @@ vendor_listings itself was deliberately NOT given a repository — nothing in Ca
 
 Tests: services/__tests__/CartService.test.js (fake repositories, no Supabase — proves the status-transition and delete-guard rules) and repositories/__tests__/CartItemRepository.test.js (fake Supabase client, proves table/column shape), following the exact convention FabricationJobService.test.js / FabricationJobRepository.test.js established in Phase 0.
 
-#### 6. Onshape BOM import / reimport
+#### 6. Onshape BOM import / reimport — ✅ DONE
+
+Shipped: repositories/AssemblyRepository.js, repositories/AssemblyChildRepository.js, repositories/AssemblyPartRepository.js (extended with bulkInsert, findTreeForAssembly, deleteDirectForAssembly, applyCarryOver), repositories/InventoryInstanceRepository.js (new, releaseMany only), repositories/FabricationJobRepository.js and repositories/CartItemRepository.js (both extended with the carry-over methods reimport needs), services/OnshapeImportService.js, services/OnshapeReimportService.js, api/onshape-bom-v2.js.
+
+Split exactly along the seam the plan called out:
+
+OnshapeImportService — importAssembly (mirrors buildAssembly) and the shared seedAssemblyContents/seedSubassembliesConcurrently tree-walk (mirrors the same-named functions in api/onshape-bom.js). Reuses resolveBomWithSubassemblies/fetchBom/fetchDocumentOwnerId from api/_lib/onshape.js as-is — that file is this codebase's external-API-client layer, not a repository, so its Onshape-fetching logic was deliberately NOT re-homed, only composed.
+OnshapeReimportService — reimportAssembly (snapshot → wipe → reseed → relink), with carryOverPromises and logReimportChanges broken out as their own testable methods. Composes OnshapeImportService for the reseed step (constructor-injectable, defaults to a real instance) rather than duplicating tree-seeding — reimport really is "wipe, then seed again."
+Both reuse buildSourceKey / fabricationIdentityKey from api/_lib/onshape.js unchanged — the "same underlying Onshape part across two imports" identity rules stay in one place.
+
+api/onshape-bom-v2.js is a new, thin, action-dispatched route (import / reimport), gated behind assertHarnessToken like the other two migrated routes — it does NOT replace the existing api/onshape-bom.js, which keeps serving src/designer/onshapePicker.js and src/designer/assemblyDetail.js unchanged. Once this path is proven out, api/onshape-bom-v2.js's contents can become the new api/onshape-bom.js and the old monolithic handler retired — that cutover is Phase 2 work, per the plan's rule against bundling extraction with cutover.
+
+Known scope line, called out on purpose: this migration covers the BOM tree (parts + subassembly nodes) and promise carry-over (inventory links, fabrication jobs, cart items) — the two things MIGRATION_PLAN.md named. It does NOT cover onshape-detect-fabrication.js's spacer/ axial-shaft/plate geometry detection — that's Phase 1 part 7 ("Fabrication detectors"), listed next for a reason: those detectors are already pure functions with no SQL, so wiring them into a DetectionService is comparatively small, cheap work once this part's AssemblyPartRepository tree-walk methods exist for it to reuse (which they now do).
+
+Tests: services/__tests__/OnshapeReimportService.test.js (fake repositories, no Supabase, no mocking of api/_lib/onshape.js — proves the carry-over/reconciliation rules: inventory carries over, orphaned inventory releases, jobs re-create against the new part id, a source-key collision never double-claims a new part, cart items re-earmark, and the change-log diff only logs genuine adds/removals) and repositories/__tests__/AssemblyRepository.test.js (fake Supabase, table/shape only). OnshapeImportService's own orchestration (importAssembly/seedAssemblyContents) is thinner glue over already- pure Onshape-fetching code and repository calls — not given a dedicated unit test in this pass, since it would mostly be re-asserting that mocked functions were called in order; worth a real integration check against a live/staging Onshape document before Phase 2 cutover instead of a mocked unit test that can't catch a real API-shape mismatch.
 
 The largest, riskiest file (api/onshape-bom.js). Do this after 1–5 are proven, since it depends on assembly-part and change-log patterns already being settled. Split into OnshapeImportService (fetch/seed tree) and ReimportService (snapshot/carry-over/reconcile) rather than one giant service — the file already has this natural seam (buildAssembly vs reimportAssembly).
 
@@ -66,13 +80,33 @@ api/onshape-detect-fabrication-v2.js is gated behind assertHarnessToken and name
 
 Tests: services/__tests__/DetectionService.test.js — fake repositories plus lightweight mocked detectors/bodydetails fetch (vi.mock), proving the terminal-status skip, the outside-document ignore path, one-fetch-per-Part-Studio grouping, the claim-priority rule (a row spacer already detected never reaches plate's classifyGeometry), and the postGeometryCheck downgrade-to-needs_review path.
 
-#### 8. Assembly / Assembly Children CRUD + cascade delete
+#### 8. Assembly / Assembly Children CRUD + cascade delete — ✅ DONE
 
-versionedMutations.js's deleteAssemblyWithHistory is already service-shaped (snapshot → cleanup → delete → log) — mostly a lift-and-shift into AssemblyService/AssemblyRepository, AssemblyChildRepository.
+Shipped: repositories/AssemblyRepository.js (extended with insert for plain "New assembly" creation and update for the Edit assembly modal's rename/status/description/URL fields — insertRoot/deleteById already existed from part 6), repositories/AssemblyChildRepository.js (extended with findWholeTree — a full-row recursive walk, for cascade delete's snapshot step), repositories/CartItemRepository.js (extended with deletePendingForAssemblyPartIds), services/AssemblyService.js, api/assemblies-v2.js.
 
-#### 9. Agenda (tasks/task_links)
+Confirms the plan's own prediction: deleteAssemblyWithCascade really was mostly a lift-and-shift of src/designer/versionedMutations.js's deleteAssemblyWithHistory — same five-step order (snapshot → release inventory → clean up pending cart items → delete → log), same "every child/part gets its own DELETE change_log row, all under one commit, tagged causedByEntityType/causedByEntityId back to the root assembly" contract — just moved behind repositories instead of a raw Supabase client with the anon key.
 
-Newest, smallest domain — good candidate to build service-first from day one rather than migrating existing logic, since agenda.js's data layer is already cleanly separated (their own comment notes the 3-layer split). Low risk, good practice run for "build it right the first time."
+Deliberately scoped to ROOT assemblies only, per the plan's bullet: assembly_children rows are never created or edited by a user directly (they only ever come from an Onshape import — see OnshapeImportService/ OnshapeReimportService from part 6) — so AssemblyService has no createChild/updateChild methods. AssemblyChildRepository's role here is read-only tree-walking so the cascade delete can snapshot the subtree before the DB's own FK cascade (ON DELETE CASCADE on both parent_child_id and assembly_child_id) removes it.
+
+api/assemblies-v2.js is a new, thin, action-dispatched route (create / update / delete), gated behind assertHarnessToken like every other route in this migration pass — it does NOT replace src/designer/assemblyGrid.js's saveAssembly or assemblyDetail.js's deleteCurrentAssembly, both of which keep calling Supabase directly today. Cutover is Phase 2 work.
+
+Tests: services/__tests__/AssemblyService.test.js (fake repositories, no Supabase — proves the cascade-delete call ORDER via a shared callOrder array, proves the change-log shape: one commit, correct causedBy* tagging, no causedBy* on the assembly's own delete row; proves updateAssembly only logs fields that actually changed) and repositories/__tests__/AssemblyChildRepository.test.js. The latter's findWholeTree test deliberately does NOT reuse the shared testUtils/fakeSupabase.js — that fake resolves every call to one static fixture, which would make a recursive query (this method pops a queue and re-queries per child) loop forever the first time the fixture contains any rows. Used a small scripted, call-order-aware fake instead, documented inline — worth calling out as a caveat for the next repository method that recurses (AssemblyPartRepository.findTreeForAssembly, already shipped in part 6, has the same untested edge for the same reason and was never covered either).
+
+#### 9. Agenda (tasks/task_links) — ✅ DONE
+
+Shipped: repositories/TaskRepository.js, repositories/TaskLinkRepository.js, services/AgendaService.js, api/agenda-tasks-v2.js.
+
+Confirms the plan's own framing — this is the one domain in Phase 1 built service-first rather than migrated from an existing mutator. src/agenda.js's "layer 1" (data) / "layer 2" (view-model) / "layer 3" (render) split, described in that file's own doc comment, is exactly right and unchanged: layers 2 and 3 (isOverdue, sortForDayView, tasksForDay, the Day-view renderer) are pure display logic over an already-fetched list and have no business being in a service — only layer 1's mutations moved.
+
+The one real business rule extracted: how completedAt reacts to a status change, previously computed identically in two places (saveTask()'s inline ternary and setTaskStatus()'s separate copy in src/agenda.js). Now lives once, as completedAtForStatus() in AgendaService: moving to complete stamps completedAt (but doesn't reset it if already complete), moving to archived preserves whatever completedAt already was (an archived-without-ever-completing task stays null), anything else clears it. createTask/updateTask both route through it — completedAt is never accepted directly from a caller in either method, only derived from status.
+
+addTaskLink validates entityType against the same five values task_links_entity_type_valid enforces at the DB level (schema_agenda.sql) — friendly ValidationError before the Postgres CHECK constraint, same pattern every other service's DB-backstopped check follows elsewhere in this migration. It deliberately does NOT validate that entityId resolves to a real row in whichever of the five tables it names — task_links has no shared FK to check against, same "orphaned link is an app-layer concern" tradeoff its own schema comment already accepts (mirrors change_log's caused_by_entity_type/id columns).
+
+No change_log integration, on purpose — schema_agenda.sql's own comment states tasks are deliberately unversioned for v1 ("Deliberately does NOT touch change_log (skipped for v1 per product decision)"). AgendaService matches that; wiring ChangeLogRepository in here later is a product decision to revisit, not something to add silently in a service-layer pass.
+
+api/agenda-tasks-v2.js is a new, thin, action-dispatched route (create / update / setStatus / duplicate / delete / addLink / removeLink), gated behind assertHarnessToken like every other route in this migration pass. src/agenda.js keeps calling Supabase directly with the anon key, unchanged — cutover is Phase 2 work.
+
+Tests: services/__tests__/AgendaService.test.js (fake repositories, no Supabase — six cases alone just for the completedAt/status coupling: first-time completion, re-saving an already-complete task, reopening, archiving a previously-completed task, and confirming a status-less update never touches completedAt at all) and repositories/__tests__/TaskRepository.test.js (fake Supabase, table/shape only).
 
 #### 10. Categories + validation
 

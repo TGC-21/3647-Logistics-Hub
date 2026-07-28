@@ -55,6 +55,20 @@ export class CartItemRepository {
     if (error) throw new DatabaseError(`cart_items re-earmark failed: ${error.message}`, error)
   }
 
+  /** Deletes 'pending' cart items earmarked to any of the given
+   *  assembly_part ids outright — used when the parts they point to
+   *  are about to be cascade-deleted. 'ordered'/'received' items are
+   *  left alone: the FK (ON DELETE SET NULL) un-earmarks them
+   *  automatically, demoting them to general-restock items rather than
+   *  destroying the record of a real purchase. Mirrors
+   *  src/db.js's deletePendingCartItemsForAssemblyPartIds exactly. */
+  async deletePendingForAssemblyPartIds(assemblyPartIds) {
+    if (!assemblyPartIds || !assemblyPartIds.length) return
+    const { error } = await this.db
+      .from('cart_items').delete().in('assembly_part_id', assemblyPartIds).eq('status', 'pending')
+    if (error) throw new DatabaseError(`cart_items pending cleanup failed: ${error.message}`, error)
+  }
+
   async insert({ id, cartId, vendorListingId = null, assemblyPartId = null, nameOverride = '', linkOverride = '', priceOverride = null, quantity }) {
     const { data, error } = await this.db
       .from('cart_items')
