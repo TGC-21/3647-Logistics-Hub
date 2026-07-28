@@ -108,9 +108,19 @@ api/agenda-tasks-v2.js is a new, thin, action-dispatched route (create / update 
 
 Tests: services/__tests__/AgendaService.test.js (fake repositories, no Supabase — six cases alone just for the completedAt/status coupling: first-time completion, re-saving an already-complete task, reopening, archiving a previously-completed task, and confirming a status-less update never touches completedAt at all) and repositories/__tests__/TaskRepository.test.js (fake Supabase, table/shape only).
 
-#### 10. Categories + validation
+#### 10. Categories + validation — ✅ DONE
 
-validateAttribute/validateRequiredAttributes/migrateRequiredKeysIfNeeded in db.js — pure logic, low urgency, but every other service above touches categories indirectly (required-keys-config), so a CategoryRepository/CategoryService should exist by the time #3–4 land, even if it's a thin pass.
+Shipped: repositories/CategoryRepository.js (grown from its Plan-item-3 read-only slice to full CRUD — findAll/update/deleteById added), services/CategoryService.js, api/categories.js.
+
+validateAttribute, validateRequiredAttributes, migrateRequiredKeysIfNeeded, and formatAttribute are ported from src/db.js's "Typed characteristic helpers" section verbatim, as standalone exported pure functions — no repository, no I/O — so ComponentService/FabricationDetectionService (or a future route) can validate an attrs map without instantiating CategoryService, the same way AssemblyPartService exports computePartStatus/derivedAssemblyStatus as free functions (item 2). Neither of those two services was changed to actually call this validation yet — they still trust the attrs map their caller gives them, per their own doc comments; wiring that in is a caller-cutover-adjacent decision, not something bundled into this extraction.
+
+CategoryService.create/update add enforcement the client form doesn't currently run server-side: every requiredKeysConfig entry needs a non-blank key and a recognized type (string/quantity/enum/segments), and create() rejects a duplicate category name outright (ConflictError) rather than silently allowing two categories with the same name, which src/main.js's quickCreateCat/confirmNewCat never guarded against. Deletion does no cascade work itself — components.category_id is `references categories(id) on delete set null` at the schema level, so components are automatically un-categorized, matching main.js's existing "components outlive their category" behavior.
+
+api/categories.js is gated behind assertHarnessToken, same as every other route from this migration pass — no client caller yet; src/main.js's category modal still calls src/db.js's fetchCategories/upsertCategory/deleteCategory directly.
+
+Tests: services/__tests__/CategoryService.test.js (the four pure functions exercised directly with no mocking, plus CategoryService's CRUD rules against fake repositories) and repositories/__tests__/CategoryRepository.test.js (fake Supabase client, proves the requiredKeys-derived-from-requiredKeysConfig rule holds for both insert and update).
+
+**Phase 1 is now fully done (items 1–10).** Next up per the plan is Phase 2 (per-domain caller cutover) or Phase 3 (auth boundary), whichever the team wants to tackle first — see those sections below for the sequencing rationale.
 
 ### Phase 2 — Caller cutover (per domain, after its extraction is proven)
 
