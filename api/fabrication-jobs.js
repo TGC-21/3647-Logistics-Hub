@@ -1,12 +1,11 @@
 // api/fabrication-jobs.js — Vercel serverless function
 //
-// THIS IS THE REFERENCE ROUTE for AGENTIC_HARNESS.md's Phase 1
-// migration. Compare it to api/onshape-bom.js: no business rules, no
+// THE REFERENCE ROUTE for AGENTIC_HARNESS.md's Phase 1 migration, now
+// also live: Migration Plan Phase 2's second caller cutover (after
+// Categories). Compare it to api/onshape-bom.js: no business rules, no
 // direct Supabase table access, no knowledge of fabrication_jobs'
 // column names. It only:
-//   1. parses the HTTP request (and would authenticate it, once
-//      Partshelf has a real auth boundary — see AGENTIC_HARNESS.md's
-//      open questions),
+//   1. parses the HTTP request,
 //   2. calls exactly one FabricationJobService method,
 //   3. maps the result — or a typed error from repositories/errors.js —
 //      onto an HTTP response.
@@ -18,15 +17,26 @@
 // — new routes built this way should keep doing the same, not invent a
 // second routing style.
 //
+// AUTH DECISION — same one api/categories.js already made and documents
+// in full: this route is now called directly by the browser
+// (src/services/fabricationJobsApi.js), so the harness-only shared
+// secret had to come off (a browser has no safe way to hold it). It
+// runs with NO auth gate, same as every other pre-existing
+// client-facing route (api/onshape-bom.js, api/onshape-detect-fabrication.js).
+// Partshelf has no real per-member auth boundary yet — schema.sql's RLS
+// is `using (true)` everywhere — so gating this route more tightly than
+// the rest of the app would be a false sense of security, not real
+// protection. Revisit once Migration Plan Phase 3 (the real auth
+// boundary) lands for the whole app at once, not just this route.
+//
 // POST /api/fabrication-jobs
 //   { action: 'create',         assemblyPartId, quantityRequested, batchId?, actorId? }
 //   { action: 'recordProgress', jobId, quantity, actorId? }
 //   { action: 'deleteQueued',   jobId, actorId? }
 
 import { applyCors } from './_lib/onshape.js'
-import { assertHarnessToken } from './_lib/harnessAuth.js'
-import { FabricationJobService } from '../services/FabricationJobService.js'
-import { statusForError } from '../repositories/errors.js'
+import { FabricationJobService } from '../src/services/FabricationJobService.js'
+import { statusForError } from '../src/repositories/errors.js'
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { applyCors(res); return res.status(204).end() }
@@ -37,13 +47,6 @@ export default async function handler(req, res) {
   const service = new FabricationJobService()
 
   try {
-    // This route has no client (browser) callers yet — see
-    // MIGRATION_EXAMPLE.md — so it's safe to gate behind the harness
-    // shared secret from day one. When client cutover happens for this
-    // route, this line needs a real decision (see api/_lib/harnessAuth.js),
-    // not just removal.
-    assertHarnessToken(req)
-
     switch (body.action) {
       case 'create': {
         const job = await service.createJob({

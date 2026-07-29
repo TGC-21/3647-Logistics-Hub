@@ -10,9 +10,13 @@
 // job with fabricate.js.
 
 import {
-  upsertAssemblyPart, createFabricationJob,
+  upsertAssemblyPart,
   fetchCategories, upsertCategory,
 } from '../db.js'
+// Migration Plan Phase 2 cutover — job creation now goes through the
+// migrated route (services/FabricationJobService.js via
+// api/fabrication-jobs.js) instead of talking to Supabase directly.
+import { createFabricationJob } from '../services/fabricationJobsApi.js'
 import { registerNewJob } from '../fabricate.js'
 import { renderSegmentEditor, renderSegmentPreview } from '../segmentEditor.js'
 import { genId, toast } from './state.js'
@@ -327,7 +331,7 @@ export async function confirmFabDetection() {
     toast(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
   } catch (e) {
     console.error(e)
-    toast(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming spacer')
+    toast(e.message || 'Error confirming spacer')  // service already throws a friendly ConflictError message
   } finally {
     btn.disabled = false
     btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
@@ -393,7 +397,7 @@ async function confirmAxialShaftDetection(part) {
     toast(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
   } catch (e) {
     console.error(e)
-    toast(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming shaft')
+    toast(e.message || 'Error confirming shaft')  // service already throws a friendly ConflictError message
   } finally {
     btn.disabled = false
     btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'
@@ -438,7 +442,7 @@ async function confirmPlateDetection(part) {
     toast(`Confirmed "${part.partName}" — sent ${qty} to Fabricate`)
   } catch (e) {
     console.error(e)
-    toast(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error confirming plate')
+    toast(e.message || 'Error confirming plate')  // service already throws a friendly ConflictError message
   } finally {
     btn.disabled = false
     btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Confirm &amp; send to Fabricate'

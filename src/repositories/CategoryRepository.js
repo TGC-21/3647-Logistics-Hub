@@ -22,6 +22,12 @@ export class CategoryRepository {
     this.db = supabase
   }
 
+  async findAll() {
+    const { data, error } = await this.db.from('categories').select('*').order('name')
+    if (error) throw new DatabaseError(`categories lookup failed: ${error.message}`, error)
+  return (data ?? []).map(toLocal)
+  }
+
   async findById(id) {
     const { data, error } = await this.db
       .from('categories').select('*').eq('id', id).maybeSingle()
@@ -52,5 +58,23 @@ export class CategoryRepository {
       .select().single()
     if (error) throw new DatabaseError(`category insert failed: ${error.message}`, error)
     return toLocal(data)
+  }
+
+    async update(id, { name, requiredKeysConfig }) {
+    const requiredKeys = (requiredKeysConfig || []).map(c => c.key).filter(Boolean)
+    const { data, error } = await this.db
+      .from('categories')
+      .update({ name, required_keys: requiredKeys, required_keys_config: requiredKeysConfig || [] })
+      .eq('id', id).select().single()
+    if (error) throw new DatabaseError(`category update failed: ${error.message}`, error)
+    return toLocal(data)
+  }
+
+  /** Components in this category are un-categorized automatically by
+   *  the schema's ON DELETE SET NULL — nothing else for this repository
+   *  to clean up. */
+  async deleteById(id) {
+    const { error } = await this.db.from('categories').delete().eq('id', id)
+    if (error) throw new DatabaseError(`category delete failed: ${error.message}`, error)
   }
 }

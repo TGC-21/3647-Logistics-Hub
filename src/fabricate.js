@@ -12,11 +12,18 @@
 import {
   fetchFabricationBatches, upsertFabricationBatch, deleteFabricationBatch,
   fetchAllFabricationJobs, fetchAssemblyPartsByIds, fetchAssemblyChildById,
-  moveJobToBatch, updateQueuedJobQuantity, deleteQueuedFabricationJob,
-  claimFabricationJob, releaseFabricationJobClaim, recordMachinedUnits,
+  moveJobToBatch, updateQueuedJobQuantity,
+  claimFabricationJob, releaseFabricationJobClaim,
   archiveFabricationJob,
-  upsertAssemblyPart,   // ← add
 } from './db.js'
+// Migration Plan Phase 2 cutover — create/recordProgress/deleteQueued
+// now go through the migrated route (services/FabricationJobService.js
+// via api/fabrication-jobs.js) instead of talking to Supabase directly.
+// Everything else here (batches, claim/release, archive, quantity
+// edits) is NOT part of that service's scope and still calls db.js —
+// see MIGRATION_PLAN.md's own note that only create/recordProgress/
+// deleteQueued were ever built out for Fabrication Jobs.
+import { deleteQueuedFabricationJob, recordMachinedUnits } from './services/fabricationJobsApi.js'
 import { getAssemblies } from './designer.js'
 
 // ── State ─────────────────────────────────────────────────────
@@ -510,33 +517,15 @@ async function handleDeleteJob(jobId) {
   const part = job ? partsCache[job.assemblyPartId] : null
   if (!confirm(`Delete this unclaimed job${part ? ` for "${part.partName}"` : ''}? This cannot be undone.`)) return
   try {
-    await deleteQueuedFabricationJob(jobId)
-
-    // part.fabricationMetadata.status was set to 'queued' when this job
-    // was confirmed — that status is TERMINAL as far as
-    // /api/onshape-detect-fabrication.js's fetchWholeTreeParts is
-    // concerned (see TERMINAL_DETECTION_STATUSES), so the part is
-    // permanently excluded from future detection scans. Deleting the job
-    // without reopening the part here leaves it silently unscannable
-    // forever. Reset it to 'detected' so it's picked up again.
-    if (part?.fabricationMetadata?.autoDetected && part.fabricationMetadata.status === 'queued') {
-      try {
-        const updatedPart = await upsertAssemblyPart({
-          ...part,
-          fabricationMetadata: {
-            ...part.fabricationMetadata,
-            status: 'detected',
-            warnings: [
-              ...(part.fabricationMetadata.warnings || []),
-              'Fabrication job was deleted — re-confirm to send to Fabricate again.',
-            ],
-          },
-        })
-        partsCache[job.assemblyPartId] = updatedPart
-      } catch (metaErr) {
-        console.warn('[fabricate] Failed reopening part for re-detection after job delete', metaErr)
-      }
-    }
+    // FabricationJobService.deleteQueuedJob now owns the "reopen this
+    // part for re-detection if its fabrication_metadata was left in a
+    // TERMINAL 'queued' state" fix-up server-side (see that service's
+    // own doc comment on why this used to be a bug magnet living only
+    // in THIS click handler) — every future way to delete a queued job
+    // gets it for free, not just this button. Just apply whatever the
+    // server hands back.
+    const { reopenedPart } = await deleteQueuedFabricationJob(jobId)
+    if (reopenedPart) partsCache[job.assemblyPartId] = reopenedPart
 
     jobs = jobs.filter(j => j.id !== jobId)
     renderFabricateSidebar(); renderFabricateContent()

@@ -1,14 +1,15 @@
 import './style.css'
 import { renderSegmentEditor } from './segmentEditor.js'
 import {
-  fetchCategories,
-  upsertCategory,  deleteCategory,
   uploadImage,     deleteImage,
   validateAttribute, reconcileOrphanedInstances,
   fetchInventoryInstances, upsertInventoryInstance, deleteInventoryInstance,
   findOrCreateComponent, deleteComponentIfOrphaned, updateComponentFallback,
   attrsArrayToMap,
 } from './db.js'
+import {
+  fetchCategories, createCategory, updateCategory, deleteCategory,
+} from './services/categoriesApi.js'
 import {
   designerBoot,        setToast,
   renderDesignerSidebar, renderDesignerContent,
@@ -39,7 +40,7 @@ import {
 import { attachAutocomplete } from './autocomplete.js'
 
 import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from './members.js'
-import { upsertInventoryInstanceVersioned, upsertCategoryVersioned } from './designer/versionedMutations.js'
+import { upsertInventoryInstanceVersioned } from './designer/versionedMutations.js'
 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'
@@ -767,9 +768,8 @@ function hideNewCatRow() {
 }
 async function confirmNewCat() {
   const name = document.getElementById('new-cat-input').value.trim(); if (!name) return
-  const cat = { id: genId(), name, requiredKeysConfig: [] }
   try {
-    const saved = await upsertCategoryVersioned(cat, getCurrentMemberId())
+    const saved = await createCategory({ name, requiredKeysConfig: [], actorId: getCurrentMemberId() })
     categories.push(saved)
     populateCatSelect(saved.id)
     document.getElementById('field-cat').value = saved.id
@@ -777,7 +777,7 @@ async function confirmNewCat() {
     refreshRequiredAttrs(saved.id)
     render()
     showToast('Category created')
-  } catch (e) { showToast('Error saving category') }
+  } catch (e) { showToast(e.message || 'Error saving category') }
 }
 
 // Compresses an image client-side (resize + re-encode as JPEG) before it
@@ -1097,11 +1097,11 @@ function typeLabel(type) {
 async function quickCreateCat() {
   const name = (document.getElementById('quick-cat-input').value || '').trim(); if (!name) return
   try {
-    const saved = await upsertCategory({ id: genId(), name, requiredKeysConfig: [] })
+    const saved = await createCategory({ name, requiredKeysConfig: [], actorId: getCurrentMemberId() })
     categories.push(saved)
     renderCatModal()
     showToast('Category created')
-  } catch (e) { showToast('Error creating category') }
+  } catch (e) { showToast(e.message || 'Error creating category') }
 }
 
 // ── Edit single category modal ────────────────────────────────
@@ -1238,23 +1238,24 @@ async function saveEditCat() {
     .map(cfg => ({ ...cfg, key: cfg.key.trim() }))
     .filter(cfg => cfg.key)
 
-  const updated = { ...categories[idx], name, requiredKeysConfig: cleanConfigs }
   try {
-    const saved = await upsertCategoryVersioned(updated, getCurrentMemberId())
+    const saved = await updateCategory({
+	    categoryId: editingCatId, name, requiredKeysConfig: cleanConfigs, actorId: getCurrentMemberId(),
+    })
     categories[idx] = saved
     closeEditCat(); renderCatModal(); render(); showToast('Category saved')
-  } catch (e) { showToast('Error saving category') }
+  } catch (e) { showToast(e.message || 'Error saving category') }
 }
 async function deleteCat() {
   if (!editingCatId) return
   const cat = catById(editingCatId)
   if (!cat || !confirm(`Delete category "${cat.name}"? Components won't be deleted, just uncategorized.`)) return
   try {
-    await deleteCategory(editingCatId)
+    await deleteCategory({ categoryId: editingCatId, actorId: getCurrentMemberId() })
     items = items.map(it => it.categoryId === editingCatId ? { ...it, categoryId: null } : it)
     categories = categories.filter(c => c.id !== editingCatId)
     closeEditCat(); renderCatModal(); render(); showToast('Category deleted')
-  } catch (e) { showToast('Error deleting category') }
+  } catch (e) { showToast(e.message || 'Error deleting category') }
 }
 
 // ── Component view (edit shared fallback name/description/image) ──

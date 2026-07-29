@@ -8,10 +8,14 @@
 // validation to Inventory mode's Add Component modal).
 
 import {
-  upsertAssemblyPart, createFabricationJob,
+  upsertAssemblyPart,
   fetchComponentsForFabricatePicker, findOrCreateComponent,
   fetchCategories, upsertCategory, validateAttribute,
 } from '../db.js'
+// Migration Plan Phase 2 cutover — job creation now goes through the
+// migrated route (services/FabricationJobService.js via
+// api/fabrication-jobs.js) instead of talking to Supabase directly.
+import { createFabricationJob } from '../services/fabricationJobsApi.js'
 import { registerNewJob } from '../fabricate.js'
 import { genId, toast } from './state.js'
 
@@ -470,7 +474,12 @@ async function confirmSendToFabricate() {
     toast(`Sent ${qty} × "${part.partName}" to Fabricate`)
   } catch (e) {
     console.error(e)
-    toast(e.message?.includes('duplicate') ? 'This part already has an active fabrication job.' : 'Error creating fabrication job')
+    // FabricationJobService.createJob already throws a friendly,
+    // user-facing ConflictError message ("This part already has an
+    // active fabrication job.") when the one-active-job-per-part rule
+    // is hit — no need to sniff for a raw Postgres "duplicate" string
+    // anymore, the way the old direct-Supabase call required.
+    toast(e.message || 'Error creating fabrication job')
   } finally {
     btn.disabled = false
     btn.innerHTML = '<i class="ti ti-tool" aria-hidden="true"></i> Send to Fabricate'

@@ -20,7 +20,7 @@
 // FabricationJobRepository/AssemblyPartRepository already are.
 
 import { getSupabase } from './supabaseClient.js'
-import { recordChangeServer, genCommitId } from '../api/_lib/changeLog.js'
+import { recordChangeServer, genCommitId } from '../../api/_lib/changeLog.js'
 
 export class ChangeLogRepository {
   constructor(supabase = getSupabase()) {
