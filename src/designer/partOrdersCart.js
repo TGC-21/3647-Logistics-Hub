@@ -7,9 +7,15 @@
 // really an extension of partOrders.js's domain entered from a part row.
 
 import {
-  ensurePartNumberStub, fetchListingsForPartNumber, upsertVendorListing,
-  findOrCreateCartForVendor, upsertCartItem, fetchAllPartNumbersWithListings,
+  fetchListingsForPartNumber, upsertVendorListing,
+  fetchAllPartNumbersWithListings,
 } from '../db.js'
+// Migration Plan Phase 2 cutover — cart find-or-create, item creation,
+// and part-number stubbing now go through the migrated route
+// (services/CartService.js via api/cart-items.js) instead of talking
+// to Supabase directly. confirmNewListing's `findOrCreateVendor` call
+// stays on db.js — vendors were never part of CartService's scope.
+import { createCartItem, findOrCreateCartForVendor, ensurePartNumberStub } from '../services/cartItemsApi.js'
 import { genId, toast } from './state.js'
 import {
   registerNewCartItem, registerNewCart, registerNewVendor, getVendors,
@@ -129,18 +135,17 @@ async function addToCartWithListing(listing) {
   try {
     const vendor = getVendors().find(v => v.id === listing.vendorId)
     const cart = await findOrCreateCartForVendor(listing.vendorId, vendor?.name || 'Vendor', genId)
-    const item = await upsertCartItem({
-      id: genId(), cartId: cart.id,
+    const item = await createCartItem({
+      cartId: cart.id,
       vendorListingId: listing.id,
       assemblyPartId: part.id,
       nameOverride: part.partName,
       quantity: Math.max(1, part.quantityNeeded - (part.quantityCollected || 0)) || 1,
-      status: 'pending',
     })
     registerNewCart(cart)
     registerNewCartItem(item)
     toast(`Added "${part.partName}" to cart "${cart.name}"`)
-  } catch (e) { console.error(e); toast('Error adding to cart') }
+  } catch (e) { console.error(e); toast(e.message || 'Error adding to cart') }
 }
 
 // ── "No listings yet" — one-click add-vendor-listing modal ────────

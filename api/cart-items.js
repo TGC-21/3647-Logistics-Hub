@@ -6,13 +6,18 @@
 // Supabase table access here, just parse → call one CartService method
 // → map the result or a typed error onto an HTTP response.
 //
-// Gated behind the harness shared secret for the same reason
-// api/fabrication-jobs.js is: this route has no client (browser)
-// caller yet (src/partOrders.js still talks to Supabase directly via
-// db.js) — see MIGRATION_EXAMPLE.md's "known debt" #2. Wiring an actual
-// client cutover for this route is a separate, later step
-// (MIGRATION_PLAN.md's Phase 2), and needs its own auth decision first,
-// same caveat api/fabrication-jobs.js carries.
+// Migration Plan Phase 2's third caller cutover (after Categories,
+// Fabrication Jobs): src/partOrders.js and src/designer/partOrdersCart.js
+// now call this route directly for the actions CartService actually
+// covers — see those files' own comments for exactly which call sites
+// moved and which stayed on db.js.
+//
+// AUTH DECISION — same one every other cutover route in this migration
+// has made: NO gate. The browser calls this directly now, and
+// Partshelf has no real per-member auth boundary yet (schema.sql's RLS
+// is `using (true)` everywhere) — requiring a secret the browser can't
+// safely hold would be theater, not security. Revisit at
+// MIGRATION_PLAN.md's Phase 3, for every route at once.
 //
 // POST /api/cart-items
 //   { action: 'create',            cartId, vendorListingId?, assemblyPartId?, nameOverride?, linkOverride?, priceOverride?, quantity, actorId? }
@@ -22,9 +27,8 @@
 //   { action: 'ensurePartNumber',  value }
 
 import { applyCors } from './_lib/onshape.js'
-import { assertHarnessToken } from './_lib/harnessAuth.js'
-import { CartService } from '../services/CartService.js'
-import { statusForError } from '../repositories/errors.js'
+import { CartService } from '../src/services/CartService.js'
+import { statusForError } from '../src/repositories/errors.js'
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { applyCors(res); return res.status(204).end() }
@@ -35,8 +39,6 @@ export default async function handler(req, res) {
   const service = new CartService()
 
   try {
-    assertHarnessToken(req)
-
     switch (body.action) {
       case 'create': {
         const item = await service.createCartItem({

@@ -857,7 +857,6 @@ function refreshChildPartsTbody() {
     .filter(partRowVisible)
     .map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || []))
     .join('')
-  bindChildPartRowEvents()   // tbody is fresh, so rebind row-level listeners (existing pattern)
 
   const countEl = document.querySelector('.asm-parts-title .section-count')
   if (countEl) countEl.textContent = String(currentChildParts.filter(partRowVisible).length)
@@ -873,7 +872,6 @@ function refreshPartsTbody() {
     .filter(partRowVisible)
     .map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || []))
     .join('')
-  bindPartRowEvents()   // tbody is fresh, so rebind row-level listeners (existing pattern)
 
   const countEl = document.querySelector('.asm-parts-title .section-count')
   if (countEl) countEl.textContent = String(currentParts.filter(partRowVisible).length)

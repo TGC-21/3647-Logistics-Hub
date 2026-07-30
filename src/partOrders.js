@@ -2,11 +2,21 @@
 
 import {
   fetchCarts, upsertCart, deleteCart,
-  fetchAllCartItems, upsertCartItem, deleteCartItem,
+  fetchAllCartItems, upsertCartItem,
   fetchAllPartNumbers, fetchVendors, findOrCreateVendor,
   fetchComponents, fetchListingsForPartNumber,
-  resolveCartItemDisplay, ensurePartNumberStub, 
+  resolveCartItemDisplay,
 } from './db.js'
+// Migration Plan Phase 2 cutover — item creation, status-advance, and
+// delete now go through the migrated route
+// (services/CartService.js via api/cart-items.js) instead of talking
+// to Supabase directly. `upsertCartItem` (generic quantity/field edits
+// on an EXISTING item) stays on db.js — CartService only ever grew a
+// specific `advanceItemStatus` transition, not a general update, so
+// that path is out of scope for this cutover (same "only swap what's
+// actually built" rule the Fabrication Jobs and Categories cutovers
+// followed).
+import { createCartItem, advanceCartItemStatus, deleteCartItem, ensurePartNumberStub } from './services/cartItemsApi.js'
 
 // ── State ─────────────────────────────────────────────────────
 let carts          = []
@@ -271,13 +281,12 @@ function bindItemRowEvents() {
 async function handleAdvanceStatus(itemId) {
   const item = items.find(i => i.id === itemId)
   if (!item) return
-  const next = item.status === 'pending' ? 'ordered' : 'received'
   try {
-    const saved = await upsertCartItem({ ...item, status: next })
+    const saved = await advanceCartItemStatus(itemId)
     const idx = items.findIndex(i => i.id === itemId)
     if (idx > -1) items[idx] = saved
     renderPartOrdersContent()
-  } catch (e) { console.error(e); toastFn('Error updating item') }
+  } catch (e) { console.error(e); toastFn(e.message || 'Error updating item') }
 }
 
 async function handleDeleteItem(itemId) {
@@ -287,7 +296,13 @@ async function handleDeleteItem(itemId) {
     items = items.filter(i => i.id !== itemId)
     renderPartOrdersContent()
     toastFn('Item removed')
-  } catch (e) { console.error(e); toastFn('Error removing item') }
+  } catch (e) {
+    console.error(e)
+    // CartService.deleteItem refuses to delete a 'received' item and
+    // throws a friendly, user-facing message explaining why — show it
+    // directly instead of a generic fallback.
+    toastFn(e.message || 'Error removing item')
+  }
 }
 
 async function handleDeleteCart(cartId) {
@@ -419,6 +434,10 @@ async function saveItemModal() {
   const existing = editingItemId ? items.find(i => i.id === editingItemId) : null
 
   if (existing?.vendorListingId) {
+    // Editing an EXISTING linked item's quantity — generic field update,
+    // out of scope for this cutover (CartService has no update method,
+    // only a specific advanceItemStatus transition — see the import
+    // comment above).
     const payload = { ...existing, quantity: Math.max(1, parseInt(document.getElementById('item-field-qty').value, 10) || 1) }
     try {
       const saved = await upsertCartItem(payload)
@@ -432,30 +451,30 @@ async function saveItemModal() {
   const name = document.getElementById('item-field-name').value.trim()
   if (!name) { document.getElementById('item-field-name').focus(); toastFn('Name is required'); return }
 
-  const payload = {
-    id: editingItemId || genId(),
-    cartId: itemModalCartId,
-    vendorListingId: null,
-    assemblyPartId: existing?.assemblyPartId || null,
+  const fields = {
     nameOverride: name,
     linkOverride: document.getElementById('item-field-link').value.trim(),
     priceOverride: document.getElementById('item-field-price').value ? parseFloat(document.getElementById('item-field-price').value) : null,
     quantity: Math.max(1, parseInt(document.getElementById('item-field-qty').value, 10) || 1),
-    status: existing?.status || 'pending',
   }
 
   try {
-    const saved = await upsertCartItem(payload)
     if (editingItemId) {
+      // Editing an EXISTING ad hoc item — same "no generic update in
+      // CartService" scope line as the linked-item branch above.
+      const saved = await upsertCartItem({ ...existing, ...fields, id: editingItemId, cartId: itemModalCartId, vendorListingId: null, assemblyPartId: existing?.assemblyPartId || null, status: existing?.status || 'pending' })
       const idx = items.findIndex(i => i.id === editingItemId)
       if (idx > -1) items[idx] = saved
     } else {
+      // A brand-new ad hoc item — this IS a create, so it goes through
+      // CartService via cartItemsApi.
+      const saved = await createCartItem({ cartId: itemModalCartId, ...fields })
       items.push(saved)
     }
     closeItemModal()
     renderPartOrdersContent()
     toastFn(editingItemId ? 'Item updated' : 'Item added')
-  } catch (e) { console.error(e); toastFn('Error saving item') }
+  } catch (e) { console.error(e); toastFn(e.message || 'Error saving item') }
 }
 
 // ── Bind static events ───────────────────────────────────────

@@ -124,8 +124,98 @@ Tests: services/__tests__/CategoryService.test.js (the four pure functions exerc
 
 ### Phase 2 — Caller cutover (per domain, after its extraction is proven)
 
+#### Phase 2, third domain: Cart / Part Orders (create / advanceStatus / delete / findOrCreateCart / ensurePartNumber)
+
+##### Why this domain next
+
+Same reasoning as Fabrication Jobs before it: `CartService` was fully
+built and tested in Phase 1 part 5, nothing about the service itself
+needed to change, and the domain's UI surface (`src/partOrders.js`,
+`src/designer/partOrdersCart.js`) is self-contained. Left for later,
+riskier passes: Onshape import/reimport and Detection.
+
+##### Files changed
+
+- `api/cart-items.js` — dropped the harness gate. Same auth decision
+  every prior cutover route made (documented in full in
+  `api/categories.js`): no real per-member auth boundary exists yet, so
+  gating this route tighter than the rest of the app is theater.
+- `src/services/cartItemsApi.js` — **new**. Thin fetch wrapper. Two of
+  its five functions (`findOrCreateCartForVendor`, `ensurePartNumberStub`)
+  keep their **exact original `db.js` positional signatures**, including
+  a trailing ignored `genId` parameter, so every existing call to them
+  needed only an import-source swap — zero body changes, at either call
+  site. The other three (`createCartItem`, `advanceCartItemStatus`,
+  `deleteCartItem`) don't have that luxury: there's no existing
+  `db.js` function called "createCartItem" (the client always used
+  generic `upsertCartItem` with a locally-generated id for creation
+  too), and `advanceCartItemStatus`'s name reflects that it's now a
+  specific transition, not a generic field update — see below.
+- `src/partOrders.js` — `handleAdvanceStatus`, `handleDeleteItem`, and
+  the NEW-item branch of `saveItemModal` now go through the migrated
+  route. The EXISTING-item-quantity-edit branches (both the linked-item
+  branch and the ad hoc-item-edit branch) stay on `upsertCartItem` —
+  see "Deliberately left untouched" below.
+- `src/designer/partOrdersCart.js` — `addToCartWithListing`'s cart
+  find-or-create and item creation now go through the migrated route;
+  `confirmNewListing`'s `findOrCreateVendor` call stays on `db.js`
+  (vendors were never part of `CartService`'s scope).
+
+##### Real logic moved, not just relocated
+
+`handleAdvanceStatus` used to compute the transition itself —
+`const next = item.status === 'pending' ? 'ordered' : 'received'` — then
+send a generic upsert. That ternary is now gone from the client
+entirely; `CartService.advanceItemStatus` owns the whole
+`pending → ordered → received` lifecycle, including the guard against
+advancing an already-received item that the old client code had no way
+to hit (it only ever computed `next` from `pending`/`ordered`) but a
+future caller absolutely could.
+
+##### One real behavior change, called out on purpose (matches how the
+   Categories cutover flagged its own duplicate-name check)
+
+`CartService.deleteItem` refuses to delete a `'received'` item outright
+— it's a completed purchase, same protection a `'complete'`/`'archived'`
+fabrication job already had against deletion. The old
+`handleDeleteItem` would delete ANY status after a plain `confirm()`.
+This is intentional (see `CartService`'s own doc comment from Phase 1
+part 5), not a regression: if someone tries to delete a received item
+now, they get a specific, friendly `ConflictError` message instead of
+it silently disappearing. `handleDeleteItem`'s catch block was updated
+to surface `e.message` instead of a generic fallback so that message
+actually reaches the user.
+
+##### Deliberately left untouched
+
+- **Editing an existing item's quantity** — both branches inside
+  `saveItemModal` (a linked item's quantity-only edit, and an ad hoc
+  item's full field edit) stay on `db.js`'s generic `upsertCartItem`.
+  `CartService` only ever grew `createCartItem` (new rows) and
+  `advanceItemStatus` (one specific status transition) — there's no
+  general "update this existing item's fields" service method, so
+  routing an edit through `createCartItem` would be wrong (it would
+  create a NEW row) and there's nothing else to route it through. Same
+  "only swap what's actually built" rule the Fabrication Jobs cutover
+  followed for `moveJobToBatch`/`claimFabricationJob`/etc.
+- `confirmNewListing`'s `findOrCreateVendor` — vendors (`vendors` table)
+  were never touched by `CartService`; no repository/service exists for
+  them yet.
+- `partOrders.js`'s cart CRUD (`upsertCart`/`deleteCart`) and vendor
+  management modal — out of scope; `CartService` only ever covered
+  cart *items* and the cart find-or-create helper, not carts' own
+  rename/delete/notes editing.
+
+##### Tests
+
+No test changes needed — `services/__tests__/CartService.test.js`
+already covers every rule this cutover exercises live (the status
+lifecycle, the received-item delete guard, and both find-or-create
+paths). Same payoff as the Fabrication Jobs cutover: the client wiring
+was the only new work.
 For each domain above, once the route exists and has been exercised:
 
+#### rules
 1. Swap exactly one client call site to hit the new route.
 2. Watch for regressions before swapping the rest of that domain's call sites.
 3. Only after all call sites for a domain are migrated, delete the now-dead direct-Supabase code path from db.js/src/*.js.
