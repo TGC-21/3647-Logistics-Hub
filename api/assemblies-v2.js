@@ -18,8 +18,8 @@
 
 import { applyCors } from './_lib/onshape.js'
 import { assertHarnessToken } from './_lib/harnessAuth.js'
-import { AssemblyService } from '../services/AssemblyService.js'
-import { statusForError } from '../repositories/errors.js'
+import { AssemblyService } from '../src/services/AssemblyService.js'
+import { statusForError } from '../src/repositories/errors.js'
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { applyCors(res); return res.status(204).end() }

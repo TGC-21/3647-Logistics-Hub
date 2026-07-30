@@ -6,11 +6,13 @@
 // since it's the same reservation flow (unlink lives there too).
 
 import {
-  fetchComponents, fetchAvailableInstances, reserveInstance, unreserveInstance,
-  fetchInstancesByIds, updateInstanceLocation, upsertAssemblyPart,
-  fetchSuggestedInstancesForPartNumber, linkPartNumberToComponent,
+  fetchComponents, fetchAvailableInstances,
+  fetchInstancesByIds, updateInstanceLocation,
+  fetchSuggestedInstancesForPartNumber,
 } from '../db.js'
-import { toast, computePartStatus } from './state.js'
+import { reserveInventoryUnits, unreserveInventoryUnits } from '../services/inventoryReservationApi.js'
+import { toast } from './state.js'
+import { getCurrentMemberId } from '../members.js'
 
 // ── Part name → category dictionary (search suggestion chips) ────
 const PART_NAME_DICTIONARY = {
@@ -223,43 +225,37 @@ async function linkInstanceToPart(instanceId, componentName, componentId, reques
   const part = currentInvLinkPart()
   if (!part) return
 
-  const currentLinked   = part.linkedInstanceIds || []
-  const alreadyLinked   = part.quantityCollected || 0
-  const remainingNeeded = part.quantityNeeded - alreadyLinked
+  // Cheap client-side check for a fast "already met" message — the
+  // server (InventoryReservationService.reserve) is the real authority
+  // and caps the quantity at the remaining gap itself, so this is a UX
+  // nicety, not the enforcement point.
+  const remainingNeeded = part.quantityNeeded - (part.quantityCollected || 0)
   if (remainingNeeded <= 0) { toast(`Already have ${part.quantityNeeded} linked — quantity needed is met.`); return }
-  const qty = Math.min(requestedQty, remainingNeeded)
-  if (qty <= 0) return
 
-  const assemblyName = ctx.getAssemblyNameForLocation(invLinkIsChildPart)
+  const assemblyName  = ctx.getAssemblyNameForLocation(invLinkIsChildPart)
+  const rawPartNumber = part.onshapeReference?.partNumber || part.partNumber
 
   try {
-    const fork = await reserveInstance(instanceId, qty, assemblyName)
-
-    const updatedPart = {
-      ...part,
-      componentId:       part.componentId || componentId,
-      linkedInstanceIds: [...currentLinked, fork.id],
-      quantityCollected: alreadyLinked + qty,
-    }
-    updatedPart.status = computePartStatus(updatedPart)
-
-    const saved = await upsertAssemblyPart(updatedPart)
-
-    const rawPartNumber = part.onshapeReference?.partNumber || part.partNumber
-    if (rawPartNumber) {
-      try { await linkPartNumberToComponent(rawPartNumber, updatedPart.componentId || componentId) }
-      catch (e) { console.warn('[partNumbers] backfill failed', e) }
-    }
+    const { part: saved } = await reserveInventoryUnits({
+      assemblyPartId:    part.id,
+      instanceId,
+      componentId,
+      quantity:          requestedQty,
+      location:          assemblyName,
+      sourcePartNumber:  rawPartNumber || null,
+      actorId:           getCurrentMemberId(),
+    })
 
     await ctx.afterChange(saved, invLinkIsChildPart)
 
-    toast(`Linked ${qty} x ${componentName} to "${part.partName}"`)
+    const actuallyLinked = saved.quantityCollected - (part.quantityCollected || 0)
+    toast(`Linked ${actuallyLinked} x ${componentName} to "${part.partName}"`)
     document.getElementById('inv-link-subtitle').textContent =
       `For: ${saved.partName} (${saved.quantityCollected}/${saved.quantityNeeded} linked)`
     loadAndSearchInventory(invLinkQuery)
   } catch (e) {
     console.error(e)
-    toast(e.message?.includes('available') ? e.message : 'Error linking inventory item')
+    toast(e.message?.includes('available') || e.message?.includes('met') ? e.message : 'Error linking inventory item')
     loadAndSearchInventory(invLinkQuery)
   }
 }
@@ -270,20 +266,20 @@ async function unlinkInstanceFromPart(partId, instanceId, isChildPart) {
   if (!confirm('Unlink this inventory item? It will be marked available again.')) return
 
   try {
-    await unreserveInstance(instanceId, '')
+    // Read the pile's quantity BEFORE unreserving so the service knows
+    // how many units to give back to the part's quantityCollected —
+    // unreserving flips status/location but never changes quantity.
     const unlinkedRow = await fetchInstancesByIds([instanceId]).then(rows => rows[0])
-    const unlinkedQty  = unlinkedRow?.quantity || 1
+    const unlinkedQty = unlinkedRow?.quantity || 1
 
-    const remaining = (part.linkedInstanceIds || []).filter(id => id !== instanceId)
-    const updatedPart = {
-      ...part,
-      linkedInstanceIds: remaining,
-      componentId:       remaining.length ? part.componentId : null,
-      quantityCollected: Math.max(0, (part.quantityCollected || 0) - unlinkedQty),
-    }
-    updatedPart.status = computePartStatus(updatedPart)
+    const saved = await unreserveInventoryUnits({
+      assemblyPartId:   partId,
+      instanceId,
+      unlinkedQuantity: unlinkedQty,
+      resetLocation:    '',
+      actorId:          getCurrentMemberId(),
+    })
 
-    const saved = await upsertAssemblyPart(updatedPart)
     await ctx.afterChange(saved, isChildPart)
 
     if (openLinkedDetailIds.has(partId)) { openLinkedDetailIds.delete(partId); toggleLinkedDetail(partId, isChildPart) }

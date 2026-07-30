@@ -28,7 +28,7 @@
 // client callers (see MIGRATION_EXAMPLE.md), so it's gated from day
 // one; when client cutover happens for a given route later, that
 // route's auth story needs a real decision, not just reusing this as-is.
-import { UnauthorizedError } from '../../repositories/errors.js'
+import { UnauthorizedError } from '../../src/repositories/errors.js'
 
 export function assertHarnessToken(req) {
   const expected = process.env.HARNESS_API_TOKEN

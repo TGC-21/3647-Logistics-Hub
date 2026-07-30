@@ -1,18 +1,27 @@
 // api/inventory-reservation.js — Vercel serverless function
 //
-// Migration Plan Phase 1, item 1. Same shape as api/fabrication-jobs.js:
-// thin, action-dispatched, harness-token gated (no client caller yet —
-// src/designer/inventoryLink.js still talks to Supabase directly; that
-// cutover is Plan Phase 2, done only after this route is exercised).
+// Migration Plan Phase 1, item 1 / Phase 2 caller cutover (fourth
+// domain, after Categories/Cart/Fabrication Jobs). Thin, action-dispatched
+// route for InventoryReservationService.
+//
+// AUTH DECISION — same one every migrated route in this pass has made
+// (see api/categories.js's own comment for the full reasoning): this
+// route is now called directly by the browser
+// (src/services/inventoryReservationApi.js, from
+// src/designer/inventoryLink.js), so it can no longer require the
+// harness-only shared secret — a browser has no safe way to hold it.
+// It runs with NO auth gate, same as every other client-facing route.
+// Partshelf has no real per-member auth boundary yet, so gating this
+// one route more tightly than the rest of the app would be a false
+// sense of security. Revisit once Migration Plan Phase 3 lands.
 //
 // POST /api/inventory-reservation
 //   { action: 'reserve',   assemblyPartId, instanceId, componentId, quantity, location?, sourcePartNumber?, actorId? }
 //   { action: 'unreserve', assemblyPartId, instanceId, unlinkedQuantity?, resetLocation?, actorId? }
 
 import { applyCors } from './_lib/onshape.js'
-import { assertHarnessToken } from './_lib/harnessAuth.js'
-import { InventoryReservationService } from '../services/InventoryReservationService.js'
-import { statusForError } from '../repositories/errors.js'
+import { InventoryReservationService } from '../src/services/InventoryReservationService.js'
+import { statusForError } from '../src/repositories/errors.js'
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { applyCors(res); return res.status(204).end() }
@@ -23,8 +32,6 @@ export default async function handler(req, res) {
   const service = new InventoryReservationService()
 
   try {
-    assertHarnessToken(req)
-
     switch (body.action) {
       case 'reserve': {
         const result = await service.reserve({
