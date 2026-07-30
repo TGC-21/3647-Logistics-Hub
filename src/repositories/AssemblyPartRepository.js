@@ -45,6 +45,22 @@ export class AssemblyPartRepository {
     return toLocal(data)
   }
 
+  /** Every part belonging to one owner — a root assembly (assemblyId)
+   *  or a subassembly node (assemblyChildId), exactly one of which the
+   *  caller passes, mirroring the DB's own exactly-one-owner
+   *  constraint. Used by AssemblyPartService.listForAssembly/
+   *  listForChild/computeOwnerStatus. */
+  async findForOwner({ assemblyId = null, assemblyChildId = null } = {}) {
+    if (!!assemblyId === !!assemblyChildId) {
+      throw new DatabaseError('findForOwner requires exactly one of assemblyId or assemblyChildId')
+    }
+    let query = this.db.from('assembly_parts').select('*')
+    query = assemblyId ? query.eq('assembly_id', assemblyId) : query.eq('assembly_child_id', assemblyChildId)
+    const { data, error } = await query
+    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   async updateFabricationMetadata(id, metadata) {
     const { data, error } = await this.db
       .from('assembly_parts')
@@ -124,6 +140,88 @@ export class AssemblyPartRepository {
    *  then children, though the FK cascade would handle either order). */
   async deleteDirectForAssembly(assemblyId) {
     const { error } = await this.db.from('assembly_parts').delete().eq('assembly_id', assemblyId)
+    if (error) throw new DatabaseError(`assembly_parts delete failed: ${error.message}`, error)
+  }
+
+  // ── Whitelisted camelCase -> column mapping for partial updates ──
+  // Every service-level "patch a few fields" call (reservation bookkeeping,
+  // status recompute, quantity edits, the manual Add/Edit modal) funnels
+  // through this one mapping so a new writable field only needs adding
+  // here once, not re-derived per call site.
+  static #PATCHABLE_FIELDS = {
+    componentId:       'component_id',
+    linkedInstanceIds: 'linked_instance_ids',
+    quantityCollected: 'quantity_collected',
+    quantityNeeded:    'quantity_needed',
+    status:            'status',
+    partName:          'part_name',
+    partNumber:        'part_number',
+    notes:             'notes',
+  }
+
+  /** Generic partial update — accepts any subset of the whitelisted
+   *  camelCase fields above. Used both directly (AssemblyPartService's
+   *  create/update/status flows) and by the two thin wrappers below,
+   *  kept for callers that read better with a named, narrower method. */
+  async updateFields(id, patch) {
+    const columns = {}
+    for (const [key, value] of Object.entries(patch)) {
+      const column = AssemblyPartRepository.#PATCHABLE_FIELDS[key]
+      if (!column) throw new DatabaseError(`assembly_parts update: unrecognized field "${key}"`)
+      columns[column] = value
+    }
+    const { data, error } = await this.db
+      .from('assembly_parts').update(columns).eq('id', id).select().single()
+    if (error) throw new DatabaseError(`assembly_parts update failed: ${error.message}`, error)
+    return toLocal(data)
+  }
+
+  /** Reservation bookkeeping writes (componentId/linkedInstanceIds/
+   *  quantityCollected/status) — a named alias of updateFields so
+   *  InventoryReservationService/AssemblyPartService call sites read as
+   *  what they mean, not just "some patch." */
+  async updateReservationFields(id, patch) {
+    return this.updateFields(id, patch)
+  }
+
+  async updateQuantityNeeded(id, quantityNeeded) {
+    return this.updateFields(id, { quantityNeeded })
+  }
+
+  /** Single-row create — the manual Add Part modal's path (as opposed
+   *  to bulkInsert, used by Onshape/CSV import). Owner (assemblyId XOR
+   *  assemblyChildId) must already be resolved by the caller, same
+   *  constraint the DB itself enforces. */
+  async insert(row) {
+    const { data, error } = await this.db
+      .from('assembly_parts')
+      .insert({
+        id:                   row.id,
+        assembly_id:          row.assemblyId ?? null,
+        assembly_child_id:    row.assemblyChildId ?? null,
+        part_name:            row.partName,
+        part_number:          row.partNumber ?? '',
+        quantity_needed:      row.quantityNeeded ?? 1,
+        quantity_collected:   row.quantityCollected ?? 0,
+        status:               row.status ?? 'pending',
+        source:               row.source ?? 'manual',
+        notes:                row.notes ?? '',
+        onshape_reference:    row.onshapeReference ?? null,
+        component_id:         row.componentId ?? null,
+        linked_instance_ids:  row.linkedInstanceIds ?? [],
+        fabrication_metadata: row.fabricationMetadata ?? {},
+      })
+      .select().single()
+    if (error) throw new DatabaseError(`assembly_parts insert failed: ${error.message}`, error)
+    return toLocal(data)
+  }
+
+  /** Deletes one row outright — the manual Delete Part action. Releasing
+   *  any inventory the part had reserved is InventoryReservationService's
+   *  job, not this repository's; AssemblyPartService.deletePart
+   *  orchestrates the two in order (release, then delete). */
+  async deleteById(id) {
+    const { error } = await this.db.from('assembly_parts').delete().eq('id', id)
     if (error) throw new DatabaseError(`assembly_parts delete failed: ${error.message}`, error)
   }
 

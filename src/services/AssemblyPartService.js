@@ -17,6 +17,7 @@
 // if/else themselves.
 
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
+import { InventoryInstanceRepository } from '../repositories/InventoryInstanceRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError } from '../repositories/errors.js'
 
@@ -44,9 +45,11 @@ export function derivedAssemblyStatus(parts) {
 export class AssemblyPartService {
   constructor({
     partRepo      = new AssemblyPartRepository(),
+    instanceRepo  = new InventoryInstanceRepository(),
     changeLogRepo = new ChangeLogRepository(),
   } = {}) {
     this.partRepo      = partRepo
+    this.instanceRepo  = instanceRepo
     this.changeLogRepo = changeLogRepo
   }
 
@@ -113,5 +116,96 @@ export class AssemblyPartService {
   async computeOwnerStatus({ assemblyId }) {
     const parts = await this.partRepo.findForOwner({ assemblyId })
     return derivedAssemblyStatus(parts)
+  }
+
+  /** Manual "Add part" — as opposed to bulkInsert (Onshape/CSV import),
+   *  which stays on AssemblyPartRepository directly since those flows
+   *  aren't migrated yet. Exactly one owner (assemblyId XOR
+   *  assemblyChildId) is required, same constraint the DB itself
+   *  enforces (assembly_parts_exactly_one_owner) — checked here first
+   *  so a caller bug surfaces as a clean ValidationError instead of a
+   *  raw Postgres constraint violation. */
+  async createPart({ assemblyId = null, assemblyChildId = null, partName, partNumber = '', quantityNeeded = 1, notes = '', actorId = null }) {
+    if (!partName || !partName.trim()) throw new ValidationError('Part name is required')
+    if (!Number.isInteger(quantityNeeded) || quantityNeeded <= 0) {
+      throw new ValidationError('quantityNeeded must be a positive integer')
+    }
+    if (!!assemblyId === !!assemblyChildId) {
+      throw new ValidationError('A part must belong to exactly one of assemblyId or assemblyChildId')
+    }
+
+    const part = await this.partRepo.insert({
+      id: genId(),
+      assemblyId, assemblyChildId,
+      partName: partName.trim(), partNumber, quantityNeeded,
+      quantityCollected: 0, status: 'pending', source: 'manual', notes,
+    })
+
+    await this.changeLogRepo.record({
+      entityType: 'assembly_part', entityId: part.id, action: 'create',
+      newValue: part, actorId, commitId: this.changeLogRepo.newCommitId(),
+    })
+
+    return part
+  }
+
+  /** Manual "Edit part" — name/number/quantity/notes, the fields the
+   *  Add/Edit modal actually exposes. Deliberately does not touch
+   *  componentId/linkedInstanceIds/quantityCollected (reservation
+   *  bookkeeping — InventoryReservationService's domain) or
+   *  fabricationMetadata (FabricationDetectionService's, once that
+   *  cuts over). Recomputes status afterward, same reasoning
+   *  updateQuantityNeeded already documents (shrinking the requirement
+   *  can flip partial -> complete). */
+  async updatePart({ partId, partName, partNumber = '', quantityNeeded, notes = '', actorId = null }) {
+    if (!partName || !partName.trim()) throw new ValidationError('Part name is required')
+    if (!Number.isInteger(quantityNeeded) || quantityNeeded <= 0) {
+      throw new ValidationError('quantityNeeded must be a positive integer')
+    }
+
+    const before = await this.partRepo.findById(partId)
+    await this.partRepo.updateFields(partId, {
+      partName: partName.trim(), partNumber, quantityNeeded, notes,
+    })
+
+    const commitId = this.changeLogRepo.newCommitId()
+    const diffs = [
+      ['partName', before.partName, partName.trim()],
+      ['partNumber', before.partNumber, partNumber],
+      ['quantityNeeded', before.quantityNeeded, quantityNeeded],
+      ['notes', before.notes, notes],
+    ]
+    for (const [field, oldValue, newValue] of diffs) {
+      if (oldValue !== newValue) {
+        await this.changeLogRepo.record({
+          entityType: 'assembly_part', entityId: partId, action: 'update', field,
+          oldValue, newValue, actorId, commitId,
+        })
+      }
+    }
+
+    return this.recomputeStatus({ partId, actorId })
+  }
+
+  /** Manual "Delete part" — releases any reserved inventory back to
+   *  available FIRST (same order the old client-side deletePart/
+   *  deleteChildPart click handlers used: release, then delete), then
+   *  removes the row. A part with no linkedInstanceIds skips the
+   *  release call entirely rather than paying an empty-array round trip. */
+  async deletePart({ partId, actorId = null }) {
+    const part = await this.partRepo.findById(partId)
+
+    if (part.linkedInstanceIds?.length) {
+      await this.instanceRepo.releaseMany(part.linkedInstanceIds)
+    }
+
+    await this.partRepo.deleteById(partId)
+
+    await this.changeLogRepo.record({
+      entityType: 'assembly_part', entityId: partId, action: 'delete',
+      oldValue: part, actorId, commitId: this.changeLogRepo.newCommitId(),
+    })
+
+    return { deletedPartId: partId, releasedInstanceCount: part.linkedInstanceIds?.length || 0 }
   }
 }

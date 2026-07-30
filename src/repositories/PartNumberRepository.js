@@ -31,6 +31,22 @@ export class PartNumberRepository {
     return data ? toLocal(data) : null
   }
 
+  /** Backfills component_id onto the part_numbers row matching `value`,
+   *  but only if it doesn't already have one — mirrors src/db.js's
+   *  linkPartNumberToComponent. Never overwrites an already-confirmed
+   *  component_id, so two distinct SKUs that happen to collide don't
+   *  silently merge. No-op if value/componentId is missing. */
+  async backfillComponentId(value, componentId) {
+    const trimmed = (value || '').trim()
+    if (!trimmed || !componentId) return
+    const { error } = await this.db
+      .from('part_numbers')
+      .update({ component_id: componentId })
+      .eq('value', trimmed)
+      .is('component_id', null)
+    if (error) throw new DatabaseError(`part_numbers backfill failed: ${error.message}`, error)
+  }
+
   async insert({ id, value }) {
     const { data, error } = await this.db
       .from('part_numbers')
