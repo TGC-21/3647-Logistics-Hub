@@ -129,8 +129,11 @@ export class AssemblyPartRepository {
       if (gcErr) throw new DatabaseError(`assembly_children lookup failed: ${gcErr.message}`, gcErr)
       queue.push(...(grandchildren || []).map(c => c.id))
     }
-
-    return allParts.map(toLocal)
+    let query = this.db.from('assembly_parts').select('*')
+    query = assemblyId ? query.eq('assembly_id', assemblyId) : query.eq('assembly_child_id', assemblyChildId)
+    const { data, error } = await query
+    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
   }
 
   /** Wipes every assembly_parts row directly owned by the root — its
