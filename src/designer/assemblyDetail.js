@@ -14,9 +14,17 @@ import {
   fetchAssemblyChildById, fetchChildParts,
   releaseInstances, fetchAllLinkedInstanceIdsForAssembly,
   fetchActiveJobsForParts, fetchActiveCartItemsForParts,
-  fetchRootAssemblyIdForChild, findOrCreateComponent, fetchAllAssemblyPartIdsForAssembly,
+  fetchRootAssemblyIdForChild, fetchAllAssemblyPartIdsForAssembly,
   deletePendingCartItemsForAssemblyPartIds, 
 } from '../db.js'
+// findOrCreateComponent is no longer imported/used here — component
+// resolution for a confirmed fabrication detection now happens
+// server-side in FabricationDetectionService (via
+// src/services/fabricationDetectionApi.js, called from
+// src/designer/fabDetection.js). The old initFabDetection(fn) wiring
+// step below that used to hand this function to fabDetection.js has
+// been removed along with it — fabDetection.js no longer exports
+// initFabDetection at all.
 
 import {
   toast, genId, assemblyById, statusLabel, partsProgress, derivedAssemblyStatus,
@@ -53,7 +61,7 @@ import {
 } from './partsTable.js'
 
 import {
-  initFabDetection, registerFabDetectionContext, openFabDetectConfirmModal,
+  registerFabDetectionContext, openFabDetectConfirmModal,
 } from './fabDetection.js'
 
 import {
@@ -742,8 +750,6 @@ async function afterPartsChange(isChild) {
 }
 
 export function initDesignerWiring() {
-  initFabDetection(findOrCreateComponent)
-
   registerAssemblyGridContext({
     selectAssembly,
     openOnshapeLinkFlow: () => openOnshapeModal('link'),

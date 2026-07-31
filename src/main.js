@@ -4,12 +4,15 @@ import {
   uploadImage,     deleteImage,
   validateAttribute, reconcileOrphanedInstances,
   fetchInventoryInstances, upsertInventoryInstance, deleteInventoryInstance,
-  findOrCreateComponent, deleteComponentIfOrphaned, updateComponentFallback,
+  fetchInstanceCountsForComponents,
   attrsArrayToMap,
 } from './db.js'
 import {
   fetchCategories, createCategory, updateCategory, deleteCategory,
 } from './services/categoriesApi.js'
+import {
+  findOrCreateComponent, deleteComponentIfOrphaned, updateComponentFallback,
+} from './services/componentsApi.js'
 import {
   designerBoot,        setToast,
   renderDesignerSidebar, renderDesignerContent,
@@ -972,10 +975,9 @@ async function saveItem() {
     // rely on that fallback unless they set their own name/desc/image.
     const component = await findOrCreateComponent({
       categoryId: catId,
-      fields:     keysConfig,
       attrs:      attrsArrayToMap(attrs),
       fallback:   { name, description: desc, image: imageUrl },
-      genId,
+      actorId:    getCurrentMemberId(),
     })
 
     const saved = await upsertInventoryInstanceVersioned({
@@ -987,7 +989,9 @@ async function saveItem() {
     // If editing re-parented this instance to a different (forked or
     // pre-existing) component, clean up the old one if now unreferenced.
     if (priorComponentId && priorComponentId !== component.id) {
-      await deleteComponentIfOrphaned(priorComponentId)
+      const counts = await fetchInstanceCountsForComponents([priorComponentId])
+      const instanceCount = counts[priorComponentId]?.total ?? 0
+      await deleteComponentIfOrphaned({ componentId: priorComponentId, instanceCount, actorId: getCurrentMemberId() })
     }
    
     if (editingId) {
@@ -1045,7 +1049,9 @@ async function deleteFromDetail() {
   if (!it || !confirm(`Delete "${it.name}"? This cannot be undone.`)) return
   try {
     await deleteInventoryInstance(detailId)
-    await deleteComponentIfOrphaned(it.componentId)
+    const counts = await fetchInstanceCountsForComponents([it.componentId])
+    const instanceCount = counts[it.componentId]?.total ?? 0
+    await deleteComponentIfOrphaned({ componentId: it.componentId, instanceCount, actorId: getCurrentMemberId() })
     if (it.image) await deleteImage(detailId)
     items = items.filter(x => x.id !== detailId)
     closeDetail(); render(); showToast('Component deleted')
@@ -1278,7 +1284,7 @@ async function saveComponentFallback() {
   const desc  = document.getElementById('component-view-desc').value.trim()
   const image = document.getElementById('component-view-image-preview').src || null
   try {
-    await updateComponentFallback(viewingComponentId, { name, description: desc, image })
+    await updateComponentFallback({ componentId: viewingComponentId, name, description: desc, image, actorId: getCurrentMemberId() })
     items = await fetchInventoryInstances()
     document.getElementById('component-view-overlay').style.display = 'none'
     render()

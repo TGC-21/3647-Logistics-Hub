@@ -9,66 +9,19 @@
 // object registered from partsTable.js) and to register the resulting
 // job with fabricate.js.
 
-import {
-  upsertAssemblyPart,
-  fetchCategories, upsertCategory,
-} from '../db.js'
-// Migration Plan Phase 2 cutover — job creation now goes through the
-// migrated route (services/FabricationJobService.js via
-// api/fabrication-jobs.js) instead of talking to Supabase directly.
-import { createFabricationJob } from '../services/fabricationJobsApi.js'
+// Migration Plan Phase 2 cutover — confirming/ignoring a detected
+// candidate now goes through the migrated route
+// (services/FabricationDetectionService.js via
+// api/fabrication-detection.js) instead of this module ensuring its own
+// category, resolving the component, and writing the part/job
+// separately. See FabricationDetectionService's own doc comment for why
+// that consolidation mattered (three copy-pasted confirm* functions were
+// the single biggest duplicated-business-logic surface in the repo).
+import { confirmFabricationDetection, ignoreFabricationDetection } from '../services/fabricationDetectionApi.js'
 import { registerNewJob } from '../fabricate.js'
+import { getCurrentMemberId } from '../members.js'
 import { renderSegmentEditor, renderSegmentPreview } from '../segmentEditor.js'
-import { genId, toast } from './state.js'
-
-// ── Hard-coded category shapes for auto-created components ─────────
-const SPACER_CATEGORY_NAME = 'Spacer'
-const SPACER_REQUIRED_KEYS_CONFIG = [
-  { key: 'Spacer Type', type: 'enum', options: ['ROUND', 'HEX', 'HEX375'] },
-  { key: 'OD',           type: 'quantity', defaultUnit: 'in' },
-  { key: 'ID or Across Flats', type: 'quantity', defaultUnit: 'in' },
-  { key: 'Length',       type: 'quantity', defaultUnit: 'in' },
-]
-
-const AXIAL_SHAFT_CATEGORY_NAME = 'Axial Shaft'
-const AXIAL_SHAFT_REQUIRED_KEYS_CONFIG = [
-  { key: 'Profile', type: 'segments', segmentUnit: 'in' },
-]
-
-const PLATE_CATEGORY_NAME = 'Plate'
-const PLATE_REQUIRED_KEYS_CONFIG = [
-  { key: 'Material',  type: 'enum', options: ['Aluminum', 'Polycarbonate', 'Acrylic', 'Steel', 'Other'] },
-  { key: 'Thickness', type: 'quantity', defaultUnit: 'in' },
-]
-
-async function ensureSpacerCategory() {
-  const cats = await fetchCategories()
-  let cat = cats.find(c => c.name === SPACER_CATEGORY_NAME)
-  if (cat) return cat
-  return upsertCategory({ id: genId(), name: SPACER_CATEGORY_NAME, requiredKeysConfig: SPACER_REQUIRED_KEYS_CONFIG })
-}
-
-async function ensureAxialShaftCategory() {
-  const cats = await fetchCategories()
-  let cat = cats.find(c => c.name === AXIAL_SHAFT_CATEGORY_NAME)
-  if (cat) return cat
-  return upsertCategory({ id: genId(), name: AXIAL_SHAFT_CATEGORY_NAME, requiredKeysConfig: AXIAL_SHAFT_REQUIRED_KEYS_CONFIG })
-}
-
-async function ensurePlateCategory() {
-  const cats = await fetchCategories()
-  let cat = cats.find(c => c.name === PLATE_CATEGORY_NAME)
-  if (cat) return cat
-  return upsertCategory({ id: genId(), name: PLATE_CATEGORY_NAME, requiredKeysConfig: PLATE_REQUIRED_KEYS_CONFIG })
-}
-
-// findOrCreateComponent is injected via initFabDetection() rather than
-// imported directly, to keep this module's actual dependency surface
-// explicit and to avoid a circular import back through db.js re-exports.
-let findOrCreateComponentFn = null
-export function initFabDetection(findOrCreateComponent) {
-  findOrCreateComponentFn = findOrCreateComponent
-}
+import { toast } from './state.js'
 
 // ── Modal state ──────────────────────────────────────────────────
 let fabDetectPartId    = null
@@ -305,25 +258,20 @@ export async function confirmFabDetection() {
   btn.disabled = true; btn.textContent = 'Confirming…'
 
   try {
-    const spacerCat = await ensureSpacerCategory()
     const attrs = {
       'Spacer Type':        spacerType,
       'OD':                 String(od),
       'ID or Across Flats': String(idOrAf),
       'Length':             String(length),
     }
-    const component = await findOrCreateComponentFn({
-      categoryId: spacerCat.id,
-      fields:     spacerCat.requiredKeysConfig,
+    const { part: savedPart, job } = await confirmFabricationDetection({
+      kind:              'spacer',
+      partId:            part.id,
       attrs,
-      fallback:   { name: part.partName, description: `Auto-detected ${spacerType.toLowerCase()} spacer`, image: null },
-      genId,
+      quantityRequested: qty,
+      overrides:         Object.keys(overrides).length ? overrides : null,
+      actorId:           getCurrentMemberId(),
     })
-
-    const updatedMeta = { ...meta, status: 'queued', overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null) }
-    const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
-
-    const job = await createFabricationJob({ assemblyPartId: part.id, quantityRequested: qty, batchId: null, genId })
     registerNewJob(job)
 
     getPartsCtx.onJobCreated(savedPart, job, fabDetectIsChild)
@@ -369,27 +317,21 @@ async function confirmAxialShaftDetection(part) {
   const removedIds = Object.keys(originalById).filter(id => !survivingIds.has(id))
   if (removedIds.length) overrides._removedSegmentIds = removedIds
 
-  const meta = part.fabricationMetadata || {}
   const btn  = document.getElementById('btn-confirm-fab-detect')
   btn.disabled = true; btn.textContent = 'Confirming…'
 
   try {
-    const shaftCat = await ensureAxialShaftCategory()
     const totalLength = fabDetectSegments.reduce((s, seg) => s + seg.length, 0)
     const profileValue = { totalLength, segments: fabDetectSegments.map(({ warnings, ...rest }) => rest) }
 
-    const component = await findOrCreateComponentFn({
-      categoryId: shaftCat.id,
-      fields:     shaftCat.requiredKeysConfig,
-      attrs:      { 'Profile': profileValue },
-      fallback:   { name: part.partName, description: 'Auto-detected axial shaft', image: null },
-      genId,
+    const { part: savedPart, job } = await confirmFabricationDetection({
+      kind:              'axial-shaft',
+      partId:            part.id,
+      attrs:             { 'Profile': profileValue },
+      quantityRequested: qty,
+      overrides:         Object.keys(overrides).length ? overrides : null,
+      actorId:           getCurrentMemberId(),
     })
-
-    const updatedMeta = { ...meta, status: 'queued', overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null) }
-    const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
-
-    const job = await createFabricationJob({ assemblyPartId: part.id, quantityRequested: qty, batchId: null, genId })
     registerNewJob(job)
 
     getPartsCtx.onJobCreated(savedPart, job, fabDetectIsChild)
@@ -421,20 +363,15 @@ async function confirmPlateDetection(part) {
   btn.disabled = true; btn.textContent = 'Confirming…'
 
   try {
-    const plateCat = await ensurePlateCategory()
     const attrs = { 'Material': material, 'Thickness': String(thickness) }
-    const component = await findOrCreateComponentFn({
-      categoryId: plateCat.id,
-      fields:     plateCat.requiredKeysConfig,
+    const { part: savedPart, job } = await confirmFabricationDetection({
+      kind:              'plate',
+      partId:            part.id,
       attrs,
-      fallback:   { name: part.partName, description: `Auto-detected ${material.toLowerCase()} plate`, image: null },
-      genId,
+      quantityRequested: qty,
+      overrides:         Object.keys(overrides).length ? overrides : null,
+      actorId:           getCurrentMemberId(),
     })
-
-    const updatedMeta = { ...meta, status: 'queued', overrides: Object.keys(overrides).length ? overrides : (meta.overrides || null) }
-    const savedPart = await upsertAssemblyPart({ ...part, componentId: component.id, fabricationMetadata: updatedMeta })
-
-    const job = await createFabricationJob({ assemblyPartId: part.id, quantityRequested: qty, batchId: null, genId })
     registerNewJob(job)
 
     getPartsCtx.onJobCreated(savedPart, job, fabDetectIsChild)
@@ -453,8 +390,7 @@ export async function ignoreFabDetection() {
   const part = currentFabDetectPart()
   if (!part) return
   try {
-    const updatedMeta = { ...(part.fabricationMetadata || {}), status: 'ignored' }
-    const saved = await upsertAssemblyPart({ ...part, fabricationMetadata: updatedMeta })
+    const saved = await ignoreFabricationDetection({ partId: part.id, actorId: getCurrentMemberId() })
     getPartsCtx.onPartUpdated(saved, fabDetectIsChild)
     closeFabDetectConfirmModal()
     toast('Marked as not a spacer')

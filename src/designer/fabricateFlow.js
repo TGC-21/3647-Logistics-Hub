@@ -9,15 +9,17 @@
 
 import {
   upsertAssemblyPart,
-  fetchComponentsForFabricatePicker, findOrCreateComponent,
+  fetchComponentsForFabricatePicker,
   fetchCategories, upsertCategory, validateAttribute,
 } from '../db.js'
 // Migration Plan Phase 2 cutover — job creation now goes through the
 // migrated route (services/FabricationJobService.js via
 // api/fabrication-jobs.js) instead of talking to Supabase directly.
 import { createFabricationJob } from '../services/fabricationJobsApi.js'
+import { findOrCreateComponent } from '../services/componentsApi.js'
 import { registerNewJob } from '../fabricate.js'
 import { genId, toast } from './state.js'
+import { getCurrentMemberId } from '../members.js'
 
 /**
  * `ctx` is:
@@ -440,10 +442,9 @@ async function confirmFabEstablishComponent() {
   try {
     const component = await findOrCreateComponent({
       categoryId: catId,
-      fields:     keysConfig,
       attrs,
       fallback:   { name: part.partName, description: '', image: null },
-      genId,
+      actorId:    getCurrentMemberId(),
     })
     fabCatalog.push({ ...component, categoryName: cat?.name || 'Uncategorized', category: cat })
     await selectFabComponent(component.id)

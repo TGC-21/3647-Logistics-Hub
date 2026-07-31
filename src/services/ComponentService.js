@@ -21,7 +21,7 @@ import { ComponentRepository } from '../repositories/ComponentRepository.js'
 import { CategoryRepository } from '../repositories/CategoryRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError } from '../repositories/errors.js'
-import { buildComponentSignature } from '../src/componentMatch.js'
+import { buildComponentSignature } from '../componentMatch.js'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -101,6 +101,10 @@ export class ComponentService {
    *  single count check owned by the reservation domain. Returns
    *  whether a delete actually happened. */
   async deleteIfOrphaned({ componentId, instanceCount, actorId = null }) {
+    if (!componentId) throw new ValidationError('componentId is required')
+    if (!Number.isInteger(instanceCount) || instanceCount < 0) {
+      throw new ValidationError('instanceCount must be a non-negative integer')
+    }
     if (instanceCount > 0) return false
     const before = await this.componentRepo.findById(componentId).catch(() => null)
     await this.componentRepo.deleteById(componentId)

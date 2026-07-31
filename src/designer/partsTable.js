@@ -47,9 +47,8 @@
 // direction, users can move freely through the carousel regardless of
 // whether the current step is "complete."
 
-import { upsertAssemblyPart, deleteAssemblyPart, releaseInstances } from '../db.js'
 import {
-  genId, toast, computePartStatus, totalPromisedQty, partCanPromiseMore,
+  toast, computePartStatus, totalPromisedQty, partCanPromiseMore,
   getSelectedPartIds, setSelectedPartIds, clearPartSelection,
   isPartSelected, togglePartSelected, setPartsSelected,
   getCurrentPartJobs, getCurrentChildPartJobs,
@@ -60,8 +59,8 @@ import {
   fabDetectionBadgeHTML, fabDetectActionable, openFabDetectConfirmModal,
   confirmFabDetection,
 } from './fabDetection.js'
-import { upsertAssemblyPartVersioned, deleteAssemblyPartVersioned } from './versionedMutations.js'
-import {getCurrentMemberId } from '../members.js'
+import { createAssemblyPart, updateAssemblyPart, deleteAssemblyPart } from '../services/assemblyPartsApi.js'
+import { getCurrentMemberId } from '../members.js'
 
 import { fetchEntityHistory, fetchCascadeChildren } from '../changeLog.js'
 import { openHistoryModal } from '../historyPanel.js'
@@ -352,8 +351,10 @@ async function deletePart(partId) {
   const part = ctx.getParts(false).find(p => p.id === partId)
   if (!part || !confirm(`Remove "${part.partName}" from this assembly?`)) return
   try {
-    if (part.linkedInstanceIds?.length) await releaseInstances(part.linkedInstanceIds)
-    await deleteAssemblyPartVersioned(partId, getCurrentMemberId())
+    // deleteAssemblyPart now releases any reserved inventory AND
+    // deletes the row server-side, in that order — no separate
+    // releaseInstances call needed here anymore.
+    await deleteAssemblyPart({ partId, actorId: getCurrentMemberId() })
     ctx.setParts?.(ctx.getParts(false).filter(p => p.id !== partId), false)
     if (isPartSelected(partId)) togglePartSelected(partId)
     await ctx.afterChange(false)
@@ -365,8 +366,7 @@ async function deleteChildPart(partId) {
   const part = ctx.getParts(true).find(p => p.id === partId)
   if (!part || !confirm(`Remove "${part.partName}" from this subassembly?`)) return
   try {
-    if (part.linkedInstanceIds?.length) await releaseInstances(part.linkedInstanceIds)
-    await deleteAssemblyPartVersioned(partId, getCurrentMemberId())
+    await deleteAssemblyPart({ partId, actorId: getCurrentMemberId() })
     ctx.setParts?.(ctx.getParts(true).filter(p => p.id !== partId), true)
     if (isPartSelected(partId)) togglePartSelected(partId)
     await ctx.afterChange(true)
@@ -409,24 +409,20 @@ async function savePart() {
   const parts = ctx.getParts(isChildPart)
   const existing = editingPartId ? parts.find(p => p.id === editingPartId) : null
 
-  const payload = {
-    id:                editingPartId || genId(),
-    assemblyId:        isChildPart ? null : ctx.getAssemblyIdForNewPart(),
-    assemblyChildId:   isChildPart ? existing?.assemblyChildId : undefined,
-    partName,
-    partNumber:        document.getElementById('part-field-number').value.trim(),
-    quantityNeeded:    parseInt(document.getElementById('part-field-qty').value, 10) || 1,
-    quantityCollected: existing?.quantityCollected ?? 0,
-    notes:             document.getElementById('part-field-notes').value.trim(),
-    source:            existing?.source || 'manual',
-    onshapeReference:  existing?.onshapeReference || null,
-    linkedInstanceIds: existing?.linkedInstanceIds || [],
-    componentId:       existing?.componentId || null,
-  }
-  payload.status = computePartStatus(payload)
+  const partNumber     = document.getElementById('part-field-number').value.trim()
+  const quantityNeeded = parseInt(document.getElementById('part-field-qty').value, 10) || 1
+  const notes          = document.getElementById('part-field-notes').value.trim()
+  const actorId         = getCurrentMemberId()
 
   try {
-    const saved = await upsertAssemblyPart(payload)
+    // Editing only ever happens for an existing row (root or child) —
+    // creation only ever happens for a root part (there's no "Add part"
+    // entry point inside a subassembly's own table), so `existing` being
+    // null always means "new root part" here.
+    const saved = editingPartId
+      ? await updateAssemblyPart({ partId: editingPartId, partName, partNumber, quantityNeeded, notes, actorId })
+      : await createAssemblyPart({ assemblyId: ctx.getAssemblyIdForNewPart(), partName, partNumber, quantityNeeded, notes, actorId })
+
     const newParts = editingPartId
       ? parts.map(p => p.id === editingPartId ? saved : p)
       : [...parts, saved]
@@ -436,7 +432,7 @@ async function savePart() {
     toast(editingPartId ? 'Part updated' : 'Part added')
   } catch (e) {
     console.error(e)
-    toast('Error saving part')
+    toast(e.message || 'Error saving part')
   } finally {
     saveBtn.disabled = false
     saveBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Save'

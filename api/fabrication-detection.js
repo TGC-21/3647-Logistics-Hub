@@ -1,17 +1,23 @@
 // api/fabrication-detection.js — Vercel serverless function
 //
-// Migration Plan Phase 1, item 4. Thin, action-dispatched, harness-token
-// gated — same convention as the other three routes from this pass.
-// Replaces (once callers cut over — Phase 2, not this pass) the three
-// separate confirm*Detection code paths src/designer/fabDetection.js
-// runs today for spacer/axial-shaft/plate.
+// Migration Plan Phase 1, item 4 / Phase 2 caller cutover (seventh
+// domain, after Categories/Cart/Fabrication Jobs/Inventory Reservation/
+// Assembly Parts/Components). Thin, action-dispatched route for
+// FabricationDetectionService.
+//
+// AUTH DECISION — same as every other migrated route in this pass (see
+// api/categories.js for the full reasoning): now called directly by the
+// browser (src/services/fabricationDetectionApi.js, from
+// src/designer/fabDetection.js's confirm/ignore flows), so it can no
+// longer require the harness-only shared secret. No auth gate, same as
+// every other client-facing route. Revisit once Migration Plan Phase 3
+// lands.
 //
 // POST /api/fabrication-detection
 //   { action: 'confirm', kind, partId, attrs, quantityRequested, overrides?, actorId? }
 //   { action: 'ignore',  partId, actorId? }
 
 import { applyCors } from './_lib/onshape.js'
-import { assertHarnessToken } from './_lib/harnessAuth.js'
 import { FabricationDetectionService } from '../src/services/FabricationDetectionService.js'
 import { statusForError } from '../src/repositories/errors.js'
 
@@ -24,8 +30,6 @@ export default async function handler(req, res) {
   const service = new FabricationDetectionService()
 
   try {
-    assertHarnessToken(req)
-
     switch (body.action) {
       case 'confirm': {
         const result = await service.confirmDetection({
