@@ -75,6 +75,7 @@ import { registerPartOrdersCartContext, addPartToCart } from './partOrdersCart.j
 import { renderAssemblyGrid, openAssemblyModal, registerAssemblyGridContext } from './assemblyGrid.js'
 import { deleteAssemblyWithHistory } from './versionedMutations.js'
 import { getCurrentMemberId } from '../members.js'
+import { detectFabricationCandidates } from '../services/detectionApi.js'
 
 let fabDetectRunning = false
 let partSearchDebounceTimer = null
@@ -421,13 +422,7 @@ async function runFabricationDetection() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
 
   try {
-    const res = await fetch('/api/onshape-detect-fabrication', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assemblyId: currentAssemblyId }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Detection failed')
+    const data = await detectFabricationCandidates({ assemblyId: currentAssemblyId})
 
     setCurrentParts(await fetchAssemblyParts(currentAssemblyId))
     renderAssemblyDetailFromState()   // was renderAssemblyDetail() — children/jobs/orders didn't change
@@ -446,13 +441,7 @@ async function runFabricationDetectionForChild() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span> Scanning…</span>' }
   try {
     const rootAssemblyId = await fetchRootAssemblyIdForChild(getViewingChildId())
-    const res = await fetch('/api/onshape-detect-fabrication', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assemblyId: rootAssemblyId }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Detection failed')
+    const data = await detectFabricationCandidates({ assemblyId: rootAssemblyId })
     setCurrentChildParts(await fetchChildParts(getViewingChildId()))
     renderChildDetailFromState()
     toast(data.message || 'Detection complete')

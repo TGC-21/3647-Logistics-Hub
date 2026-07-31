@@ -23,9 +23,9 @@
 //
 // No @supabase/supabase-js import, no req/res.
 
-import { fetchBodyDetails, bodyDetailsCacheKey, findBodyByPartId } from '../api/_lib/onshape-bodydetails.js'
-import { DETECTORS, candidateRowsForDetector } from '../api/_lib/fabrication-detectors.js'
-import { MAX_ONSHAPE_CONCURRENCY } from '../api/_lib/onshape.js'
+import { fetchBodyDetails, bodyDetailsCacheKey, findBodyByPartId } from '../../api/_lib/onshape-bodydetails.js'
+import { DETECTORS, candidateRowsForDetector } from '../../api/_lib/fabrication-detectors.js'
+import { MAX_ONSHAPE_CONCURRENCY } from '../../api/_lib/onshape.js'
 import { AssemblyRepository } from '../repositories/AssemblyRepository.js'
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
 import { ValidationError, NotFoundError } from '../repositories/errors.js'

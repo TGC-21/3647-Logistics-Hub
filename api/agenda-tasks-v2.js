@@ -19,7 +19,6 @@
 //   { action: 'removeLink',  linkId }
 
 import { applyCors } from './_lib/onshape.js'
-import { assertHarnessToken } from './_lib/harnessAuth.js'
 import { AgendaService } from '../src/services/AgendaService.js'
 import { statusForError } from '../src/repositories/errors.js'
 
@@ -32,7 +31,6 @@ export default async function handler(req, res) {
   const service = new AgendaService()
 
   try {
-    assertHarnessToken(req)
 
     switch (body.action) {
       case 'create': {

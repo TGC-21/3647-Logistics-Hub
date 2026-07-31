@@ -22,6 +22,7 @@
 import { supabase } from './db.js'
 import { fetchAssemblies, fetchAssemblyPartsByIds } from './db.js'
 import { getCurrentMemberId, fetchMemberById } from './members.js'
+import { deleteTask, duplicateTask, setTaskStatus, addTaskLink, removeTaskLink, createTask, updateTask } from './services/agendaApi.js'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -67,7 +68,10 @@ function dbLinkToLocal(row) {
 
 export async function fetchTasks() {
   const { data, error } = await supabase.from('tasks').select('*').order('created_at', { ascending: false })
-  if (error) throw error
+  if (error) {
+    toastFn('mashallah habibi')
+    throw error
+  }
   return data.map(dbTaskToLocal)
 }
 
@@ -83,31 +87,8 @@ export async function upsertTask(task) {
   return dbTaskToLocal(data)
 }
 
-export async function deleteTask(id) {
-  const { error } = await supabase.from('tasks').delete().eq('id', id)
-  if (error) throw error
-}
-
-export async function duplicateTask(task) {
-  return upsertTask({
-    ...task,
-    id: genId(),
-    title: `${task.title} (copy)`,
-    status: 'not_started',
-    completedAt: null,
-    createdAt: undefined,
-  })
-}
-
 /** Convenience status transitions — thin wrappers so callers don't have
  *  to remember to set/clear completed_at by hand. */
-export async function setTaskStatus(task, status) {
-  return upsertTask({
-    ...task,
-    status,
-    completedAt: status === 'complete' ? new Date().toISOString() : (status === 'archived' ? task.completedAt : null),
-  })
-}
 
 // ── Task links ───────────────────────────────────────────────
 export async function fetchTaskLinks(taskId) {
@@ -132,20 +113,8 @@ export async function fetchLinksForTasks(taskIds) {
   return map
 }
 
-export async function addTaskLink(taskId, entityType, entityId) {
-  const { data, error } = await supabase
-    .from('task_links')
-    .insert({ id: genId(), task_id: taskId, entity_type: entityType, entity_id: entityId })
-    .select()
-    .single()
-  if (error) throw error
-  return dbLinkToLocal(data)
-}
 
-export async function removeTaskLink(id) {
-  const { error } = await supabase.from('task_links').delete().eq('id', id)
-  if (error) throw error
-}
+
 
 /** Resolves a link's display name/subtitle by fetching the referenced
  *  row directly — kept intentionally simple (one small query per entity
@@ -467,7 +436,6 @@ async function saveTask() {
   const existing    = editingTaskId ? tasks.find(t => t.id === editingTaskId) : null
 
   const payload = {
-    id:          editingTaskId || genId(),
     title,
     description: document.getElementById('task-field-desc').value.trim(),
     deadline:    deadlineVal ? new Date(deadlineVal).toISOString() : null,
@@ -476,25 +444,41 @@ async function saveTask() {
     priority:    document.getElementById('task-field-priority').value,
     assignerId:  existing?.assignerId || getCurrentMemberId(),
     executors:   document.getElementById('task-field-executors').value.split(',').map(s => s.trim()).filter(Boolean),
-    completedAt: status === 'complete' ? (existing?.completedAt || new Date().toISOString()) : (status === 'archived' ? existing?.completedAt : null),
   }
 
   const btn = document.getElementById('btn-save-task')
   btn.disabled = true; btn.textContent = 'Saving…'
   try {
-    const saved = await upsertTask(payload)
     if (editingTaskId) {
-      const idx = tasks.findIndex(t => t.id === editingTaskId)
-      if (idx > -1) tasks[idx] = saved
+      updateTask({
+        taskId: editingTaskId, 
+        title, 
+        description: document.getElementById('task-field-desc').value.trim(), 
+        deadline: deadlineVal ? new Date(deadlineVal).toISOString() : null, 
+        startDate: startVal ? new Date(startVal).toISOString() : null, 
+        status, 
+        priority: document.getElementById('task-field-priority').value, 
+        executors: document.getElementById('task-field-executors').value.split(',').map(s => s.trim()).filter(Boolean)
+      })
     } else {
-      tasks.unshift(saved)
+      createTask({
+        taskId: editingTaskId, 
+        title, 
+        description: document.getElementById('task-field-desc').value.trim(), 
+        deadline: deadlineVal ? new Date(deadlineVal).toISOString() : null, 
+        startDate: startVal ? new Date(startVal).toISOString() : null, 
+        status, 
+        priority: document.getElementById('task-field-priority').value, 
+        assignerId:  existing?.assignerId || getCurrentMemberId(),
+        executors: document.getElementById('task-field-executors').value.split(',').map(s => s.trim()).filter(Boolean)
+      })
     }
     closeTaskModal()
     renderAgendaSidebar(); renderAgendaContent()
     toastFn(editingTaskId ? 'Task updated' : 'Task created')
   } catch (e) {
     console.error(e)
-    toastFn('Error saving task')
+    toastFn(e.message || 'Error saving task')
   } finally {
     btn.disabled = false
     btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Save'
@@ -506,12 +490,12 @@ async function handleDeleteTask() {
   const task = tasks.find(t => t.id === editingTaskId)
   if (!task || !confirm(`Delete task "${task.title}"? This cannot be undone.`)) return
   try {
-    await deleteTask(editingTaskId)
+    await deleteTask({taskId: editingTaskId})
     tasks = tasks.filter(t => t.id !== editingTaskId)
     closeTaskModal()
     renderAgendaSidebar(); renderAgendaContent()
     toastFn('Task deleted')
-  } catch (e) { console.error(e); toastFn('Error deleting task') }
+  } catch (e) { console.error(e); toastFn(e.message || 'Error deleting task') }
 }
 
 async function handleDuplicateTask() {
@@ -519,12 +503,12 @@ async function handleDuplicateTask() {
   const task = tasks.find(t => t.id === editingTaskId)
   if (!task) return
   try {
-    const saved = await duplicateTask(task)
+    const saved = await duplicateTask({taskId: editingTaskId})
     tasks.unshift(saved)
     closeTaskModal()
     renderAgendaSidebar(); renderAgendaContent()
     toastFn('Task duplicated')
-  } catch (e) { console.error(e); toastFn('Error duplicating task') }
+  } catch (e) { console.error(e); toastFn(e.message || 'Error duplicating task') }
 }
 
 async function handleReopenTask() {
@@ -532,13 +516,13 @@ async function handleReopenTask() {
   const task = tasks.find(t => t.id === editingTaskId)
   if (!task) return
   try {
-    const saved = await setTaskStatus(task, 'not_started')
+    const saved = await setTaskStatus({taskId: editingTaskId, status: 'not_started'})
     const idx = tasks.findIndex(t => t.id === editingTaskId)
     if (idx > -1) tasks[idx] = saved
     openTaskModal(editingTaskId)   // re-render modal with the new status reflected
     renderAgendaSidebar(); renderAgendaContent()
     toastFn('Task reopened')
-  } catch (e) { console.error(e); toastFn('Error reopening task') }
+  } catch (e) { console.error(e); toastFn(e.message || 'Error reopening task') }
 }
 
 // ── Task links section (inside the modal) ───────────────────
@@ -572,7 +556,7 @@ async function renderTaskLinksSection() {
         if (editingTaskId) await removeTaskLink(linkId)
         editingLinks = editingLinks.filter(l => l.id !== linkId)
         renderTaskLinksSection()
-      } catch (e) { console.error(e); toastFn('Error removing link') }
+      } catch (e) { console.error(e); toastFn(e.message || 'Error removing link') }
     })
   )
 }
@@ -586,12 +570,12 @@ async function handleAddLink() {
   try {
     const matchId = await findEntityIdForLink(type, query)
     if (!matchId) { toastFn('No match found'); return }
-    const link = await addTaskLink(editingTaskId, type, matchId)
+    const link = await addTaskLink({taskid: editingTaskId, entityType: type, entityId: matchId})
     editingLinks.push(link)
     document.getElementById('task-link-search-input').value = ''
     renderTaskLinksSection()
     toastFn('Linked')
-  } catch (e) { console.error(e); toastFn('Error linking item') }
+  } catch (e) { console.error(e); toastFn(e.message || 'Error linking item') }
 }
 
 /** Minimal best-effort lookup by name/title substring across the five
