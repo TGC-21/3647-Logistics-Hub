@@ -9,7 +9,7 @@
 // parts are stored and when a re-render / status-sync needs to happen.
 
 import {
-  fetchAssemblies, upsertAssembly, deleteAssembly,
+  fetchAssemblies, upsertAssembly,
   fetchAssemblyParts, fetchAssemblyChildren, fetchChildrenOfChild,
   fetchAssemblyChildById, fetchChildParts,
   releaseInstances, fetchAllLinkedInstanceIdsForAssembly,
@@ -76,6 +76,8 @@ import { renderAssemblyGrid, openAssemblyModal, registerAssemblyGridContext } fr
 import { deleteAssemblyWithHistory } from './versionedMutations.js'
 import { getCurrentMemberId } from '../members.js'
 import { detectFabricationCandidates } from '../services/detectionApi.js'
+import { deleteAssembly } from '../services/assemblyApi.js'
+import { reimportAssembly } from '../services/onshapeBomApi.js'
 
 let fabDetectRunning = false
 let partSearchDebounceTimer = null
@@ -676,7 +678,7 @@ async function deleteCurrentAssembly() {
   const a = assemblyById(currentAssemblyId)
   if (!a || !confirm(`Delete assembly "${a.name}" and all its parts? This cannot be undone.`)) return
   try {
-    const result = await deleteAssemblyWithHistory(currentAssemblyId, getCurrentMemberId())
+    const result = await deleteAssembly({ assemblyId: currentAssemblyId, actorId: getCurrentMemberId() })
     setAssemblies(getAssemblies().filter(x => x.id !== currentAssemblyId))
     selectAssembly(null)
     toast(
@@ -700,16 +702,14 @@ async function confirmReimport(assembly) {
   area.innerHTML = `<div class="empty"><i class="ti ti-loader-2 spin"></i><div class="empty-title">Re-importing from Onshape…</div></div>`
 
   try {
-    const res  = await fetch('/api/onshape-bom', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ assemblyId: assembly.id, reimport: true, actorId: getCurrentMemberId() }),
+    
+    const result = await reimportAssembly({
+      assemblyId: assembly.id, 
+      actorId: getCurrentMemberId()
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Re-import failed')
 
     setAssemblies(await fetchAssemblies())
-    toast(data.message || 'Re-imported successfully')
+    toast(result.message || 'Re-imported successfully')
     selectAssembly(assembly.id)
   } catch (e) {
     console.error(e)

@@ -21,7 +21,7 @@
 import {
   resolveBomWithSubassemblies, fetchBom, parseBomRows, fetchDocumentOwnerId,
   MAX_CHILD_DEPTH, MAX_ONSHAPE_CONCURRENCY,
-} from '../api/_lib/onshape.js'
+} from '../../api/_lib/onshape.js'
 import { AssemblyRepository } from '../repositories/AssemblyRepository.js'
 import { AssemblyChildRepository } from '../repositories/AssemblyChildRepository.js'
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'

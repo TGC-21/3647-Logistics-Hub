@@ -11,6 +11,7 @@ import { genId, toast, statusLabel, getAssemblies, setAssemblies, assemblyById }
 import { upsertAssemblyVersioned } from './versionedMutations.js'
 import { getCurrentMemberId } from '../members.js'
 import { openHistoryModal, openCascadeHistoryModal } from '../historyPanel.js'
+import { createAssembly, updateAssembly } from '../services/assemblyApi.js'
 
 let editingAssemblyId = null
 
@@ -128,11 +129,18 @@ async function saveAssembly() {
   }
 
   if (editingAssemblyId) {
-    const existing = assemblyById(editingAssemblyId)
-    payload.onshapeDocumentId  = existing?.onshapeDocumentId  || ''
-    payload.onshapeWorkspaceId = existing?.onshapeWorkspaceId || ''
-    payload.onshapeElementId   = existing?.onshapeElementId   || ''
-    payload.thumbnail          = existing?.thumbnail          || null
+    updateAssembly({assemblyId: editingAssemblyId, 
+      name: name, 
+      description: document.getElementById('asm-field-desc').value.trim(), 
+      onshapeUrl:document.getElementById('asm-field-url').value.trim(), 
+      status: document.getElementById('asm-field-status').value })
+  } else {
+    createAssembly({
+      name: name,
+      description: document.getElementById('asm-field-desc').value.trim(), 
+      onshapeUrl:document.getElementById('asm-field-url').value.trim(), 
+      status: document.getElementById('asm-field-status').value 
+    })
   }
 
   try {
@@ -146,7 +154,7 @@ async function saveAssembly() {
     toast(wasNew ? 'Assembly created' : 'Assembly updated')
   } catch (e) {
     console.error(e)
-    toast('Error saving assembly')
+    toast(e.message || 'Error saving assembly')
   } finally {
     saveBtn.disabled = false
     saveBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Save'

@@ -9,7 +9,7 @@
         return data
     }
     
-    export async function createTask(title, description, deadline = null, startDate = null, status, priority, assignerId = null, executors){
+    export async function createTask({title, description, deadline = null, startDate = null, status, priority, assignerId = null, executors}){
         const { task } = await callAgendaTasksApi('create', {title, description, deadline, startDate, status, priority, assignerId, executors})
         return task
     }

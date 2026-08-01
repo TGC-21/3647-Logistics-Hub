@@ -14,7 +14,7 @@
 //
 // No @supabase/supabase-js import, no req/res.
 
-import { buildSourceKey, fabricationIdentityKey, fetchDocumentOwnerId } from '../api/_lib/onshape.js'
+import { buildSourceKey, fabricationIdentityKey, fetchDocumentOwnerId } from '../../api/_lib/onshape.js'
 import { OnshapeImportService } from './OnshapeImportService.js'
 import { AssemblyRepository } from '../repositories/AssemblyRepository.js'
 import { AssemblyChildRepository } from '../repositories/AssemblyChildRepository.js'

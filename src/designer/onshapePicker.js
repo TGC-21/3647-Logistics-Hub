@@ -10,6 +10,7 @@
 import { bulkInsertAssemblyParts, upsertAssembly, fetchAssemblies } from '../db.js'
 import { genId, toast } from './state.js'
 import { getCurrentMemberId } from '../members.js'
+import { importAssembly } from '../services/onshapeBomApi.js'
 
 // ── State ─────────────────────────────────────────────────────
 let onshapeMode       = 'import'   // 'import' | 'link'
@@ -380,21 +381,15 @@ async function confirmLinkAssembly() {
 
   const asm = onshapeSelectedAsm
   const doc = onshapeSelectedDoc
-
-  const res  = await fetch('/api/onshape-bom', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
+  
+  const data = await importAssembly({
       documentId:   asm.documentId,
       workspaceId:  asm.workspaceId,
       elementId:    asm.id,
-      assemblyName: name,
+      name: name,
       thumbnailUrl: doc?.thumbnailUrl || null,
       actorId: getCurrentMemberId()
-    }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Import failed')
 
   closeOnshapeModal()
   await ctx.onAssemblyCreated(data.assemblyId)

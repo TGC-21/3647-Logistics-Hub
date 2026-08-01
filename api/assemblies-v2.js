@@ -17,7 +17,6 @@
 //   { action: 'delete', assemblyId, actorId? }
 
 import { applyCors } from './_lib/onshape.js'
-import { assertHarnessToken } from './_lib/harnessAuth.js'
 import { AssemblyService } from '../src/services/AssemblyService.js'
 import { statusForError } from '../src/repositories/errors.js'
 
@@ -30,7 +29,6 @@ export default async function handler(req, res) {
   const service = new AssemblyService()
 
   try {
-    assertHarnessToken(req)
 
     switch (body.action) {
       case 'create': {
@@ -61,7 +59,7 @@ export default async function handler(req, res) {
           assemblyId: body.assemblyId,
           actorId:    body.actorId || null,
         })
-        return res.status(200).json({ success: true, ...result })
+        return res.status(200).json({ success: true, result })
       }
 
       default:
