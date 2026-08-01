@@ -118,7 +118,7 @@ async function searchOnshapeDocuments() {
   try {
     const params = new URLSearchParams({ limit: '20' })
     if (onshapeQuery.trim()) params.set('q', onshapeQuery.trim())
-    const res = await fetch(`/api/onshape-documents?${params.toString()}`)
+    const res = await fetch(`/api/onshape-lookup?action=documents&${params.toString()}`)
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Search failed')
     onshapeDocs = data.documents || []
@@ -179,7 +179,7 @@ async function selectOnshapeDocument(doc) {
 
   try {
     const params = new URLSearchParams({ documentId: doc.id, workspaceId: doc.workspaceId })
-    const res  = await fetch(`/api/onshape-elements?${params.toString()}`)
+    const res  = await fetch(`/api/onshape-lookup?action=elements&${params.toString()}`)
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Could not load assemblies')
     onshapeAssemblies = data.assemblies || []
@@ -236,7 +236,7 @@ async function selectOnshapeAssembly(asm) {
 
   try {
     const params = new URLSearchParams({ documentId: asm.documentId, workspaceId: asm.workspaceId, elementId: asm.id })
-    const res  = await fetch(`/api/onshape-bom-preview?${params.toString()}`)
+    const res  = await fetch(`/api/onshape-lookup?action=bom-preview&${params.toString()}`)
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Could not load BOM')
     onshapePreviewParts         = data.parts         || []
