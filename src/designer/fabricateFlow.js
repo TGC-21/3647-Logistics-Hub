@@ -51,7 +51,7 @@ function currentFabJobPart() {
 }
 
 export async function openSendToFabricateModal(partId, isChildPart = false) {
-  fabJobPartId      = partId
+  fabJobPartId = partId
   fabJobIsChildPart = isChildPart
   const part = currentFabJobPart()
   if (!part) return
@@ -64,24 +64,28 @@ export async function openSendToFabricateModal(partId, isChildPart = false) {
     return
   }
 
-  fabStep               = 'search'
-  fabComponentQuery     = ''
-  fabSelectedCategoryId = ''
-  fabNewCatMode         = false
-  fabNewCatReqKeysConfig = []
-  renderFabModalStep()
-
+  fabStep = null
+  renderFabModalStep()   // qty step renders immediately, componentId still null momentarily
   try {
-    ;[fabCatalog, fabCategories] = await Promise.all([
-      fetchComponentsForFabricatePicker(),
-      fetchCategories(),
-    ])
+    const category  = await ensureCustomPartCategory()
+    const component = await findOrCreateComponent({
+      categoryId: category.id,
+      attrs: {},
+      fallback: { name: 'Custom Part', description: 'Sent to Fabricate without a detected geometry match', image: null },
+      actorId: getCurrentMemberId(),
+    })
+    const saved = await linkAssemblyPartComponent({ partId: part.id, componentId: component.id, actorId: getCurrentMemberId() })
+    ctx.onComponentLinked(saved, isChildPart)
   } catch (e) {
     console.error(e)
-    toast('Error loading component catalog')
-    fabCatalog = []; fabCategories = []
+    toast('Error resolving Custom Part component')
   }
-  renderFabModalStep()
+}
+
+async function ensureCustomPartCategory() {
+  const cats = await fetchCategories()
+  return cats.find(c => c.name === 'Custom Part')
+    || createCategory({ name: 'Custom Part', requiredKeysConfig: [], actorId: getCurrentMemberId() })
 }
 
 function closeSendToFabricateModal() {
