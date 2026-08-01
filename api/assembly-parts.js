@@ -16,6 +16,7 @@
 //   { action: 'create',              assemblyId?, assemblyChildId?, partName, partNumber?, quantityNeeded?, notes?, actorId? }
 //   { action: 'update',              partId, partName, partNumber?, quantityNeeded, notes?, actorId? }
 //   { action: 'delete',              partId, actorId? }
+//   { action: 'linkComponent',       partId, componentId, actorId? }
 //   { action: 'updateQuantityNeeded', partId, quantityNeeded, actorId? }
 //   { action: 'recomputeStatus',      partId, actorId? }
 //   { action: 'computeOwnerStatus',   assemblyId }
@@ -64,6 +65,15 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, ...result })
       }
 
+      case 'linkComponent': {
+        const part = await service.linkComponent({
+          partId:      body.partId,
+          componentId: body.componentId,
+          actorId:     body.actorId || null,
+        })
+        return res.status(200).json({ success: true, part })
+      }
+
       case 'updateQuantityNeeded': {
         const part = await service.updateQuantityNeeded({
           partId:         body.partId,
@@ -85,7 +95,7 @@ export default async function handler(req, res) {
 
       default:
         return res.status(400).json({
-          error: `Unknown action "${body.action}" — expected one of: create, update, delete, updateQuantityNeeded, recomputeStatus, computeOwnerStatus.`,
+          error: `Unknown action "${body.action}" — expected one of: create, update, delete, linkComponent, updateQuantityNeeded, recomputeStatus, computeOwnerStatus.`,
         })
     }
   } catch (err) {

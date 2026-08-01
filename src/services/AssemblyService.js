@@ -70,7 +70,7 @@ export class AssemblyService {
    *  assembly modal — name/description/onshapeUrl/status. Logs a
    *  field-level diff under one commit, same convention
    *  recordUpdateDiff already established client-side. */
-  async updateAssembly({ assemblyId, name, description, onshapeUrl, status, actorId = null }) {
+  async updateAssembly({ assemblyId, name, description, onshapeUrl, status, thumbnailUrl, onshapeDocumentId, onshapeWorkspaceId, onshapeElementId, actorId = null }) {
     const before = await this.assemblyRepo.requireById(assemblyId)
 
     if (name !== undefined && !name.trim()) throw new ValidationError('name cannot be blank')
@@ -79,15 +79,19 @@ export class AssemblyService {
     }
 
     const patch = {}
-    if (name !== undefined)        patch.name = name.trim()
-    if (description !== undefined) patch.description = description
-    if (onshapeUrl !== undefined)  patch.onshapeUrl = onshapeUrl
-    if (status !== undefined)      patch.status = status
+    if (name !== undefined)               patch.name = name.trim()
+    if (description !== undefined)        patch.description = description
+    if (onshapeUrl !== undefined)         patch.onshapeUrl = onshapeUrl
+    if (status !== undefined)             patch.status = status
+    if (thumbnailUrl !== undefined)       patch.thumbnailUrl = thumbnailUrl
+    if (onshapeDocumentId !== undefined)  patch.onshapeDocumentId = onshapeDocumentId
+    if (onshapeWorkspaceId !== undefined) patch.onshapeWorkspaceId = onshapeWorkspaceId
+    if (onshapeElementId !== undefined)   patch.onshapeElementId = onshapeElementId
 
     const after = await this.assemblyRepo.update(assemblyId, patch)
 
     const commitId = this.changeLogRepo.newCommitId()
-    for (const field of ['name', 'description', 'onshapeUrl', 'status']) {
+    for (const field of ['name', 'description', 'onshapeUrl', 'status', 'thumbnail', 'onshapeDocumentId', 'onshapeWorkspaceId', 'onshapeElementId']) {
       if (before[field] === after[field]) continue
       await this.changeLogRepo.record({
         entityType: 'assembly', entityId: assemblyId, action: 'update', field,

@@ -14,8 +14,12 @@ export async function createAssembly({ name, description, onshapeUrl, status, ac
     return assembly
 }
 
-export async function updateAssembly({ assemblyId, name, description, onshapeUrl, status, actorId = null }){
-    const { assembly } = await callAssembliesApi('update', {assemblyId, name, description, onshapeUrl, status, actorId})
+export async function updateAssembly({ assemblyId, name, description, onshapeUrl, status, thumbnailUrl, onshapeDocumentId, onshapeWorkspaceId, onshapeElementId, actorId = null }){
+    const { assembly } = await callAssembliesApi('update', {
+      assemblyId, name, description, onshapeUrl, status,
+      thumbnailUrl, onshapeDocumentId, onshapeWorkspaceId, onshapeElementId,
+      actorId,
+    })
     return assembly
 }
 
