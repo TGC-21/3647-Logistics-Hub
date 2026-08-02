@@ -64,7 +64,7 @@ import { getCurrentMemberId } from '../members.js'
 
 import { fetchEntityHistory, fetchCascadeChildren } from '../changeLog.js'
 import { openHistoryModal } from '../historyPanel.js'
-
+import { resolvePartIntent, badgesForPart, INTENT_PRIORITY } from './partIntent.js'
 
 /**
  * `ctx` is:
@@ -79,6 +79,8 @@ import { openHistoryModal } from '../historyPanel.js'
  */
 let ctx = null
 export function registerPartsTableContext(c) { ctx = c }
+
+
 
 // ── Badges ────────────────────────────────────────────────────
 export function fabJobBadgeHTML(job) {
@@ -104,6 +106,30 @@ export function orderBadgesHTML(orders) {
   }).join('')
 }
 
+function partCardHTML(p, job, orders, isChild){
+  const { main , aux } = resolvePartIntent(p, { job, orders })
+  const faceActions    = main.slice(0,2)
+  const overflow       = main.slice(2)
+  const badges         = badgesForPart(p, job, orders)
+  const promisedQty    = totalPromisedQty(job, orders)
+  const checked        = isPartSelected(p.id) ? 'checked' : ''
+  const attrPrefix     = isChild ? 'child-part' : 'part'
+  return 
+}
+
+
+const ACTION_LABELS = {
+  reviewCandidate: { label: 'Review candidate',  icon: 'ti-scan' },
+  findInventory:   { label: 'Link inventory',    icon: 'ti-link' },
+  sendToFabricate: { label: 'Send to Fabricate', icon: 'ti-tool' },
+  addToCart:       { label: 'Add to cart',       icon: 'ti-shopping-cart-plus'},
+}
+
+function bindPartCardEvents(){
+  gridEl = document.getElementById('parts-grid')
+  gridEl.addEventListener('change', {})
+
+}
 // ── Row templates ────────────────────────────────────────────
 export function partRowHTML(p, job = null, orders = []) {
   const status = computePartStatus(p)

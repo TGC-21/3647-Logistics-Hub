@@ -20,7 +20,6 @@
 //   assembly | assembly_part | inventory_instance | fabrication_job | cart_item
 
 import { supabase } from './db.js'
-import { fetchAssemblies, fetchAssemblyPartsByIds } from './db.js'
 import { getCurrentMemberId, fetchMemberById } from './members.js'
 import { deleteTask, duplicateTask, setTaskStatus, addTaskLink, removeTaskLink, createTask, updateTask } from './services/agendaApi.js'
 

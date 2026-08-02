@@ -408,7 +408,6 @@ export function fabDetectionBadgeHTML(p) {
   const map = {
     detected:     ['fab-job-badge--complete',   'ti-cube-plus',    `${noun[0].toUpperCase()}${noun.slice(1)} detected`],
     needs_review: ['fab-job-badge--committed',  'ti-help-circle',  'Needs review'],
-    confirmed:    ['fab-job-badge--in_progress','ti-clock',        'Confirmed'],
     queued:       ['fab-job-badge--queued',     'ti-tool',         'Queued for fab'],
     ignored:      ['fab-job-badge--queued',     'ti-eye-off',      `Not a ${noun}`],
     failed:       ['fab-job-badge--committed',  'ti-alert-triangle','Detection failed'],

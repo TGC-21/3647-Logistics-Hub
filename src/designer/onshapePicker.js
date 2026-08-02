@@ -7,7 +7,7 @@
 // mode) or bulkInsertAssemblyParts (import mode) via a small context
 // object registered from assemblyDetail.js.
 
-import { bulkInsertAssemblyParts, upsertAssembly, fetchAssemblies } from '../db.js'
+import { bulkInsertAssemblyParts, } from '../db.js'
 import { genId, toast } from './state.js'
 import { getCurrentMemberId } from '../members.js'
 import { importAssembly } from '../services/onshapeBomApi.js'

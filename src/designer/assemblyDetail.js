@@ -12,10 +12,8 @@ import {
   fetchAssemblies, upsertAssembly,
   fetchAssemblyParts, fetchAssemblyChildren, fetchChildrenOfChild,
   fetchAssemblyChildById, fetchChildParts,
-  releaseInstances, fetchAllLinkedInstanceIdsForAssembly,
   fetchActiveJobsForParts, fetchActiveCartItemsForParts,
-  fetchRootAssemblyIdForChild, fetchAllAssemblyPartIdsForAssembly,
-  deletePendingCartItemsForAssemblyPartIds, 
+  fetchRootAssemblyIdForChild,
 } from '../db.js'
 // findOrCreateComponent is no longer imported/used here — component
 // resolution for a confirmed fabrication detection now happens

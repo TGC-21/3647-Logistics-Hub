@@ -387,24 +387,6 @@ export async function bulkInsertAssemblyParts(parts) {
   return data.map(dbPartToLocal)
 }
 
-export async function deleteAssemblyPart(id) {
-  const { error } = await supabase.from('assembly_parts').delete().eq('id', id)
-  if (error) throw error
-}
-
-/** Single assembly_part by id — used to refresh one row's collected/
- *  promised numbers after recordMachinedUnits() without refetching the
- *  whole assembly. */
-export async function fetchAssemblyPartById(id) {
-  const { data, error } = await supabase
-    .from('assembly_parts')
-    .select('*')
-    .eq('id', id)
-    .single()
-  if (error) throw error
-  return dbPartToLocal(data)
-}
-
 /** Bulk version of fetchAssemblyPartById — one query for many parts, used
  *  by the Fabricate tab to render job rows (part name, needed qty, etc.)
  *  without a round trip per job. Returns a map keyed by id. */
@@ -462,30 +444,6 @@ export async function fetchAllFabricationJobs() {
   return data.map(dbJobToLocal)
 }
 
-export async function fetchFabricationJobsForBatch(batchId) {
-  const { data, error } = await supabase
-    .from('fabrication_jobs')
-    .select('*')
-    .eq('batch_id', batchId)
-    .order('created_at', { ascending: true })
-  if (error) throw error
-  return data.map(dbJobToLocal)
-}
-
-/** The active (non-archived) job for one assembly_part, or null. Used to
- *  gate "Send to Fabricate" (hidden once a job exists) and to show
- *  collected/promised on the assembly detail parts table. */
-export async function fetchActiveJobForPart(assemblyPartId) {
-  const { data, error } = await supabase
-    .from('fabrication_jobs')
-    .select('*')
-    .eq('assembly_part_id', assemblyPartId)
-    .neq('status', 'archived')
-    .maybeSingle()
-  if (error) throw error
-  return data ? dbJobToLocal(data) : null
-}
-
 /** Bulk version of the above — one query instead of N — for rendering an
  *  assembly's whole parts table without a per-row round trip. Returns a
  *  map keyed by assembly_part_id. */
@@ -498,29 +456,6 @@ export async function fetchActiveJobsForParts(assemblyPartIds) {
     .neq('status', 'archived')
   if (error) throw error
   return Object.fromEntries(data.map(row => [row.assembly_part_id, dbJobToLocal(row)]))
-}
-
-/**
- * Creates a new queued job promising `quantityRequested` units for
- * `assemblyPartId`. Throws (via the DB's partial unique index) if that
- * part already has an active job — callers should check
- * fetchActiveJobForPart first to show a friendlier error than a raw
- * constraint violation.
- */
-export async function createFabricationJob({ assemblyPartId, quantityRequested, batchId, genId }) {
-  const { data, error } = await supabase
-    .from('fabrication_jobs')
-    .insert({
-      id:                 genId(),
-      assembly_part_id:   assemblyPartId,
-      quantity_requested: quantityRequested,
-      batch_id:           batchId || null,
-      status:             'queued',
-    })
-    .select()
-    .single()
-  if (error) throw error
-  return dbJobToLocal(data)
 }
 
 /** Batch reassignment is allowed at any (non-archived) status — it's
@@ -549,17 +484,6 @@ export async function updateQueuedJobQuantity(jobId, quantityRequested) {
     .single()
   if (error) throw error
   return dbJobToLocal(data)
-}
-
-export async function deleteQueuedFabricationJob(jobId) {
-  const { data, error } = await supabase
-    .from('fabrication_jobs')
-    .delete()
-    .eq('id', jobId)
-    .eq('status', 'queued')
-    .select()
-  if (error) throw error
-  if (!data.length) throw new Error('Only an unclaimed (queued) job can be deleted — archive it instead.')
 }
 
 /** Claim a job: queued → committed. Guards against a double-claim race by
@@ -601,14 +525,6 @@ export async function releaseFabricationJobClaim(jobId) {
  * caller should also refetch the assembly_part (fetchAssemblyPartById)
  * to refresh collected/promised in the UI.
  */
-export async function recordMachinedUnits(jobId, quantity) {
-  const { data, error } = await supabase.rpc('record_machined_units', {
-    p_job_id:   jobId,
-    p_quantity: quantity,
-  })
-  if (error) throw error
-  return dbJobToLocal(data)
-}
 
 /** complete → archived. Terminal — archived jobs are hidden from the
  *  active Fabricate view but never deleted (they're the audit trail of
@@ -641,182 +557,6 @@ export async function archiveFabricationJob(jobId) {
 // no per-part uniqueness constraint) stays visible; safe to delete in a
 // future cleanup pass once you're confident nothing external depends on
 // them either.
-
-/** All orders, across every component — mirrors fetchAllFabricationJobs.
- *  The Part Orders view groups/filters these client-side (cart vs.
- *  ordered vs. received vs. archived), same pattern Fabricate uses for
- *  jobs. */
-export async function fetchAllPartOrders() {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .select('*')
-    .order('created_at', { ascending: true })
-  if (error) throw error
-  return data.map(dbPartOrderToLocal)
-}
-
-/** Every order (any status) for one component — used by a component's
- *  "on order" readout, e.g. alongside fetchInstanceCounts's on-hand
- *  count in Inventory mode. */
-export async function fetchOrdersForComponent(componentId) {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .select('*')
-    .eq('component_id', componentId)
-    .order('created_at', { ascending: true })
-  if (error) throw error
-  return data.map(dbPartOrderToLocal)
-}
-
-/** All ACTIVE (non-archived, non-fully-received) orders earmarked to a
- *  given assembly_part — used to compute "promised" the same way
- *  fetchActiveJobForPart does for fabrication. A part can have more than
- *  one active order (see schema note), so this returns an array, not a
- *  single row like fetchActiveJobForPart. */
-export async function fetchActiveOrdersForPart(assemblyPartId) {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .select('*')
-    .eq('assembly_part_id', assemblyPartId)
-    .neq('status', 'archived')
-    .neq('status', 'received')
-  if (error) throw error
-  return data.map(dbPartOrderToLocal)
-}
-
-/** Bulk version of the above — one query instead of N, for rendering an
- *  assembly's whole parts table without a per-row round trip. Returns a
- *  map keyed by assembly_part_id → array of active orders (never a
- *  single order, since — unlike fetchActiveJobsForParts — more than one
- *  can be active on the same part at once). */
-export async function fetchActiveOrdersForParts(assemblyPartIds) {
-  if (!assemblyPartIds || !assemblyPartIds.length) return {}
-  const { data, error } = await supabase
-    .from('part_orders')
-    .select('*')
-    .in('assembly_part_id', assemblyPartIds)
-    .neq('status', 'archived')
-    .neq('status', 'received')
-  if (error) throw error
-  const map = {}
-  for (const row of data) {
-    const order = dbPartOrderToLocal(row)
-    if (!map[order.assemblyPartId]) map[order.assemblyPartId] = []
-    map[order.assemblyPartId].push(order)
-  }
-  return map
-}
-
-/**
- * Creates a new order line in 'cart' status. `assemblyPartId` is
- * optional (null = pure restock, not earmarked to any assembly) — this
- * is the inversion from createFabricationJob, where the assembly-part
- * link is mandatory.
- */
-export async function createPartOrder({ componentId, assemblyPartId, quantityOrdered, vendor, cost, notes, genId }) {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .insert({
-      id:                genId(),
-      component_id:      componentId,
-      assembly_part_id:  assemblyPartId || null,
-      quantity_ordered:  quantityOrdered,
-      vendor:            vendor || null,
-      cost:              cost ?? null,
-      notes:             notes || '',
-      status:            'cart',
-    })
-    .select()
-    .single()
-  if (error) throw error
-  return dbPartOrderToLocal(data)
-}
-
-/** Only a 'cart' order can have its quantity/vendor/cost/notes/assembly
- *  link edited — once placed, the commitment is frozen (mirrors
- *  updateQueuedJobQuantity's status-gating; enforced here at the query
- *  layer, same as fabrication_jobs, not as a DB constraint). */
-export async function updateCartOrder(orderId, { quantityOrdered, assemblyPartId, vendor, cost, notes }) {
-  const patch = {}
-  if (quantityOrdered !== undefined) patch.quantity_ordered = quantityOrdered
-  if (assemblyPartId !== undefined)  patch.assembly_part_id = assemblyPartId || null
-  if (vendor !== undefined)          patch.vendor = vendor || null
-  if (cost !== undefined)            patch.cost = cost ?? null
-  if (notes !== undefined)           patch.notes = notes
-
-  const { data, error } = await supabase
-    .from('part_orders')
-    .update(patch)
-    .eq('id', orderId)
-    .eq('status', 'cart')
-    .select()
-    .single()
-  if (error) throw error
-  return dbPartOrderToLocal(data)
-}
-
-/** Only a 'cart' order can be deleted outright — once placed, archive it
- *  instead (mirrors deleteQueuedFabricationJob). */
-export async function deleteCartOrder(orderId) {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .delete()
-    .eq('id', orderId)
-    .eq('status', 'cart')
-    .select()
-  if (error) throw error
-  if (!data.length) throw new Error('Only a cart order can be deleted — archive it instead.')
-}
-
-/** cart → ordered. Freezes quantity/assembly link (enforced by
- *  updateCartOrder's status gate above, not by this call). Sets
- *  ordered_at for a "placed on" readout. */
-export async function placePartOrder(orderId) {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .update({ status: 'ordered', ordered_at: new Date().toISOString() })
-    .eq('id', orderId)
-    .eq('status', 'cart')
-    .select()
-  if (error) throw error
-  if (!data.length) throw new Error('This order is no longer in cart — refresh and try again.')
-  return dbPartOrderToLocal(data[0])
-}
-
-/**
- * The core Part Order → Inventory handoff. Records `quantity` newly
- * arrived units against an order via the record_received_units() RPC,
- * which atomically creates an inventory_instances row (status depends on
- * whether the order is assembly-earmarked — see schema.sql), and if it
- * IS earmarked, also bumps the linked assembly_part's quantity_collected
- * + linked_instance_ids. Mirrors recordMachinedUnits exactly. Returns the
- * updated order — the caller should also refetch the assembly_part (if
- * assemblyPartId was set) to refresh collected/promised in the UI, same
- * as the Fabricate flow does today.
- */
-export async function recordReceivedUnits(orderId, quantity) {
-  const { data, error } = await supabase.rpc('record_received_units', {
-    p_order_id: orderId,
-    p_quantity: quantity,
-  })
-  if (error) throw error
-  return dbPartOrderToLocal(data)
-}
-
-/** received → archived. Terminal — archived orders are hidden from the
- *  active Part Orders view but never deleted (audit trail of what was
- *  ordered and received). Mirrors archiveFabricationJob. */
-export async function archivePartOrder(orderId) {
-  const { data, error } = await supabase
-    .from('part_orders')
-    .update({ status: 'archived' })
-    .eq('id', orderId)
-    .eq('status', 'received')
-    .select()
-    .single()
-  if (error) throw error
-  return dbPartOrderToLocal(data)
-}
 
 // ── Assembly children (subassemblies) ─────────────────────────
 // Subassemblies never live in `assemblies` — they're their own node type,
