@@ -208,4 +208,27 @@ export class AssemblyPartService {
 
     return { deletedPartId: partId, releasedInstanceCount: part.linkedInstanceIds?.length || 0 }
   }
+
+  /** "Send to Fabricate" step 1's "use an existing catalog component"
+   *  path (src/designer/fabricateFlow.js's selectFabComponent) — links
+   *  a part to an already-resolved component, nothing else. Deliberately
+   *  narrower than updatePart (name/number/qty/notes) and separate from
+   *  FabricationDetectionService's componentId+fabricationMetadata
+   *  combined write — this one only ever touches componentId. */
+  async linkComponent({ partId, componentId, actorId = null }) {
+    if (!componentId) throw new ValidationError('componentId is required')
+
+    const before = await this.partRepo.findById(partId)
+    const after  = await this.partRepo.updateReservationFields(partId, { componentId })
+
+    if (before.componentId !== after.componentId) {
+      await this.changeLogRepo.record({
+        entityType: 'assembly_part', entityId: partId, action: 'update', field: 'componentId',
+        oldValue: before.componentId, newValue: after.componentId,
+        actorId, commitId: this.changeLogRepo.newCommitId(),
+      })
+    }
+
+    return after
+  }
 }

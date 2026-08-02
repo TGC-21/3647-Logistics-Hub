@@ -8,15 +8,20 @@
 // validation to Inventory mode's Add Component modal).
 
 import {
-  upsertAssemblyPart,
   fetchComponentsForFabricatePicker,
-  fetchCategories, upsertCategory, validateAttribute,
+  fetchCategories, validateAttribute,
 } from '../db.js'
 // Migration Plan Phase 2 cutover — job creation now goes through the
 // migrated route (services/FabricationJobService.js via
 // api/fabrication-jobs.js) instead of talking to Supabase directly.
 import { createFabricationJob } from '../services/fabricationJobsApi.js'
 import { findOrCreateComponent } from '../services/componentsApi.js'
+// "Use existing component" (selectFabComponent) and "New category"
+// (fabConfirmNewCategory) also now go through their migrated routes —
+// AssemblyPartService's linkComponent and CategoryService's
+// createCategory — instead of db.js's upsertAssemblyPart/upsertCategory.
+import { linkAssemblyPartComponent } from '../services/assemblyPartsApi.js'
+import { createCategory } from '../services/categoriesApi.js'
 import { registerNewJob } from '../fabricate.js'
 import { genId, toast } from './state.js'
 import { getCurrentMemberId } from '../members.js'
@@ -46,7 +51,7 @@ function currentFabJobPart() {
 }
 
 export async function openSendToFabricateModal(partId, isChildPart = false) {
-  fabJobPartId      = partId
+  fabJobPartId = partId
   fabJobIsChildPart = isChildPart
   const part = currentFabJobPart()
   if (!part) return
@@ -59,24 +64,28 @@ export async function openSendToFabricateModal(partId, isChildPart = false) {
     return
   }
 
-  fabStep               = 'search'
-  fabComponentQuery     = ''
-  fabSelectedCategoryId = ''
-  fabNewCatMode         = false
-  fabNewCatReqKeysConfig = []
-  renderFabModalStep()
-
+  fabStep = null
+  renderFabModalStep()   // qty step renders immediately, componentId still null momentarily
   try {
-    ;[fabCatalog, fabCategories] = await Promise.all([
-      fetchComponentsForFabricatePicker(),
-      fetchCategories(),
-    ])
+    const category  = await ensureCustomPartCategory()
+    const component = await findOrCreateComponent({
+      categoryId: category.id,
+      attrs: {},
+      fallback: { name: 'Custom Part', description: 'Sent to Fabricate without a detected geometry match', image: null },
+      actorId: getCurrentMemberId(),
+    })
+    const saved = await linkAssemblyPartComponent({ partId: part.id, componentId: component.id, actorId: getCurrentMemberId() })
+    ctx.onComponentLinked(saved, isChildPart)
   } catch (e) {
     console.error(e)
-    toast('Error loading component catalog')
-    fabCatalog = []; fabCategories = []
+    toast('Error resolving Custom Part component')
   }
-  renderFabModalStep()
+}
+
+async function ensureCustomPartCategory() {
+  const cats = await fetchCategories()
+  return cats.find(c => c.name === 'Custom Part')
+    || createCategory({ name: 'Custom Part', requiredKeysConfig: [], actorId: getCurrentMemberId() })
 }
 
 function closeSendToFabricateModal() {
@@ -186,7 +195,7 @@ async function selectFabComponent(componentId) {
   const part = currentFabJobPart()
   if (!part) return
   try {
-    const saved = await upsertAssemblyPart({ ...part, componentId })
+    const saved = await linkAssemblyPartComponent({ partId: part.id, componentId, actorId: getCurrentMemberId() })
     ctx.onComponentLinked(saved, fabJobIsChildPart)
     fabStep = null
     renderFabModalStep()
@@ -392,7 +401,7 @@ async function fabConfirmNewCategory() {
   const cleanConfigs = fabNewCatReqKeysConfig.map(cfg => ({ ...cfg, key: cfg.key.trim() })).filter(cfg => cfg.key)
 
   try {
-    const saved = await upsertCategory({ id: genId(), name, requiredKeysConfig: cleanConfigs })
+    const saved = await createCategory({ name, requiredKeysConfig: cleanConfigs, actorId: getCurrentMemberId() })
     fabCategories.push(saved)
     fabSelectedCategoryId = saved.id
     fabHideNewCatRow()

@@ -1415,3 +1415,16 @@ export async function fetchRootAssemblyIdForChild(childId) {
   }
   return current.parentAssemblyId  // guaranteed set once we hit the top
 }
+
+/** Every assembly_parts row that currently has `instanceId` reserved in
+ *  its linked_instance_ids — used before deleting an inventory instance
+ *  outright, so those parts can be properly unreserved first instead of
+ *  being left pointing at a row that no longer exists. */
+export async function fetchAssemblyPartsLinkingInstance(instanceId) {
+  const { data, error } = await supabase
+    .from('assembly_parts')
+    .select('*')
+    .contains('linked_instance_ids', [instanceId])
+  if (error) throw error
+  return data.map(dbPartToLocal)
+}

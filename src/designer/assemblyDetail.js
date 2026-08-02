@@ -9,7 +9,7 @@
 // parts are stored and when a re-render / status-sync needs to happen.
 
 import {
-  fetchAssemblies, upsertAssembly,
+  fetchAssemblies,
   fetchAssemblyParts, fetchAssemblyChildren, fetchChildrenOfChild,
   fetchAssemblyChildById, fetchChildParts,
   fetchActiveJobsForParts, fetchActiveCartItemsForParts,
@@ -74,7 +74,7 @@ import { renderAssemblyGrid, openAssemblyModal, registerAssemblyGridContext } fr
 import { deleteAssemblyWithHistory } from './versionedMutations.js'
 import { getCurrentMemberId } from '../members.js'
 import { detectFabricationCandidates } from '../services/detectionApi.js'
-import { deleteAssembly } from '../services/assemblyApi.js'
+import { deleteAssembly, updateAssembly } from '../services/assemblyApi.js'
 import { reimportAssembly } from '../services/onshapeBomApi.js'
 
 let fabDetectRunning = false
@@ -666,7 +666,7 @@ async function syncAssemblyStatus() {
   if (!assembly) return
   const newStatus = derivedAssemblyStatus(getCurrentParts())
   if (newStatus !== assembly.status) {
-    const updated = await upsertAssembly({ ...assembly, status: newStatus })
+    const updated = await updateAssembly({ assemblyId: currentAssemblyId, status: newStatus, actorId: getCurrentMemberId() })
     setAssemblies(getAssemblies().map(a => a.id === currentAssemblyId ? updated : a))
   }
 }
@@ -774,13 +774,14 @@ export function initDesignerWiring() {
       const assembly = assemblyById(getCurrentAssemblyId())
       if (assembly && !assembly.onshapeElementId && onshapeSelectedAsm) {
         const onshapeUrl = `https://cad.onshape.com/documents/${onshapeSelectedAsm.documentId}/w/${onshapeSelectedAsm.workspaceId}/e/${onshapeSelectedAsm.id}`
-        const updated = await upsertAssembly({
-          ...assembly,
+        const updated = await updateAssembly({
+          assemblyId:         assembly.id,
           onshapeUrl,
           onshapeDocumentId:  onshapeSelectedAsm.documentId,
           onshapeWorkspaceId: onshapeSelectedAsm.workspaceId,
           onshapeElementId:   onshapeSelectedAsm.id,
-          thumbnail:          onshapeSelectedDoc?.thumbnailUrl || assembly.thumbnail || null,
+          thumbnailUrl:       onshapeSelectedDoc?.thumbnailUrl || assembly.thumbnail || null,
+          actorId:            getCurrentMemberId(),
         })
         setAssemblies(getAssemblies().map(a => a.id === updated.id ? updated : a))
       }

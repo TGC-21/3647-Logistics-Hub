@@ -46,3 +46,10 @@ export async function updateAssemblyPart({ partId, partName, partNumber = '', qu
 export async function deleteAssemblyPart({ partId, actorId = null }) {
   return callAssemblyPartsApi('delete', { partId, actorId })
 }
+
+/** "Send to Fabricate" step 1's "use an existing catalog component"
+ *  path — links a part to an already-resolved component, nothing else. */
+export async function linkAssemblyPartComponent({ partId, componentId, actorId = null }) {
+  const { part } = await callAssemblyPartsApi('linkComponent', { partId, componentId, actorId })
+  return part
+}

@@ -5,7 +5,7 @@ import {
   validateAttribute, reconcileOrphanedInstances,
   fetchInventoryInstances, upsertInventoryInstance, deleteInventoryInstance,
   fetchInstanceCountsForComponents,
-  attrsArrayToMap,
+  attrsArrayToMap, fetchAssemblyPartsLinkingInstance
 } from './db.js'
 import {
   fetchCategories, createCategory, updateCategory, deleteCategory,
@@ -47,6 +47,8 @@ import { upsertInventoryInstanceVersioned } from './designer/versionedMutations.
 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'
+
+import { unreserveInventoryUnits } from './services/inventoryReservationApi.js'
 
 window.reconcileInventory = reconcileOrphanedInstances
 
@@ -1048,6 +1050,21 @@ async function deleteFromDetail() {
   const it = items.find(x => x.id === detailId)
   if (!it || !confirm(`Delete "${it.name}"? This cannot be undone.`)) return
   try {
+    // Release this instance from any assembly parts holding it reserved
+    // BEFORE deleting the row — otherwise those parts keep a dangling
+    // id in linked_instance_ids and their quantityCollected/status
+    // never get corrected.
+    const linkingParts = await fetchAssemblyPartsLinkingInstance(detailId)
+    for (const part of linkingParts) {
+      await unreserveInventoryUnits({
+        assemblyPartId:   part.id,
+        instanceId:       detailId,
+        unlinkedQuantity: it.quantity,
+        resetLocation:    '',
+        actorId:          getCurrentMemberId(),
+      })
+    }
+
     await deleteInventoryInstance(detailId)
     const counts = await fetchInstanceCountsForComponents([it.componentId])
     const instanceCount = counts[it.componentId]?.total ?? 0
@@ -1055,7 +1072,10 @@ async function deleteFromDetail() {
     if (it.image) await deleteImage(detailId)
     items = items.filter(x => x.id !== detailId)
     closeDetail(); render(); showToast('Component deleted')
-  } catch (e) { showToast('Error deleting component') }
+  } catch (e) {
+    console.error(e)
+    showToast('Error deleting component')
+  }
 }
 
 // ── Manage categories modal ───────────────────────────────────
