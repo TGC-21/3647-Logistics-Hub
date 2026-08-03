@@ -62,7 +62,7 @@ import {
 import { createAssemblyPart, updateAssemblyPart, deleteAssemblyPart } from '../services/assemblyPartsApi.js'
 import { getCurrentMemberId } from '../members.js'
 
-import { fetchEntityHistory, fetchCascadeChildren } from '../changeLog.js'
+import { fetchEntityHistory, fetchCascadeChildren } from '../services/changeLogApi.js'
 import { openHistoryModal } from '../historyPanel.js'
 import { resolvePartIntent, badgesForPart, INTENT_PRIORITY } from './partIntent.js'
 
@@ -106,18 +106,6 @@ export function orderBadgesHTML(orders) {
   }).join('')
 }
 
-function partCardHTML(p, job, orders, isChild){
-  const { main , aux } = resolvePartIntent(p, { job, orders })
-  const faceActions    = main.slice(0,2)
-  const overflow       = main.slice(2)
-  const badges         = badgesForPart(p, job, orders)
-  const promisedQty    = totalPromisedQty(job, orders)
-  const checked        = isPartSelected(p.id) ? 'checked' : ''
-  const attrPrefix     = isChild ? 'child-part' : 'part'
-  return 
-}
-
-
 const ACTION_LABELS = {
   reviewCandidate: { label: 'Review candidate',  icon: 'ti-scan' },
   findInventory:   { label: 'Link inventory',    icon: 'ti-link' },
@@ -125,11 +113,186 @@ const ACTION_LABELS = {
   addToCart:       { label: 'Add to cart',       icon: 'ti-shopping-cart-plus'},
 }
 
-function bindPartCardEvents(){
-  gridEl = document.getElementById('parts-grid')
-  gridEl.addEventListener('change', {})
-
+function badgeHTML(badge) {
+  return `<span class="badge ${badge.className}"><i class="ti ${badge.icon}" aria-hidden="true"></i> ${badge.label}</span>`
 }
+
+function actionButtonHTML(action, id, attrPrefix, isPrimary) {
+  const def = ACTION_LABELS[action]
+  return `<button class="btn btn-sm${isPrimary ? ' btn-primary' : ''}" data-${attrPrefix}-action="${action}" data-id="${id}">
+    <i class="ti ${def.icon}" aria-hidden="true"></i> ${def.label}
+  </button>`
+}
+
+function overflowMenuItemHTML(action, id, attrPrefix) {
+  const def = ACTION_LABELS[action]
+  return `<div class="more-menu-item" data-${attrPrefix}-action="${action}" data-id="${id}">
+    <i class="ti ${def.icon}" aria-hidden="true"></i>${def.label}
+  </div>`
+}
+
+export function partCardHTML(p, job = null, orders = [], isChild = false) {
+  const attrPrefix = isChild ? 'child-part' : 'part'
+  const { main, aux } = resolvePartIntent(p, { job, orders })
+  const faceActions = main.slice(0, 2)
+  const overflowActions = main.slice(2)
+  const badges = badgesForPart(p, job, orders)
+
+  const collectedQty = p.quantityCollected || 0
+  const promisedQty  = totalPromisedQty(job, orders)
+  const checked = isPartSelected(p.id) ? ' checked' : ''
+
+  const actionsHTML = faceActions.length
+    ? faceActions.map((a, i) => actionButtonHTML(a, p.id, attrPrefix, i === 0)).join('')
+    : `<span class="card-actions-empty">Nothing outstanding</span>`
+
+  const overflowMenuHTML = overflowActions.length
+    ? `<div class="more-menu-eyebrow">Also applies</div>
+       ${overflowActions.map(a => overflowMenuItemHTML(a, p.id, attrPrefix)).join('')}
+       <div class="more-menu-divider"></div>`
+    : ''
+
+  return `<div class="part-card" data-part-id="${p.id}">
+    <input type="checkbox" class="card-select-checkbox" data-${attrPrefix}-select="${p.id}"
+           aria-label="Select ${p.partName}"${checked}>
+
+    <div class="card-top">
+      <div class="card-name-block">
+        <div class="card-part-name">${p.partName}</div>
+        ${p.partNumber ? `<div class="card-part-number">${p.partNumber}</div>` : ''}
+        ${p.notes ? `<div class="part-notes">${p.notes}</div>` : ''}
+      </div>
+      <div class="card-qty">
+        ${collectedQty}${promisedQty ? `<span class="promised">+${promisedQty} promised</span>` : ''} / ${p.quantityNeeded}
+      </div>
+    </div>
+
+    <div class="card-badges">${badges.map(badgeHTML).join('')}</div>
+
+    <div class="card-actions">
+      ${actionsHTML}
+      <div class="more-actions-wrap">
+        <button class="btn btn-sm btn-icon-only" data-${attrPrefix}-more="${p.id}" aria-label="More actions" title="More actions">
+          <i class="ti ti-dots" aria-hidden="true"></i>
+        </button>
+        <div class="more-menu">
+          ${overflowMenuHTML}
+          <div class="more-menu-item" data-${attrPrefix}-menu-action="edit" data-id="${p.id}">
+            <i class="ti ti-edit" aria-hidden="true"></i>Edit part
+          </div>
+          <div class="more-menu-item" data-${attrPrefix}-menu-action="history" data-id="${p.id}">
+            <i class="ti ti-history" aria-hidden="true"></i>View history
+          </div>
+          <div class="more-menu-item danger" data-${attrPrefix}-menu-action="delete" data-id="${p.id}">
+            <i class="ti ti-trash" aria-hidden="true"></i>Delete
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`
+}
+
+export function bindPartCardEvents() {
+  const grid = document.getElementById('parts-grid')
+  if (!grid) return
+
+  grid.addEventListener('change', e => {
+    const cb = e.target.closest('[data-part-select]')
+    if (cb) { togglePartSelected(cb.dataset.partSelect); ctx.afterChange(false) }
+  })
+
+  grid.addEventListener('click', async e => {
+    const actionEl = e.target.closest('[data-part-action]')
+    if (actionEl) {
+      closeAllMoreMenus()
+      dispatchPartAction(actionEl.dataset.partAction, actionEl.dataset.id, false)
+      return
+    }
+
+    const moreBtn = e.target.closest('[data-part-more]')
+    if (moreBtn) { toggleMoreMenu(moreBtn); return }
+
+    const menuActionEl = e.target.closest('[data-part-menu-action]')
+    if (menuActionEl) {
+      closeAllMoreMenus()
+      await dispatchPartMenuAction(menuActionEl.dataset.partMenuAction, menuActionEl.dataset.id, false)
+      return
+    }
+  })
+}
+
+export function bindChildPartCardEvents() {
+  const grid = document.getElementById('child-parts-grid')
+  if (!grid) return
+
+  grid.addEventListener('change', e => {
+    const cb = e.target.closest('[data-child-part-select]')
+    if (cb) { togglePartSelected(cb.dataset.childPartSelect); ctx.afterChange(true) }
+  })
+
+  grid.addEventListener('click', async e => {
+    const actionEl = e.target.closest('[data-child-part-action]')
+    if (actionEl) {
+      closeAllMoreMenus()
+      dispatchPartAction(actionEl.dataset.childPartAction, actionEl.dataset.id, true)
+      return
+    }
+
+    const moreBtn = e.target.closest('[data-child-part-more]')
+    if (moreBtn) { toggleMoreMenu(moreBtn); return }
+
+    const menuActionEl = e.target.closest('[data-child-part-menu-action]')
+    if (menuActionEl) {
+      closeAllMoreMenus()
+      await dispatchPartMenuAction(menuActionEl.dataset.childPartMenuAction, menuActionEl.dataset.id, true)
+      return
+    }
+  })
+}
+
+// ── Shared dispatch tables — same effective routing
+// bindPartRowEvents/bindChildPartRowEvents already do today, just
+// reached through the generic data-*-action attribute instead of one
+// hand-written attribute per action (data-part-link, data-part-fab,
+// data-part-order, data-part-fabdetect all collapse into this). ─────
+
+function dispatchPartAction(action, id, isChild) {
+  if (action === 'reviewCandidate') { openFabDetectConfirmModal(id, isChild); return }
+  if (action === 'findInventory')   { ctx.onLinkInventory(id, isChild); return }
+  if (action === 'sendToFabricate') { ctx.onSendToFabricate(id, isChild); return }
+  if (action === 'addToCart')       { ctx.onAddToCart(id, isChild); return }
+}
+
+async function dispatchPartMenuAction(action, id, isChild) {
+  if (action === 'edit')    { openPartModal(id, isChild); return }
+  if (action === 'history') { openHistoryModal('assembly_part', id, null); return }
+  if (action === 'delete')  { isChild ? await deleteChildPart(id) : await deletePart(id); return }
+}
+
+// ── "More actions" popover ───────────────────────────────────────
+function toggleMoreMenu(triggerBtn) {
+  const menu = triggerBtn.nextElementSibling
+  closeAllMoreMenus(menu)
+  menu.classList.toggle('open')
+}
+
+function closeAllMoreMenus(except) {
+  document.querySelectorAll('.more-menu.open').forEach(m => {
+    if (m !== except) m.classList.remove('open')
+  })
+}
+
+// Click-outside-closes, bound once — add this call alongside the other
+// one-time bindings in bindPartsTableEvents() at the bottom of this
+// file, not inside bindPartCardEvents/bindChildPartCardEvents (those
+// get re-called on every full render; this listener should only ever
+// be attached once).
+export function bindMoreMenuOutsideClick() {
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.more-actions-wrap')) closeAllMoreMenus()
+  })
+}
+
 // ── Row templates ────────────────────────────────────────────
 export function partRowHTML(p, job = null, orders = []) {
   const status = computePartStatus(p)

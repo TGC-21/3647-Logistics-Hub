@@ -56,6 +56,7 @@ import {
   fabFilterSelectHTML, partSearchToolbarHTML,
   registerPartsTableContext, openPartModal,
   selectionToolbarHTML, bindSelectionToolbarEvents, bindPartsTableHeaderEvents,
+  partCardHTML, bindChildPartCardEvents, bindPartCardEvents
 } from './partsTable.js'
 
 import {
@@ -71,7 +72,9 @@ import { registerInventoryLinkContext, openInventoryLinkModal, toggleLinkedDetai
 import { registerFabricateFlowContext, openSendToFabricateModal } from './fabricateFlow.js'
 import { registerPartOrdersCartContext, addPartToCart } from './partOrdersCart.js'
 import { renderAssemblyGrid, openAssemblyModal, registerAssemblyGridContext } from './assemblyGrid.js'
-import { deleteAssemblyWithHistory } from './versionedMutations.js'
+// deleteAssemblyWithHistory was imported here but never called —
+// deleteCurrentAssembly (below) already uses the migrated deleteAssembly
+// from assemblyApi.js. Dropped as part of retiring versionedMutations.js.
 import { getCurrentMemberId } from '../members.js'
 import { detectFabricationCandidates } from '../services/detectionApi.js'
 import { deleteAssembly, updateAssembly } from '../services/assemblyApi.js'
@@ -295,31 +298,21 @@ async function renderAssemblyDetailFromState() {
       </div>
 
       ${currentParts.length
-        ? `<div class="parts-table-wrap">
-            <table class="parts-table">
-              <thead>
-                <tr>
-                  <th class="select-col"><input type="checkbox" id="select-all-parts" aria-label="Select all visible parts"></th>
-                  <th>Part name</th>
-                  <th>Part #</th>
-                  <th style="text-align:center">Needed</th>
-                  <th style="text-align:center">Collected</th>
-                  <th style="text-align:center">Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="parts-tbody">
-                ${currentParts.filter(partRowVisible).map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || [])).join('')}
-              </tbody>
-            </table>
-          </div>`
+        ? `<div class="parts-grid" id="parts-grid">
+  ${currentParts.filter(partRowVisible).map(p =>
+    partCardHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || [], false)
+  ).join('')}
+</div>`
         : `<div class="empty" style="padding:40px 0">
             <i class="ti ti-list-check" aria-hidden="true"></i>
             <div class="empty-title">No direct parts</div>
             <div class="empty-sub">${currentChildren.length
               ? 'Parts for this assembly live within its subassemblies above.'
               : 'Add parts manually, import a CSV, or pull from Onshape.'}</div>
-          </div>`}`
+          </div>
+        `
+        
+        }`
 
   area.innerHTML = `
     <div class="asm-detail">
@@ -408,7 +401,7 @@ async function renderAssemblyDetailFromState() {
     el.addEventListener('click', () => enterChildAssembly(el.dataset.openChild))
   )
 
-  bindPartRowEvents()
+  bindPartCardEvents()
   bindPartsTableHeaderEvents(false)
   bindSelectionToolbarEvents(false)
 }
@@ -548,25 +541,11 @@ async function renderChildDetailFromState() {
       ${selectionToolbarHTML(true)}
       ${tabsHTML ? '' : `<div class="asm-parts-toolbar"><div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div>${partSearchToolbarHTML(getPartSearchQuery(), getPartNumberOnly())}</div>`}
       ${currentChildParts.length
-        ? `<div class="parts-table-wrap">
-            <table class="parts-table">
-              <thead>
-                <tr>
-                  <th class="select-col"><input type="checkbox" id="select-all-child-parts" aria-label="Select all visible parts"></th>
-                  <th>Part name</th>
-                  <th>Linked Part(s)</th>
-                  <th>Part #</th>
-                  <th style="text-align:center">Needed</th>
-                  <th style="text-align:center">Collected</th>
-                  <th style="text-align:center">Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="child-parts-tbody">
-                ${currentChildParts.filter(partRowVisible).map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || [])).join('')}
-              </tbody>
-            </table>
-          </div>`
+        ? `<div class="parts-grid" id="child-parts-grid">
+  ${currentChildParts.filter(partRowVisible).map(p =>
+    partCardHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || [], true)
+  ).join('')}
+</div>`
         : `<div class="empty" style="padding:40px 0"><i class="ti ti-list-check" aria-hidden="true"></i><div class="empty-title">No direct parts</div></div>`}`
 
   const backLabel = isolatedMode
@@ -624,7 +603,7 @@ async function renderChildDetailFromState() {
     el.addEventListener('click', () => enterChildAssembly(el.dataset.openChild))
   )
 
-  bindChildPartRowEvents()
+  bindChildPartCardEvents()
   bindPartsTableHeaderEvents(true)
   bindSelectionToolbarEvents(true)
 }

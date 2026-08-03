@@ -1,16 +1,27 @@
 // src/changeLog.js
 //
-// Git/Onshape-style version history for Supabase-backed entities
-// (inventory_instances, components, assemblies, assembly_children,
-// assembly_parts, categories, ...). One row per FIELD changed; multiple
-// rows sharing a commit_id represent one user action/save, so a UI can
-// reconstruct "what did this save actually touch" as a unit rather than
-// a flat event stream.
+// Write-only now. This used to also be the client-side READ path for
+// change_log (fetchEntityHistory/fetchCommit/fetchCascadeChildren/
+// fetchRecentActivity) — those moved to services/ChangeLogService.js,
+// reachable via api/change-log.js and, client-side, src/services/
+// changeLogApi.js, so every caller (the browser, and eventually the
+// agent harness) reads through the same service instead of the browser
+// hitting change_log directly with the anon key. historyPanel.js and
+// partsTable.js were switched over to changeLogApi.js for their reads.
 //
-// This module is intentionally the ONLY place that talks to the
-// change_log table — db.js's mutators call into it (see
-// db_changelog_integration.md for the exact wiring), but never write to
-// change_log directly, so the row shape/rules stay centralized.
+// What's left here is genCommitId/recordChange/diffFields/
+// recordUpdateDiff, kept ONLY because versionedMutations.js's one
+// remaining wrapper (upsertInventoryInstanceVersioned — inventory
+// instance CRUD, which has no Service/Repository home yet) still needs
+// a way to write change_log rows from the browser. That is this file's
+// entire remaining reason to exist. Once inventory instances get a real
+// InventoryInstanceService, this file's write functions become
+// redundant with ChangeLogRepository.record()/recordUpdateDiff() and
+// this file should be deleted outright, not extended.
+//
+// Do not add new callers here. A new domain that needs versioned writes
+// should get a Service + ChangeLogRepository, following every other
+// domain in MIGRATION_PLAN.md — not a new function in this file.
 
 import { supabase } from './db.js'
 
@@ -79,57 +90,4 @@ export async function recordUpdateDiff({ entityType, entityId, before, after, ke
     await recordChange({ entityType, entityId, action: 'update', actorId, commitId, ...c })
   }
   return changes.length
-}
-
-// ── History queries ──────────────────────────────────────────────
-
-/** Full history for one entity, newest first. */
-export async function fetchEntityHistory(entityType, entityId) {
-  const { data, error } = await supabase
-    .from('change_log')
-    .select('*')
-    .eq('entity_type', entityType)
-    .eq('entity_id', entityId)
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data
-}
-
-/** Every row belonging to one commit (i.e. one save/action), in field
- *  order as written — lets a UI show "this save changed: Name, OD, ID". */
-export async function fetchCommit(commitId) {
-  const { data, error } = await supabase
-    .from('change_log')
-    .select('*')
-    .eq('commit_id', commitId)
-    .order('created_at', { ascending: true })
-  if (error) throw error
-  return data
-}
-
-/** Everything that was cascade-deleted as a result of one parent entity
- *  going away — e.g. every assembly_part + assembly_child wiped out when
- *  an assembly was deleted. Distinct from fetchEntityHistory(assembly, id),
- *  which only shows the assembly's OWN rows (its create/update/delete),
- *  not what it took down with it. */
-export async function fetchCascadeChildren(causedByEntityType, causedByEntityId) {
-  const { data, error } = await supabase
-    .from('change_log')
-    .select('*')
-    .eq('caused_by_entity_type', causedByEntityType)
-    .eq('caused_by_entity_id', causedByEntityId)
-    .order('entity_type', { ascending: true })
-  if (error) throw error
-  return data
-}
-
-/** Recent activity across every entity type — a simple activity feed. */
-export async function fetchRecentActivity(limit = 50) {
-  const { data, error } = await supabase
-    .from('change_log')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  if (error) throw error
-  return data
 }

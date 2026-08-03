@@ -1,5 +1,5 @@
 async function callDetectionApi(action, payload){
-    const res = await fetch('/api/onshape-detect-fabrication', {
+    const res = await fetch('/api/onshape-assembly', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({action, ...payload}),

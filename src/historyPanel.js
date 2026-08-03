@@ -17,8 +17,10 @@
 // fabDetection.js, etc). Row templates just need a button with a
 // data-history-* attribute; see the integration notes for the two
 // call sites that need one added.
-
-import { fetchEntityHistory, fetchCascadeChildren } from './changeLog.js'
+// Step 2 of the change-log rewrite: reads now go through the migrated
+// service-layer route instead of the browser anon-key client directly —
+// same function names, so this is a transport swap only, no body change.
+import { fetchEntityHistory, fetchCascadeChildren } from './services/changeLogApi.js'
 import { fetchMemberById } from './members.js'
 
 const ENTITY_LABELS = {

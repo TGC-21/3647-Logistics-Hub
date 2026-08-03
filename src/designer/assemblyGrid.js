@@ -6,9 +6,7 @@
 // (selectAssembly) is owned by assemblyDetail.js since it also has to
 // manage the child-view stack.
 
-import { upsertAssembly } from '../db.js'
-import { genId, toast, statusLabel, getAssemblies, setAssemblies, assemblyById } from './state.js'
-import { upsertAssemblyVersioned } from './versionedMutations.js'
+import { toast, statusLabel, getAssemblies, setAssemblies, assemblyById } from './state.js'
 import { getCurrentMemberId } from '../members.js'
 import { openHistoryModal, openCascadeHistoryModal } from '../historyPanel.js'
 import { createAssembly, updateAssembly } from '../services/assemblyApi.js'
@@ -120,32 +118,24 @@ async function saveAssembly() {
   const saveBtn = document.getElementById('btn-save-asm')
   saveBtn.disabled = true; saveBtn.textContent = 'Saving…'
 
-  const payload = {
-    id:          editingAssemblyId || genId(),
-    name,
-    description: document.getElementById('asm-field-desc').value.trim(),
-    onshapeUrl:  document.getElementById('asm-field-url').value.trim(),
-    status:      document.getElementById('asm-field-status').value,
-  }
-
-  if (editingAssemblyId) {
-    updateAssembly({assemblyId: editingAssemblyId, 
-      name: name, 
-      description: document.getElementById('asm-field-desc').value.trim(), 
-      onshapeUrl:document.getElementById('asm-field-url').value.trim(), 
-      status: document.getElementById('asm-field-status').value })
-  } else {
-    createAssembly({
-      name: name,
-      description: document.getElementById('asm-field-desc').value.trim(), 
-      onshapeUrl:document.getElementById('asm-field-url').value.trim(), 
-      status: document.getElementById('asm-field-status').value 
-    })
-  }
+  const description = document.getElementById('asm-field-desc').value.trim()
+  const onshapeUrl   = document.getElementById('asm-field-url').value.trim()
+  const status        = document.getElementById('asm-field-status').value
+  const wasNew         = !editingAssemblyId
 
   try {
-    const saved = await upsertAssemblyVersioned(payload, getCurrentMemberId())
-    const wasNew = !editingAssemblyId
+    // Single write path now — AssemblyService (via the migrated
+    // assemblies-v2 route) both persists the row AND logs its own
+    // change_log entry via ChangeLogRepository. This used to also call
+    // upsertAssemblyVersioned, which independently wrote the same row
+    // through db.js/src/changeLog.js — two racing writes and two
+    // separate change_log commits for one save, with this call's
+    // result previously discarded entirely. See the change-log rewrite
+    // notes for the rest of that story.
+    const saved = wasNew
+      ? await createAssembly({ name, description, onshapeUrl, status, actorId: getCurrentMemberId() })
+      : await updateAssembly({ assemblyId: editingAssemblyId, name, description, onshapeUrl, status, actorId: getCurrentMemberId() })
+
     const assemblies = getAssemblies()
     setAssemblies(wasNew ? [saved, ...assemblies] : assemblies.map(a => a.id === saved.id ? saved : a))
 

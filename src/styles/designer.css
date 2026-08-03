@@ -777,3 +777,158 @@
   border-radius: var(--border-radius-md);
   padding: 6px;
 }
+
+/* ── Parts card grid (Phase 1 of PARTS_CARD_UI_ROADMAP.md) ────────
+   Replaces .parts-table*. Append here for now — .parts-table* rules
+   stay in place until Phase 5, since CARD_LAYOUT_ENABLED can still be
+   flipped back to the table path while this is being verified. ──── */
+
+.parts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .parts-grid { grid-template-columns: 1fr; }
+}
+
+.part-card {
+  position: relative;
+  background: var(--color-background-primary);
+  border: 1.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-lg);
+  padding: 13px 14px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* Always-visible selection checkbox — deliberately NOT the same class
+   as the prototype's .card-select-dot, which is display:none unless a
+   .selection-mode ancestor is present (that's Phase 2's tap-to-select
+   visual). This card ships before Phase 2 exists, so it needs its own
+   simple, always-on style. */
+.card-select-checkbox {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 22px;   /* clears the absolutely-positioned checkbox */
+}
+.card-name-block { min-width: 0; }
+.card-part-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.card-part-number {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  font-family: 'SF Mono', Menlo, monospace;
+  margin-top: 1px;
+}
+.card-qty {
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  padding-top: 1px;
+  white-space: nowrap;
+}
+.card-qty .promised {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.badge i { font-size: 10px; }
+.badge--accent  { background: var(--color-accent-light);  color: var(--color-accent); }
+.badge--success { background: var(--color-success-light); color: var(--color-success); }
+.badge--warning { background: var(--color-warning-light); color: var(--color-warning); }
+.badge--muted   { background: var(--color-background-secondary); color: var(--color-text-tertiary); }
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.card-actions .btn { flex: 1; justify-content: center; }
+.card-actions .btn-icon-only {
+  flex: 0 0 auto;
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+.card-actions-empty {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  padding: 6px 0 1px;
+}
+
+.more-actions-wrap { position: relative; flex-shrink: 0; }
+.more-menu {
+  display: none;                      /* ← the missing rule causing the screenshot's bug */
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  box-shadow: 0 6px 18px rgba(0,0,0,.14);
+  min-width: 190px;
+  padding: 4px;
+  z-index: 20;
+}
+.more-menu.open { display: block; }
+.more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+.more-menu-item:hover { background: var(--color-background-secondary); }
+.more-menu-item.danger { color: var(--color-danger); }
+.more-menu-item i { font-size: 14px; width: 16px; text-align: center; color: var(--color-text-tertiary); }
+.more-menu-item.danger i { color: var(--color-danger); }
+.more-menu-divider { height: 1px; background: var(--color-border-secondary); margin: 4px 2px; }
+.more-menu-eyebrow {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-tertiary);
+  padding: 6px 9px 2px;
+}

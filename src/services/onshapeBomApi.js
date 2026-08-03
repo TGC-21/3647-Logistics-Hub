@@ -1,5 +1,5 @@
-async function callOnshapeBomApi(action, payload={}){
-  const res = await fetch('/api/onshape-bom', {
+async function callOnshapeAssembly(action, payload={}){
+  const res = await fetch('/api/onshape-assembly', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, ...payload }),
@@ -15,7 +15,7 @@ export async function importAssembly({documentId, workspaceId, elementId, name, 
     // onshapeUrl, assembly, message }. Return everything but `success` —
     // confirmLinkAssembly() reads data.assemblyId/partCount/childCount,
     // not just the bare `assembly` row.
-    const { success, ...result } = await callOnshapeBomApi('import', { documentId, workspaceId, elementId, name, thumbnailUrl, actorId})
+    const { success, ...result } = await callOnshapeAssembly('import', { documentId, workspaceId, elementId, name, thumbnailUrl, actorId})
     return result
 }
 
@@ -27,6 +27,6 @@ export async function reimportAssembly({ assemblyId, actorId }){
     // resolved to undefined and confirmReimport()'s `result.message`
     // read crashed with "cannot read properties of undefined". Return
     // the whole result instead.
-    const { success, ...result } = await callOnshapeBomApi('reimport', { assemblyId, actorId})
+    const { success, ...result } = await callOnshapeAssembly('reimport', { assemblyId, actorId})
     return result
 }
