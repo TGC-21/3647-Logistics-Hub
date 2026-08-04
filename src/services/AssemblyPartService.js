@@ -21,6 +21,9 @@ import { InventoryInstanceRepository } from '../repositories/InventoryInstanceRe
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError } from '../repositories/errors.js'
 
+
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
+
 /** Pure function — no repository, no I/O. Exported so both this service
  *  and (eventually) a route-level bulk-status endpoint can call it
  *  without an object round-trip for a trivial calculation. Mirrors
