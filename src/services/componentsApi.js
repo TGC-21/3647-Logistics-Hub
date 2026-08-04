@@ -16,6 +16,13 @@
 //
 // AUTH: api/components.js has no gate — same decision every other
 // migrated route in this pass has made.
+//
+// createInstance/updateInstance/deleteInstance added for the Inventory
+// Instance CRUD migration — folded into this same client module for the
+// same reason they're folded into the same route: no new file, same
+// domain pairing (component identity + instances of it), and Vercel's
+// 12-function ceiling has no room for a dedicated route to wrap
+// separately.
 
 async function callComponentsApi(action, payload = {}) {
   const res = await fetch('/api/components', {
@@ -50,4 +57,38 @@ export async function updateComponentFallback({ componentId, name, description, 
 export async function deleteComponentIfOrphaned({ componentId, instanceCount, actorId = null }) {
   const { deleted } = await callComponentsApi('deleteIfOrphaned', { componentId, instanceCount, actorId })
   return deleted
+}
+
+
+/**
+ * Creates a brand-new inventory instance, resolving (or creating) its
+ * component first. `categoryId` may be omitted/blank — the server
+ * resolves it to a fixed "Uncategorized" category rather than
+ * requiring one, so this never fails the way a bare
+ * ComponentService.findOrCreate call would.
+ */
+export async function createInventoryInstance({ categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+  const { instance } = await callComponentsApi('createInstance', {
+    categoryId, attrs, fallback, name, description, image, location, quantity, tags, notes, actorId,
+  })
+  return instance
+}
+
+/** Edits an existing instance's own fields AND re-resolves its
+ *  component from the (possibly changed) category/attrs — may re-parent
+ *  the instance onto a different component, orphan-checking the old one
+ *  server-side if so. */
+export async function updateInventoryInstance({ instanceId, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+  const { instance } = await callComponentsApi('updateInstance', {
+    instanceId, categoryId, attrs, fallback, name, description, image, location, quantity, tags, notes, actorId,
+  })
+  return instance
+}
+
+/** Deletes an instance outright — the server unreserves it from every
+ *  assembly part that currently links it, deletes the row, then
+ *  orphan-checks its component, all before returning. Returns
+ *  { deletedInstanceId, unreservedPartCount, componentDeleted }. */
+export async function deleteInventoryInstance({ instanceId, actorId = null }) {
+  return callComponentsApi('deleteInstance', { instanceId, actorId })
 }

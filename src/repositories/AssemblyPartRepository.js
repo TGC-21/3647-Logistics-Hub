@@ -245,4 +245,17 @@ export class AssemblyPartRepository {
       .eq('id', id)
     if (error) throw new DatabaseError(`assembly_parts carry-over update failed: ${error.message}`, error)
   }
+
+  /** Every assembly_parts row that currently has `instanceId` reserved
+   *  in its linked_instance_ids — used before deleting an inventory
+   *  instance outright, so those parts can be properly unreserved first
+   *  instead of being left pointing at a row that no longer exists.
+   *  Mirrors src/db.js's fetchAssemblyPartsLinkingInstance, now
+   *  reachable server-side for InventoryInstanceService.deleteInstance. */
+  async findLinkingInstance(instanceId) {
+    const { data, error } = await this.db
+      .from('assembly_parts').select('*').contains('linked_instance_ids', [instanceId])
+    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
 }

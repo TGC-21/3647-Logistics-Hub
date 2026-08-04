@@ -1,17 +1,22 @@
 import './style.css'
 import { renderSegmentEditor } from './segmentEditor.js'
 import {
-  uploadImage,     deleteImage,
+  uploadImage, deleteImage,
   validateAttribute, reconcileOrphanedInstances,
-  fetchInventoryInstances, upsertInventoryInstance, deleteInventoryInstance,
-  fetchInstanceCountsForComponents,
-  attrsArrayToMap, fetchAssemblyPartsLinkingInstance
+  fetchInventoryInstances,
+  attrsArrayToMap,
 } from './db.js'
 import {
   fetchCategories, createCategory, updateCategory, deleteCategory,
 } from './services/categoriesApi.js'
+// updateComponentFallback stays — the "Edit component defaults" flow is
+// unrelated to instance CRUD. findOrCreateComponent/deleteComponentIfOrphaned
+// are gone: InventoryInstanceService now resolves the component and
+// orphan-checks it server-side as part of create/update/deleteInstance,
+// so saveItem/deleteFromDetail no longer call either directly.
 import {
-  findOrCreateComponent, deleteComponentIfOrphaned, updateComponentFallback,
+  updateComponentFallback,
+  createInventoryInstance, updateInventoryInstance, deleteInventoryInstance,
 } from './services/componentsApi.js'
 import {
   designerBoot,        setToast,
@@ -43,13 +48,13 @@ import {
 import { attachAutocomplete } from './autocomplete.js'
 
 import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from './members.js'
-import { upsertInventoryInstanceVersioned } from './designer/versionedMutations.js'
 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'
 
-import { unreserveInventoryUnits } from './services/inventoryReservationApi.js'
-
+// unreserveInventoryUnits import removed — deleteFromDetail's manual
+// unreserve-then-delete loop moved server-side into
+// InventoryInstanceService.deleteInstance (see below).
 window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
@@ -956,7 +961,14 @@ async function saveItem() {
     return acc
   }, [])
 
-  const id = editingId || genId()
+   // Purely a Supabase Storage key — decoupled from the instance's own
+  // row id now that creation no longer pre-generates one client-side
+  // (InventoryInstanceService.createInstance assigns it server-side).
+  // On edit, still keyed by editingId so deleteImage can find the same
+  // files a prior save uploaded under it; on create, a fresh id here is
+  // just a unique-enough filename, nothing else depends on it matching
+  // the eventual row id.
+  const imageKey = editingId || genId()
   let imageUrl = currentImageFile ? null : currentImageUrl
 
   const saveBtn = document.getElementById('btn-save-item')
@@ -964,37 +976,30 @@ async function saveItem() {
 
   try {
     if (currentImageFile) {
-      imageUrl = await uploadImage(id, currentImageFile)
+      imageUrl = await uploadImage(imageKey, currentImageFile)
     } else if (!currentImageUrl && editingId) {
-      await deleteImage(id)
+      await deleteImage(imageKey)
     }
 
-    const priorComponentId = editingId ? items.find(x => x.id === editingId)?.componentId : null
-
-    // Resolve or fork the (category, attributes) config this instance now
-    // belongs to. On first creation of a config, seed its fallback display
-    // info from this instance — later instances of the same config can
-    // rely on that fallback unless they set their own name/desc/image.
-    const component = await findOrCreateComponent({
-      categoryId: catId,
-      attrs:      attrsArrayToMap(attrs),
-      fallback:   { name, description: desc, image: imageUrl },
-      actorId:    getCurrentMemberId(),
-    })
-
-    const saved = await upsertInventoryInstanceVersioned({
-      id, componentId: component.id, name, description: desc,
-      image: imageUrl, location: loc, quantity: parseInt(qty, 10) || 0,
-      tags: [...editingTags], component,
-    }, getCurrentMemberId())
-
-    // If editing re-parented this instance to a different (forked or
-    // pre-existing) component, clean up the old one if now unreferenced.
-    if (priorComponentId && priorComponentId !== component.id) {
-      const counts = await fetchInstanceCountsForComponents([priorComponentId])
-      const instanceCount = counts[priorComponentId]?.total ?? 0
-      await deleteComponentIfOrphaned({ componentId: priorComponentId, instanceCount, actorId: getCurrentMemberId() })
+    // Component resolution (find-or-create, fork-on-re-parent) and, on
+    // edit, orphan-checking the OLD component if this save re-parented
+    // the instance onto a different one — all now handled server-side
+    // by InventoryInstanceService, in one call instead of three
+    // (findOrCreateComponent + upsertInventoryInstanceVersioned +
+    // manual fetchInstanceCountsForComponents/deleteComponentIfOrphaned).
+    const instanceArgs = {
+      categoryId:  catId,
+      attrs:       attrsArrayToMap(attrs),
+      fallback:    { name, description: desc, image: imageUrl },
+      name, description: desc, image: imageUrl, location: loc,
+      quantity:    parseInt(qty, 10) || 0,
+      tags:        [...editingTags],
+      actorId:     getCurrentMemberId(),
     }
+
+    const saved = editingId
+    ? await updateInventoryInstance({ instanceId: editingId, ...instanceArgs })
+    : await createInventoryInstance(instanceArgs)
    
     if (editingId) {
       const idx = items.findIndex(x => x.id === editingId)
@@ -1050,25 +1055,11 @@ async function deleteFromDetail() {
   const it = items.find(x => x.id === detailId)
   if (!it || !confirm(`Delete "${it.name}"? This cannot be undone.`)) return
   try {
-    // Release this instance from any assembly parts holding it reserved
-    // BEFORE deleting the row — otherwise those parts keep a dangling
-    // id in linked_instance_ids and their quantityCollected/status
-    // never get corrected.
-    const linkingParts = await fetchAssemblyPartsLinkingInstance(detailId)
-    for (const part of linkingParts) {
-      await unreserveInventoryUnits({
-        assemblyPartId:   part.id,
-        instanceId:       detailId,
-        unlinkedQuantity: it.quantity,
-        resetLocation:    '',
-        actorId:          getCurrentMemberId(),
-      })
-    }
-
-    await deleteInventoryInstance(detailId)
-    const counts = await fetchInstanceCountsForComponents([it.componentId])
-    const instanceCount = counts[it.componentId]?.total ?? 0
-    await deleteComponentIfOrphaned({ componentId: it.componentId, instanceCount, actorId: getCurrentMemberId() })
+     // Unreserving from any assembly parts holding this instance,
+    // deleting the row, and orphan-checking its component are now all
+    // handled server-side by InventoryInstanceService.deleteInstance,
+    // in that order — same order this handler used to do by hand.
+    await deleteInventoryInstance({ instanceId: detailId, actorId: getCurrentMemberId() })
     if (it.image) await deleteImage(detailId)
     items = items.filter(x => x.id !== detailId)
     closeDetail(); render(); showToast('Component deleted')

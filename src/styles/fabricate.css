@@ -108,3 +108,14 @@
   #fabricate-actions .btn-primary { flex: 1; justify-content: center; }
   body.fabricate-mode .content { padding-bottom: 128px; }
 }
+
+/* ── Inline spacer/shaft/plate spec summary on a job card/row ── */
+.fab-spec-line {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+}
+.fab-spec-line i { font-size: 11px; color: var(--color-text-tertiary); }

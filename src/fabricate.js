@@ -15,6 +15,7 @@ import {
   moveJobToBatch, updateQueuedJobQuantity,
   claimFabricationJob, releaseFabricationJobClaim,
   archiveFabricationJob,
+  fetchComponentsForFabricatePicker,
 } from './db.js'
 // Migration Plan Phase 2 cutover — create/recordProgress/deleteQueued
 // now go through the migrated route (services/FabricationJobService.js
@@ -25,16 +26,17 @@ import {
 // deleteQueued were ever built out for Fabrication Jobs.
 import { deleteQueuedFabricationJob, recordMachinedUnits } from './services/fabricationJobsApi.js'
 import { getAssemblies } from './designer.js'
+import { getCurrentMemberName } from './members.js'
 
 // ── State ─────────────────────────────────────────────────────
 let batches         = []
 let jobs            = []          // ALL jobs, every status — filtered per-view
 let partsCache      = {}          // assembly_part id → part row
+let componentsCache = {}
 let childNameCache  = new Map()   // assembly_children id → name (lazy-resolved)
 let selectedBatchId = null        // null = overview, else a batch id
 let showHistory     = false       // "Show archived" topbar checkbox
 let editingBatchId  = null
-let claimingJobId   = null
 let selectedJobId   = null        // job shown in the job detail overlay, or null
 let mergingJobIds   = null        // [jobIdA, jobIdB] when the batch modal was open by
                                   // dropping one job card onto another - on save, both
@@ -50,12 +52,25 @@ export function setFabricateToast(fn) { toastFn = fn }
 export async function fabricateBoot() {
   ;[batches, jobs] = await Promise.all([fetchFabricationBatches(), fetchAllFabricationJobs()])
   partsCache = await fetchAssemblyPartsByIds([...new Set(jobs.map(j => j.assemblyPartId))])
+  await refreshComponentsCache()
+}
+
+async function refreshComponentsCache() {
+  try {
+    componentsCache = Object.fromEntries((await fetchComponentsForFabricatePicker()).map(c => [c.id, c]))
+  } catch (e) {
+    console.warn('[fabricate] Could not load component spec details', e)
+  }
 }
 
 /** Called by designer.js right after "Send to Fabricate" creates a job,
- *  so switching to the Fabricate tab shows it without a full reload. */
+ *  so switching to the Fabricate tab shows it without a full reload.
+ *  Also best-effort refreshes the component cache, since a brand-new
+ *  job usually means a brand-new (or newly resolved) component whose
+ *  spec details wouldn't otherwise show up on its card until reboot. */
 export function registerNewJob(job) {
   jobs.push(job)
+  refreshComponentsCache().catch(() => {})
 }
 
 function replaceJob(updated) {
@@ -100,6 +115,45 @@ function contextLabel(part) {
     return asm ? asm.name : '—'
   }
   return '—'
+}
+
+/** Renders a compact one-line spec summary (dimensions/material) for a
+ *  part's resolved component, sourced from the Spacer/Axial Shaft/Plate
+ *  category attributes — the same data the Designer confirm overlay
+ *  writes. Lets a machinist read OD/ID/length or thickness/material
+ *  straight off the Fabricate job card without opening Designer or
+ *  Onshape. Returns '' when there's nothing to show (no component yet,
+ *  component not cached, or a category this doesn't recognize). */
+function fabDataHTML(part) {
+  if (!part || !part.componentId) return ''
+  const comp = componentsCache[part.componentId]
+  if (!comp) return ''
+  const attrs = Object.fromEntries((comp.attributes || []).map(a => [a.key, a.value]))
+  const catName = comp.categoryName || ''
+
+  if (catName === 'Spacer') {
+    const type = attrs['Spacer Type'] || '?'
+    const isHex = type.startsWith('HEX')
+    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${type} · OD ${attrs['OD'] ?? '?'}" · ${isHex ? 'AF' : 'ID'} ${attrs['ID or Across Flats'] ?? '?'}" · L ${attrs['Length'] ?? '?'}"</div>`
+  }
+
+  if (catName === 'Axial Shaft') {
+    const profile = attrs['Profile']
+    if (!profile || !Array.isArray(profile.segments) || !profile.segments.length) return ''
+    const summary = profile.segments.map(s => {
+      if (s.type === 'round')  return `⌀${s.diameter}"×${s.length}"`
+      if (s.type === 'hex')    return `Hex ${s.acrossFlats}"×${s.length}"`
+      if (s.type === 'square' || s.type === 'prism') return `${s.width}"×${s.length}"`
+      return `${s.type}×${s.length}"`
+    }).join(' → ')
+    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${summary}</div>`
+  }
+
+  if (catName === 'Plate') {
+    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${attrs['Material'] || '?'} · ${attrs['Thickness'] ?? '?'}" thick</div>`
+  }
+
+  return ''
 }
 
 // ── Sidebar ───────────────────────────────────────────────────
@@ -287,6 +341,7 @@ function jobCardHTML(job) {
       ${statusBadge}
     </div>
     <div class="asm-card-desc"><i class="ti ti-stack-2" aria-hidden="true"></i> ${contextLabel(part)}</div>
+    ${fabDataHTML(part)}
     <div class="asm-card-desc">${job.quantityMachined} / ${job.quantityRequested} machined</div>
   </div>`
 }
@@ -454,7 +509,7 @@ function jobRowHTML(job, showBatchAssign) {
     : ''
 
   return `<tr data-job-id="${job.id}">
-    <td><div class="part-name">${partName}</div></td>
+     <td><div class="part-name">${partName}</div>${fabDataHTML(part)}</td>
     <td><span class="part-number">${contextLabel(part)}</span></td>
     <td style="text-align:center">${job.quantityRequested}</td>
     <td style="text-align:center">${job.quantityMachined} / ${job.quantityRequested}${progressCell}</td>
@@ -473,7 +528,7 @@ function bindJobRowEvents() {
 
   tbody.addEventListener('click', async e => {
     const claimBtn = e.target.closest('[data-job-claim]')
-    if (claimBtn) { openClaimModal(claimBtn.dataset.jobClaim); return }
+    if (claimBtn) { await handleClaimJob(claimBtn.dataset.jobClaim); return }
 
     const releaseBtn = e.target.closest('[data-job-release]')
     if (releaseBtn) { await handleReleaseClaim(releaseBtn.dataset.jobRelease); return }
@@ -576,47 +631,18 @@ async function handleRecordProgress(jobId, n) {
 
 
 // ── Claim modal ──────────────────────────────────────────────
-function openClaimModal(jobId) {
-  claimingJobId = jobId
-  const job  = jobs.find(j => j.id === jobId)
-  const part = job ? partsCache[job.assemblyPartId] : null
-  document.getElementById('claim-job-subtitle').textContent =
-    job && part ? `${job.quantityRequested} × "${part.partName}"` : ''
-
-  const nameInput = document.getElementById('claim-job-field-name')
-  nameInput.value = localStorage.getItem('partshelf_claimed_by') || ''
-  document.getElementById('claim-job-overlay').style.display = 'flex'
-  setTimeout(() => nameInput.focus(), 80)
-}
-
-function closeClaimModal() {
-  document.getElementById('claim-job-overlay').style.display = 'none'
-  claimingJobId = null
-}
-
-async function confirmClaimJob() {
-  const name = document.getElementById('claim-job-field-name').value.trim()
-  if (!name) { document.getElementById('claim-job-field-name').focus(); toastFn('Enter your name to claim this job'); return }
-  if (!claimingJobId) return
-
-  const btn = document.getElementById('btn-confirm-claim-job')
-  btn.disabled = true; btn.textContent = 'Claiming…'
-
+async function handleClaimJob(jobId) {
+  const name = getCurrentMemberName()
+  if (!name) { toastFn('Could not determine your name — please sign in again'); return }
   try {
-    localStorage.setItem('partshelf_claimed_by', name)
-    replaceJob(await claimFabricationJob(claimingJobId, name))
-    closeClaimModal()
+    replaceJob(await claimFabricationJob(jobId, name))
     renderFabricateSidebar(); renderFabricateContent()
     toastFn('Job claimed')
   } catch (e) {
     console.error(e)
     toastFn(e.message || 'Error claiming job')
-  } finally {
-    btn.disabled = false
-    btn.innerHTML = '<i class="ti ti-hand-stop" aria-hidden="true"></i> Claim'
   }
 }
-
 // ── Job detail overlay ──────────────────────────────────────────
 // Opened by clicking a job card on the overview grid. Surfaces the same
 // actions the old table-row icons + inline <select> did (claim/release,
@@ -682,6 +708,7 @@ function renderJobDetailModal() {
       <span><i class="ti ti-stack-2" aria-hidden="true"></i> ${contextLabel(part)}</span>
       ${statusBadge}
     </div>
+    ${fabDataHTML(part)}
     <div class="field-row">
       <div class="field"><label>Requested</label><div style="font-size:15px;font-weight:600">${job.quantityRequested}</div></div>
       <div class="field"><label>Machined</label><div style="font-size:15px;font-weight:600">${job.quantityMachined}</div></div>
@@ -696,7 +723,10 @@ function renderJobDetailModal() {
     </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap">${claimActionsHTML.join('')}</div>`
 
-  document.getElementById('btn-job-detail-claim')?.addEventListener('click', () => { closeJobDetailModal(); openClaimModal(job.id) })
+  document.getElementById('btn-job-detail-claim')?.addEventListener('click', async () => {
+    await handleClaimJob(job.id)
+    renderJobDetailModal()
+  })
   document.getElementById('btn-job-detail-delete')?.addEventListener('click', async () => { await handleDeleteJob(job.id); closeJobDetailModal() })
   document.getElementById('btn-job-detail-release')?.addEventListener('click', async () => { await handleReleaseClaim(job.id); renderJobDetailModal() })
   document.getElementById('btn-job-detail-archive')?.addEventListener('click', async () => { await handleArchiveJob(job.id); closeJobDetailModal() })
@@ -822,13 +852,6 @@ export function bindFabricateEvents() {
   document.getElementById('btn-delete-batch').addEventListener('click', deleteBatch)
   document.getElementById('batch-modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeBatchModal()
-  })
-
-  document.getElementById('btn-close-claim-job').addEventListener('click', closeClaimModal)
-  document.getElementById('btn-cancel-claim-job').addEventListener('click', closeClaimModal)
-  document.getElementById('btn-confirm-claim-job').addEventListener('click', confirmClaimJob)
-  document.getElementById('claim-job-overlay').addEventListener('click', e => {
-    if (e.target === e.currentTarget) closeClaimModal()
   })
 
   document.getElementById('btn-close-job-detail').addEventListener('click', closeJobDetailModal)
