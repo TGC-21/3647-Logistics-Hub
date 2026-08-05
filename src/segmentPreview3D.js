@@ -8,10 +8,20 @@
 //
 // Controls mirror Onshape: left-drag orbit, right-drag pan, scroll
 // zoom, one-finger drag orbit / two-finger pinch zoom on touch — all
-// unified through the Pointer Events API. A small on-canvas reset-view
-// button re-fits the camera and clears any orbit/pan, since a lost
-// (over-panned or over-rotated) view otherwise has no way back short of
-// reopening the modal.
+// unified through the Pointer Events API. A built-in reset-view button
+// re-fits the camera and clears any orbit/pan.
+//
+// Callout labels: each segment gets an anchor point (attached as a
+// child of the mesh group at build time, in buildShaftGroup) sitting
+// just outside its outer radius. Every render frame, each anchor's
+// current WORLD position is projected through the camera into 2D
+// screen space and a small floating HTML label is repositioned there —
+// this is a hand-rolled version of what three.js's CSS2DRenderer
+// add-on does, kept in-house rather than pulling in another
+// three/examples/jsm subpath for a handful of labels. Because the
+// anchors are parented to the same group the meshes are, they inherit
+// every orbit/rotation/reset automatically — no separate label-tracking
+// logic needed for interaction, only for the screen-space projection.
 //
 // Requires the `three` package (add to package.json — not yet a
 // dependency of this project). Any reasonably current version works.
@@ -69,17 +79,48 @@ function boreMesh(seg) {
   return new THREE.Mesh(geo, mat)
 }
 
-/** Builds one Group containing every segment mesh (+ illustrative
- *  bores), stacked along the Y axis by cumulative length and centered
- *  on the group's own origin. Pure — no DOM, no renderer. */
+/** Short callout text for one segment — index + type + key dimension(s),
+ *  matching the abbreviations the 2D preview / spec summary already use
+ *  elsewhere, so the same shaft reads consistently across views. */
+function segmentLabelText(seg, index) {
+  const len = seg.length != null ? seg.length.toFixed(3) : '?'
+  const bore = seg.innerDiameter != null ? ` · ID ${seg.innerDiameter.toFixed(3)}"` : ''
+
+  if (seg.type === 'round') {
+    const dia = seg.diameter != null ? seg.diameter.toFixed(3) : '?'
+    return `#${index + 1} · ⌀${dia}" × ${len}"${bore}`
+  }
+  if (seg.type === 'hex') {
+    const af = seg.acrossFlats != null ? seg.acrossFlats.toFixed(3) : '?'
+    return `#${index + 1} · Hex ${af}" AF × ${len}"${bore}`
+  }
+  if (seg.type === 'square' || seg.type === 'prism') {
+    const w = seg.width != null ? seg.width.toFixed(3) : '?'
+    return `#${index + 1} · ${w}" sq × ${len}"`
+  }
+  return `#${index + 1} · ${seg.type} × ${len}" (unrecognized)`
+}
+
+/**
+ * Builds one Group containing every segment mesh (+ illustrative
+ * bores), stacked along the Y axis by cumulative length and centered
+ * on the group's own origin. Pure — no DOM, no renderer.
+ *
+ * Also attaches `group.userData.labelAnchors`: one { segment, index,
+ * object3D } entry per segment, where `object3D` is an invisible child
+ * Object3D positioned just outside the segment's outer radius. Callers
+ * that only want the mesh (buildShaftGroup used standalone) can ignore
+ * this; createRig's label layer below is what actually reads it.
+ */
 export function buildShaftGroup(segments) {
   const group = new THREE.Group()
+  group.userData.labelAnchors = []
   if (!segments || !segments.length) return group
 
   const totalLength = segments.reduce((s, seg) => s + (seg.length || 0), 0)
   let cursor = -totalLength / 2
 
-  for (const seg of segments) {
+  segments.forEach((seg, index) => {
     const len = seg.length || 0
     const mesh = meshForSegment(seg)
     mesh.position.y = cursor + len / 2
@@ -88,8 +129,16 @@ export function buildShaftGroup(segments) {
     const bore = boreMesh(seg)
     if (bore) { bore.position.y = cursor + len / 2; group.add(bore) }
 
+    // Invisible anchor, offset outward from the segment's own radius so
+    // the label sits just off the surface rather than overlapping it.
+    const r = segmentRadius(seg)
+    const anchor = new THREE.Object3D()
+    anchor.position.set(r * 1.15 + 0.03, cursor + len / 2, 0)
+    group.add(anchor)
+    group.userData.labelAnchors.push({ segment: seg, index, object3D: anchor })
+
     cursor += len
-  }
+  })
 
   group.rotation.z = Math.PI / 2
   return group
@@ -109,20 +158,15 @@ function clampDistanceScale(v) {
   return Math.min(MAX_DISTANCE_SCALE, Math.max(MIN_DISTANCE_SCALE, v))
 }
 
-// ── Reset-view button — plain DOM, styled inline so this module has no
-// CSS-file dependency of its own. Absolutely positioned inside the
-// (now position:relative) container, above the canvas. ─────────────
+// ── Reset-view button ──────────────────────────────────────────────
 function createResetButton(containerEl, onClick) {
-  if (getComputedStyle(containerEl).position === 'static') {
-    containerEl.style.position = 'relative'
-  }
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.title = 'Reset view'
   btn.setAttribute('aria-label', 'Reset view')
   btn.textContent = '⟲'
   Object.assign(btn.style, {
-    position: 'absolute', top: '8px', right: '8px', zIndex: '2',
+    position: 'absolute', top: '8px', right: '8px', zIndex: '3',
     width: '28px', height: '28px', borderRadius: '999px',
     border: '0.5px solid rgba(255,255,255,0.25)',
     background: 'rgba(0,0,0,0.45)', color: '#fafaf9',
@@ -130,10 +174,66 @@ function createResetButton(containerEl, onClick) {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: '0', userSelect: 'none',
   })
-  btn.addEventListener('pointerdown', e => e.stopPropagation())   // don't let this also start an orbit drag
+  btn.addEventListener('pointerdown', e => e.stopPropagation())
   btn.addEventListener('click', onClick)
   containerEl.appendChild(btn)
   return btn
+}
+
+// ── Callout label layer ─────────────────────────────────────────────
+// One `<div>` per current segment, floating over the canvas. Rebuilt
+// whenever the mesh group changes (new/edited segments); repositioned
+// every render frame by projecting each anchor's world position
+// through the camera. `pointer-events: none` on the whole layer so
+// labels never intercept orbit/pan/pinch gestures aimed at the canvas
+// underneath them.
+function createLabelLayer(containerEl) {
+  const layer = document.createElement('div')
+  Object.assign(layer.style, {
+    position: 'absolute', inset: '0', zIndex: '1',
+    pointerEvents: 'none', overflow: 'hidden',
+  })
+  containerEl.appendChild(layer)
+
+  let entries = []   // [{ anchorObject3D, el }]
+  const worldPos = new THREE.Vector3()
+
+  function setAnchors(labelAnchors) {
+    entries.forEach(e => e.el.remove())
+    entries = (labelAnchors || []).map(({ segment, index, object3D }) => {
+      const el = document.createElement('div')
+      el.textContent = segmentLabelText(segment, index)
+      Object.assign(el.style, {
+        position: 'absolute', transform: 'translate(-50%, -50%)',
+        background: 'rgba(28,28,26,0.88)', color: '#fafaf9',
+        border: `1px solid #${(COLORS[segment.type] ?? COLORS.unknown).toString(16).padStart(6, '0')}`,
+        borderRadius: '5px', padding: '2px 6px',
+        fontSize: '10.5px', fontFamily: 'inherit', whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+      })
+      layer.appendChild(el)
+      return { anchorObject3D: object3D, el }
+    })
+  }
+
+  function update(camera, containerEl) {
+    const w = containerEl.clientWidth, h = containerEl.clientHeight
+    if (!w || !h) return
+    for (const { anchorObject3D, el } of entries) {
+      anchorObject3D.getWorldPosition(worldPos)
+      const ndc = worldPos.clone().project(camera)
+      // Behind the camera, or projected way off to the side — hide
+      // rather than let it fly across the canvas.
+      if (ndc.z > 1 || ndc.z < -1) { el.style.display = 'none'; continue }
+      el.style.display = ''
+      el.style.left = `${(ndc.x * 0.5 + 0.5) * w}px`
+      el.style.top  = `${(-ndc.y * 0.5 + 0.5) * h}px`
+    }
+  }
+
+  function destroy() { entries.forEach(e => e.el.remove()); layer.remove() }
+
+  return { setAnchors, update, destroy }
 }
 
 // ── Scene rig — one per container, reused across re-renders ──────────
@@ -142,6 +242,10 @@ const rigsByContainer = new WeakMap()
 function createRig(containerEl) {
   const w = containerEl.clientWidth || 320
   const h = containerEl.clientHeight || 220
+
+  if (getComputedStyle(containerEl).position === 'static') {
+    containerEl.style.position = 'relative'
+  }
 
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(35, w / h, 0.01, 200)
@@ -162,6 +266,8 @@ function createRig(containerEl) {
 
   let group = new THREE.Group()
   scene.add(group)
+
+  const labelLayer = createLabelLayer(containerEl)
 
   const viewDir = new THREE.Vector3(0.7, 0.5, 0.9).normalize()
   const target = new THREE.Vector3(0, 0, 0)
@@ -273,6 +379,7 @@ function createRig(containerEl) {
   let rafId = null
   function loop() {
     renderer.render(scene, camera)
+    labelLayer.update(camera, containerEl)
     rafId = requestAnimationFrame(loop)
   }
   loop()
@@ -285,11 +392,17 @@ function createRig(containerEl) {
     window.removeEventListener('pointerup', endPointer)
     window.removeEventListener('pointercancel', endPointer)
     resetBtn.remove()
+    labelLayer.destroy()
     renderer.dispose()
   }
 
   return {
-    setGroup(newGroup) { scene.remove(group); group = newGroup; scene.add(group) },
+    setGroup(newGroup) {
+      scene.remove(group)
+      group = newGroup
+      scene.add(group)
+      labelLayer.setAnchors(group.userData.labelAnchors)
+    },
     frame,
     resize() {
       const w2 = containerEl.clientWidth, h2 = containerEl.clientHeight
@@ -304,10 +417,11 @@ function createRig(containerEl) {
 
 /**
  * Renders (or re-renders) a shaft's segment list into `containerEl` as
- * an interactive 3D view. Safe to call repeatedly on the same element —
- * reuses the existing renderer/camera/controls and just swaps the mesh
- * group, so calling this on every segmentEditor.js edit is cheap
- * (shafts top out around 5 segments in practice).
+ * an interactive 3D view with per-segment callout labels. Safe to call
+ * repeatedly on the same element — reuses the existing renderer/camera/
+ * controls/label layer and just swaps the mesh group + label set, so
+ * calling this on every segmentEditor.js edit is cheap (shafts top out
+ * around 5 segments in practice).
  */
 export function renderSegmentPreview3D(containerEl, segments) {
   if (!containerEl) return
@@ -328,9 +442,10 @@ export function renderSegmentPreview3D(containerEl, segments) {
  *  re-rendering/closing. IMPORTANT: each rig runs its own
  *  requestAnimationFrame loop that does NOT stop on its own just
  *  because the element is removed from the DOM — a caller that
- *  replaces a container's innerHTML (as both current call sites do,
- *  on every re-render) without calling this first leaks one running
- *  render loop per prior open. */
+ *  replaces a container's innerHTML (as both current call sites do, on
+ *  every re-render) without calling this first leaks one running
+ *  render loop (and now also one set of label DOM nodes) per prior
+ *  open. */
 export function disposeSegmentPreview3D(containerEl) {
   const rig = rigsByContainer.get(containerEl)
   if (!rig) return

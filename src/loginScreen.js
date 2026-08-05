@@ -1,51 +1,59 @@
 // src/loginScreen.js
 //
-// Controls the #login-overlay markup (see login_screen.html) — two
-// panes (sign in / create member) toggled in place. Exposes a single
-// requireLogin() entry point that resolves once someone is signed in,
-// so main.js's boot() can simply `await requireLogin()` before doing
-// anything else.
-//
-// Deliberately NOT dismissible (no close button, no backdrop-click-to-
-// close) — signing in is a precondition for using the app, not an
-// optional modal.
+// Three panes now instead of two: sign in (ID + password), create
+// member (ID + name + password), and set-password (for a pre-migration
+// member whose auth_user_id is still null — loginMember() throws
+// 'NEEDS_PASSWORD_SETUP' to route here). Same non-dismissible contract
+// as before: no close button, resolves requireLogin()'s promise once
+// any pane succeeds.
 
-import { loginMember, addMember, getCurrentMemberId } from './members.js'
+import { loginMember, addMember, setInitialPassword, getCurrentMemberId } from './members.js'
 
 let resolveLogin = null
+let pendingSetupId = null   // ID awaiting password setup, set when loginMember() signals NEEDS_PASSWORD_SETUP
 
 function showPane(pane) {
   document.getElementById('login-pane').style.display  = pane === 'login'  ? 'flex' : 'none'
   document.getElementById('create-pane').style.display  = pane === 'create' ? 'flex' : 'none'
-  document.getElementById('login-modal-title').textContent = pane === 'create' ? 'Create a member' : 'Sign in'
+  document.getElementById('setup-pane').style.display   = pane === 'setup'  ? 'flex' : 'none'
+  document.getElementById('login-modal-title').textContent =
+    pane === 'create' ? 'Create a member' : pane === 'setup' ? 'Set your password' : 'Sign in'
   clearErrors()
 }
 
 function clearErrors() {
-  const loginErr  = document.getElementById('login-error')
-  const createErr = document.getElementById('create-error')
-  loginErr.style.display = 'none'
-  createErr.style.display = 'none'
+  ['login-error', 'create-error', 'setup-error'].forEach(id => {
+    const el = document.getElementById(id)
+    el.style.display = 'none'
+  })
 }
 
 function showError(pane, message) {
-  const el = document.getElementById(pane === 'create' ? 'create-error' : 'login-error')
+  const el = document.getElementById(pane === 'create' ? 'create-error' : pane === 'setup' ? 'setup-error' : 'login-error')
   el.textContent = message
   el.style.display = 'block'
 }
 
 async function handleLoginSubmit() {
-  const idInput = document.getElementById('login-field-id')
+  const idInput  = document.getElementById('login-field-id')
+  const pwInput  = document.getElementById('login-field-password')
   const btn = document.getElementById('btn-login-submit')
   const id = idInput.value.trim()
+  const password = pwInput.value
 
   btn.disabled = true
   try {
-    await loginMember(id)
+    await loginMember(id, password)
     closeLoginOverlay()
   } catch (e) {
-    showError('login', e.message || 'Could not sign in')
-    idInput.focus()
+    if (e.message === 'NEEDS_PASSWORD_SETUP') {
+      pendingSetupId = id
+      document.getElementById('setup-field-id').value = id
+      showPane('setup')
+    } else {
+      showError('login', e.message || 'Could not sign in')
+      pwInput.focus()
+    }
   } finally {
     btn.disabled = false
   }
@@ -54,12 +62,13 @@ async function handleLoginSubmit() {
 async function handleCreateSubmit() {
   const nameInput = document.getElementById('create-field-name')
   const idInput   = document.getElementById('create-field-id')
+  const pwInput   = document.getElementById('create-field-password')
   const btn = document.getElementById('btn-create-submit')
 
   btn.disabled = true
   try {
-    await addMember(idInput.value.trim(), nameInput.value.trim())
-    await loginMember(idInput.value.trim())
+    await addMember(idInput.value.trim(), nameInput.value.trim(), pwInput.value)
+    await loginMember(idInput.value.trim(), pwInput.value)
     closeLoginOverlay()
   } catch (e) {
     showError('create', e.message || 'Could not create member')
@@ -68,33 +77,46 @@ async function handleCreateSubmit() {
   }
 }
 
+async function handleSetupSubmit() {
+  const pwInput  = document.getElementById('setup-field-password')
+  const pwInput2 = document.getElementById('setup-field-password-confirm')
+  const btn = document.getElementById('btn-setup-submit')
+
+  if (pwInput.value !== pwInput2.value) {
+    showError('setup', 'Passwords do not match')
+    return
+  }
+
+  btn.disabled = true
+  try {
+    await setInitialPassword(pendingSetupId, pwInput.value)
+    closeLoginOverlay()
+  } catch (e) {
+    showError('setup', e.message || 'Could not set password')
+  } finally {
+    btn.disabled = false
+  }
+}
+
 function closeLoginOverlay() {
   document.getElementById('login-overlay').style.display = 'none'
+  pendingSetupId = null
   if (resolveLogin) { resolveLogin(getCurrentMemberId()); resolveLogin = null }
 }
 
-/** Binds the overlay's static event listeners — call once at app
- *  startup, same convention as every other bind*Events() in the
- *  codebase (bindDesignerEvents, bindFabricateEvents, etc). */
 export function bindLoginScreenEvents() {
   document.getElementById('btn-login-submit').addEventListener('click', handleLoginSubmit)
   document.getElementById('btn-create-submit').addEventListener('click', handleCreateSubmit)
+  document.getElementById('btn-setup-submit').addEventListener('click', handleSetupSubmit)
   document.getElementById('btn-show-create-member').addEventListener('click', () => showPane('create'))
   document.getElementById('btn-show-login').addEventListener('click', () => showPane('login'))
+  document.getElementById('btn-setup-back-to-login').addEventListener('click', () => { pendingSetupId = null; showPane('login') })
 
-  document.getElementById('login-field-id').addEventListener('keydown', e => {
-    if (e.key === 'Enter') handleLoginSubmit()
-  })
-  document.getElementById('create-field-id').addEventListener('keydown', e => {
-    if (e.key === 'Enter') handleCreateSubmit()
-  })
+  document.getElementById('login-field-password').addEventListener('keydown', e => { if (e.key === 'Enter') handleLoginSubmit() })
+  document.getElementById('create-field-password').addEventListener('keydown', e => { if (e.key === 'Enter') handleCreateSubmit() })
+  document.getElementById('setup-field-password-confirm').addEventListener('keydown', e => { if (e.key === 'Enter') handleSetupSubmit() })
 }
 
-/**
- * Shows the overlay if nobody is signed in and returns a Promise that
- * resolves with the memberId once sign-in/create succeeds. Resolves
- * immediately (no overlay shown) if a session was already restored.
- */
 export function requireLogin() {
   if (getCurrentMemberId()) return Promise.resolve(getCurrentMemberId())
 

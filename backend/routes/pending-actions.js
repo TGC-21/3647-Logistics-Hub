@@ -1,0 +1,52 @@
+// backend/routes/pending-actions.js
+//
+// Member-facing half of the confirmation flow — split out of
+// harness-invoke.js (which stays token-gated, harness-process-only).
+// No auth gate here, same decision every other member-facing route in
+// this codebase has made (categories.js, cart-items.js, etc.) — a
+// member viewing/deciding on their OWN pending actions is no more
+// sensitive than any other write already exposed this way, and there's
+// no real per-request session verification anywhere yet to gate behind.
+//
+// POST /api/pending-actions
+//   { action: 'inbox',   memberId }
+//   { action: 'resolve', pendingActionId, decision, resolvedBy }
+
+import { Hono } from 'hono'
+import { HarnessGateway } from '../../src/services/HarnessGateway.js'
+import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
+import { statusForError } from '../../src/repositories/errors.js'
+
+const pendingActions = new Hono()
+
+pendingActions.post('/', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const gateway = new HarnessGateway()
+
+  try {
+    switch (body.action) {
+      case 'inbox': {
+        const repo = new PendingActionRepository()
+        const items = await repo.findAwaitingForMember(body.memberId)
+        return c.json({ success: true, items })
+      }
+
+      case 'resolve': {
+        const updated = await gateway.resolvePendingAction({
+          pendingActionId: body.pendingActionId,
+          decision:        body.decision,
+          resolvedBy:      body.resolvedBy,
+        })
+        return c.json({ success: true, pendingAction: updated })
+      }
+
+      default:
+        return c.json({ error: `Unknown action "${body.action}" — expected one of: inbox, resolve.` }, 400)
+    }
+  } catch (err) {
+    console.error('[pending-actions]', err)
+    return c.json({ error: err.message ?? 'Internal server error' }, statusForError(err))
+  }
+})
+
+export default pendingActions

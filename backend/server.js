@@ -38,6 +38,8 @@ import assembliesV2 from "./routes/assemblies-v2.js";
 import agendaTasksV2 from "./routes/agenda-tasks-v2.js";
 import onshapeAssembly from "./routes/onshape-assembly.js";
 import onshapeLookup from "./routes/onshape-lookup.js";
+import harnessInvoke from "./routes/harness-invoke.js";
+import pendingActions from "./routes/pending-actions.js";
 
 const app = new Hono();
 
@@ -69,6 +71,8 @@ app.route("/api/assemblies-v2", assembliesV2);
 app.route("/api/agenda-tasks-v2", agendaTasksV2);
 app.route("/api/onshape-assembly", onshapeAssembly);
 app.route("/api/onshape-lookup", onshapeLookup);
+app.route("/api/harness-invoke", harnessInvoke);
+app.route("/api/pending-actions", pendingActions);
 
 // Static frontend (Vite's built dist/) + SPA fallback. Only mounted if a
 // build was found at boot — see the try/catch above.
