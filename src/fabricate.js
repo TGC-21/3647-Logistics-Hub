@@ -27,6 +27,8 @@ import {
 import { deleteQueuedFabricationJob, recordMachinedUnits } from './services/fabricationJobsApi.js'
 import { getAssemblies } from './designer.js'
 import { getCurrentMemberName } from './members.js'
+import { renderSegmentPreview } from './segmentEditor.js'
+import { renderSegmentPreview3D, disposeSegmentPreview3D } from './segmentPreview3D.js'
 
 // ── State ─────────────────────────────────────────────────────
 let batches         = []
@@ -42,6 +44,7 @@ let mergingJobIds   = null        // [jobIdA, jobIdB] when the batch modal was o
                                   // dropping one job card onto another - on save, both
                                   // jobs are moved into the newly-created batch.
 let dragJobId       = null        // job id currently being dragged, for card drag/drop
+let activeShaftPreviewEl = null   // tracks the live 3D container so it can be disposed before the next re-render replaces it
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -115,6 +118,20 @@ function contextLabel(part) {
     return asm ? asm.name : '—'
   }
   return '—'
+}
+
+/** Pulls the confirmed segment list off an Axial Shaft part's resolved
+ *  component (the same `Profile` attribute FabricationDetectionService
+ *  writes on confirm), or null if this part isn't a shaft / has no
+ *  component cached yet. Shared by the 2D and 3D preview calls below. */
+function fabShaftSegments(part) {
+  if (!part || !part.componentId) return null
+  const comp = componentsCache[part.componentId]
+  if (!comp || comp.categoryName !== 'Axial Shaft') return null
+  const attrs = Object.fromEntries((comp.attributes || []).map(a => [a.key, a.value]))
+  const profile = attrs['Profile']
+  if (!profile || !Array.isArray(profile.segments) || !profile.segments.length) return null
+  return profile.segments
 }
 
 /** Renders a compact one-line spec summary (dimensions/material) for a
@@ -655,18 +672,29 @@ function openJobDetailModal(jobId) {
 
 function closeJobDetailModal() {
   document.getElementById('job-detail-overlay').style.display = 'none'
+  if (activeShaftPreviewEl) { disposeSegmentPreview3D(activeShaftPreviewEl); activeShaftPreviewEl = null }
   selectedJobId = null
 }
 
 function renderJobDetailModal() {
+  if (activeShaftPreviewEl) { disposeSegmentPreview3D(activeShaftPreviewEl); activeShaftPreviewEl = null }
+
   const job = jobs.find(j => j.id === selectedJobId)
   const body = document.getElementById('job-detail-body')
   if (!job) { closeJobDetailModal(); return }
 
-  const part      = partsCache[job.assemblyPartId]
+  const part = partsCache[job.assemblyPartId]
   const partName  = part?.partName || '(deleted part)'
   const remaining = Math.max(0, job.quantityRequested - job.quantityMachined)
+  const shaftSegments = fabShaftSegments(part)
+  const shaftPreviewHTML = shaftSegments ? `
+    <div class="field">
+      <label>Shaft preview</label>
+      <div id="job-detail-shaft-2d" style="margin-bottom:8px"></div>
+      <div id="job-detail-shaft-3d" style="width:100%;height:220px;border-radius:var(--border-radius-md);overflow:hidden;background:var(--color-background-secondary)"></div>
+    </div>` : ''
 
+  document.getElementById('job-detail-title').textContent = partName
   const statusBadge = {
     queued:      '<span class="part-badge part-badge--pending">Queued</span>',
     committed:   `<span class="part-badge part-badge--partial">Claimed${job.claimedBy ? ' — ' + job.claimedBy : ''}</span>`,
@@ -704,11 +732,12 @@ function renderJobDetailModal() {
     .join('')
 
   body.innerHTML = `
-    <div class="asm-progress-row" style="justify-content:space-between">
+   <div class="asm-progress-row" style="justify-content:space-between">
       <span><i class="ti ti-stack-2" aria-hidden="true"></i> ${contextLabel(part)}</span>
       ${statusBadge}
     </div>
     ${fabDataHTML(part)}
+    ${shaftPreviewHTML}
     <div class="field-row">
       <div class="field"><label>Requested</label><div style="font-size:15px;font-weight:600">${job.quantityRequested}</div></div>
       <div class="field"><label>Machined</label><div style="font-size:15px;font-weight:600">${job.quantityMachined}</div></div>
@@ -723,6 +752,12 @@ function renderJobDetailModal() {
     </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap">${claimActionsHTML.join('')}</div>`
 
+  if (shaftSegments) {
+    const preview2DEl = document.getElementById('job-detail-shaft-2d')
+    if (preview2DEl) renderSegmentPreview(preview2DEl, shaftSegments, { editable: false, unit: 'in' })
+    const preview3DEl = document.getElementById('job-detail-shaft-3d')
+    if (preview3DEl) { renderSegmentPreview3D(preview3DEl, shaftSegments); activeShaftPreviewEl = preview3DEl }
+  }
   document.getElementById('btn-job-detail-claim')?.addEventListener('click', async () => {
     await handleClaimJob(job.id)
     renderJobDetailModal()
