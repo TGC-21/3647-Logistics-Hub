@@ -13,6 +13,7 @@
 // other migrated route in this pass has made. Plain same-origin fetch,
 // no special headers.
 
+
 async function callInventoryReservationApi(action, payload = {}) {
   const res = await fetch('/api/inventory-reservation', {
     method: 'POST',
@@ -55,4 +56,8 @@ export async function unreserveInventoryUnits({
     assemblyPartId, instanceId, unlinkedQuantity, resetLocation, actorId,
   })
   return part
+}
+
+export async function quickCollectUnits({ assemblyPartId, quantity = 1, actorId = null }) {
+  return callInventoryReservationApi('quickCollect', { assemblyPartId, quantity, actorId })
 }

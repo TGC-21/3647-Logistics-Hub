@@ -54,6 +54,30 @@ export class DatabaseError extends Error {
   }
 }
 
+/**
+ * Thrown by a service when an action's severity (per the harness policy
+ * map — see api/_lib/harnessPolicy.js) exceeds the caller's effective
+ * trust level. Not a failure — the caller (harness executor) is expected
+ * to catch this specifically, write a pending_actions row via
+ * PendingActionRepository, and SUSPEND its current plan step rather than
+ * treat this as an error to report/retry. Resuming means re-invoking the
+ * same service method with the same args plus `confirmed: true` once a
+ * human approves.
+ *
+ * statusCode 202 (Accepted, processing not complete) rather than a 4xx —
+ * this isn't the caller's fault and isn't rejected, it's paused.
+ */
+export class ConfirmationRequiredError extends Error {
+  constructor(message, { actionName, actionArgs, severity, reason = null } = {}) {
+    super(message)
+    this.name = 'ConfirmationRequiredError'
+    this.statusCode = 202
+    this.actionName = actionName
+    this.actionArgs = actionArgs
+    this.severity = severity
+    this.reason = reason
+  }
+}
 /** Routes call this once, at the end of a try/catch, instead of each
  *  route re-inventing its own error→status mapping (compare to how
  *  api/onshape-bom.js today does `/Onshape API 404/.test(err.message)`

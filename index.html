@@ -72,6 +72,11 @@
       <button class="btn" id="btn-manage-vendors"><i class="ti ti-building-store" aria-hidden="true"></i><span> Vendors</span></button>
       <button class="btn btn-primary" id="btn-new-cart-topbar"><i class="ti ti-plus" aria-hidden="true"></i><span> New cart</span></button>
     </div>
+
+    <button class="btn-icon" id="btn-open-pending-actions" aria-label="Pending agent actions" style="position:relative">
+      <i class="ti ti-robot" style="font-size:18px" aria-hidden="true"></i>
+      <span id="pending-actions-badge" class="nav-count" style="display:none;position:absolute;top:-2px;right:-2px;background:var(--color-accent);color:#fff">0</span>
+    </button>
   </div>
 
   <!-- Mobile-only: fullscreen search overlay, triggered by btn-mobile-search -->
@@ -639,7 +644,8 @@
           Reconstructed from the part's geometry — review each segment, edit any that look off,
           or add/remove segments, then confirm.
         </p>
-        <div id="fab-detect-segments-preview"></div>  <!-- NEW -->
+        <div id="fab-detect-segments-preview"></div>
+        <div id="fab-detect-segments-preview-3d" style="width:100%;height:240px;border-radius:var(--border-radius-md);overflow:hidden;background:var(--color-background-secondary)"></div>
         <div id="fab-detect-segments-list" class="segment-editor"></div>
       </div>
 
@@ -927,6 +933,10 @@
         <label>Member ID <span class="required-star">*</span></label>
         <input type="text" id="login-field-id" placeholder="7-digit ID" inputmode="numeric" maxlength="7" autocomplete="off">
       </div>
+      <div class="field">
+        <label>Password <span class="required-star">*</span></label>
+        <input type="password" id="login-field-password" autocomplete="current-password">
+      </div>
       <p id="login-error" style="font-size:12px;color:var(--color-danger);display:none"></p>
       <button class="btn btn-primary" id="btn-login-submit" style="justify-content:center">
         <i class="ti ti-login" aria-hidden="true"></i> Sign in
@@ -946,12 +956,41 @@
         <label>Enter your 7-digit SDUHSD ID (or make up a memorable ID if you are not from SDUHSD) <span class="required-star">*</span></label>
         <input type="text" id="create-field-id" placeholder="e.g. 1234567" inputmode="numeric" maxlength="7" autocomplete="off">
       </div>
+      <div class="field">
+        <label>Password <span class="required-star">*</span></label>
+        <input type="password" id="create-field-password" autocomplete="new-password" placeholder="At least 8 characters">
+      </div>
       <p id="create-error" style="font-size:12px;color:var(--color-danger);display:none"></p>
       <button class="btn btn-primary" id="btn-create-submit" style="justify-content:center">
         <i class="ti ti-user-plus" aria-hidden="true"></i> Create & sign in
       </button>
       <button class="btn btn-sm" id="btn-show-login" style="align-self:center;margin-top:2px">
         Already have an ID? Sign in
+      </button>
+    </div>
+    <!-- ── Pane: set password (pre-migration member, no password yet) ── -->
+    <div class="modal-body" id="setup-pane" style="display:none">
+      <p style="font-size:12px;color:var(--color-text-secondary)">
+        Your account doesn't have a password yet — set one now to continue.
+      </p>
+      <div class="field">
+        <label>Member ID</label>
+        <input type="text" id="setup-field-id" readonly>
+      </div>
+      <div class="field">
+        <label>New password <span class="required-star">*</span></label>
+        <input type="password" id="setup-field-password" autocomplete="new-password" placeholder="At least 8 characters">
+      </div>
+      <div class="field">
+        <label>Confirm password <span class="required-star">*</span></label>
+        <input type="password" id="setup-field-password-confirm" autocomplete="new-password">
+      </div>
+      <p id="setup-error" style="font-size:12px;color:var(--color-danger);display:none"></p>
+      <button class="btn btn-primary" id="btn-setup-submit" style="justify-content:center">
+        <i class="ti ti-lock" aria-hidden="true"></i> Set password & sign in
+      </button>
+      <button class="btn btn-sm" id="btn-setup-back-to-login" style="align-self:center;margin-top:2px">
+        Back to sign in
       </button>
     </div>
   </div>
@@ -979,6 +1018,16 @@
     <div class="modal-footer">
       <button class="btn" id="btn-close-history-2">Close</button>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="pending-actions-overlay" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div class="modal-title">Pending agent actions</div>
+      <button class="btn-icon" id="btn-close-pending-actions"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="modal-body" id="pending-actions-body" style="min-height:100px"></div>
   </div>
 </div>
 

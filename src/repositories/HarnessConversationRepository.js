@@ -1,0 +1,95 @@
+// repositories/HarnessConversationRepository.js
+//
+// Only file that touches .from('harness_conversations'). Backs the
+// conversation loop's persistence — a row is the resumable unit for a
+// paused (ConfirmationRequiredError) or ongoing agent conversation.
+// See AGENTIC_HARNESS_PHASE3_EXECUTION.md.
+
+import { getSupabase } from './supabaseClient.js'
+import { DatabaseError, NotFoundError } from './errors.js'
+
+function toLocal(row) {
+  return {
+    id:               row.id,
+    memberId:         row.member_id,
+    status:           row.status,
+    messages:         row.messages ?? [],
+    pendingActionId:  row.pending_action_id ?? null,
+    createdAt:        row.created_at,
+    updatedAt:        row.updated_at,
+  }
+}
+
+export class HarnessConversationRepository {
+  constructor(supabase = getSupabase()) {
+    this.db = supabase
+  }
+
+  async findById(id) {
+    const { data, error } = await this.db
+      .from('harness_conversations').select('*').eq('id', id).maybeSingle()
+    if (error) throw new DatabaseError(`harness_conversations lookup failed: ${error.message}`, error)
+    return data ? toLocal(data) : null
+  }
+
+  async requireById(id) {
+    const found = await this.findById(id)
+    if (!found) throw new NotFoundError(`Harness conversation ${id} not found`)
+    return found
+  }
+
+  /** Every active/paused conversation for a member — used to resume
+   *  "pick up where I left off" rather than always starting fresh. */
+  async findOpenForMember(memberId) {
+    const { data, error } = await this.db
+      .from('harness_conversations')
+      .select('*')
+      .eq('member_id', memberId)
+      .in('status', ['active', 'awaiting_confirmation'])
+      .order('updated_at', { ascending: false })
+    if (error) throw new DatabaseError(`harness_conversations lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
+  /** Looks up whichever conversation is blocked on a given
+   *  pending_actions row — how the resume path finds its way back once
+   *  a member approves/denies. */
+  async findByPendingActionId(pendingActionId) {
+    const { data, error } = await this.db
+      .from('harness_conversations').select('*').eq('pending_action_id', pendingActionId).maybeSingle()
+    if (error) throw new DatabaseError(`harness_conversations lookup failed: ${error.message}`, error)
+    return data ? toLocal(data) : null
+  }
+
+  async insert({ id, memberId, status = 'active', messages = [], pendingActionId = null }) {
+    const { data, error } = await this.db
+      .from('harness_conversations')
+      .insert({ id, member_id: memberId, status, messages, pending_action_id: pendingActionId })
+      .select().single()
+    if (error) throw new DatabaseError(`harness_conversations insert failed: ${error.message}`, error)
+    return toLocal(data)
+  }
+
+  /** Generic partial update — the loop calls this after every LLM
+   *  round-trip (append to messages) and every status transition
+   *  (pause/resume/complete). updated_at is bumped explicitly since
+   *  there's no DB trigger for it. */
+  async update(id, patch) {
+    const columns = { updated_at: new Date().toISOString() }
+    if (patch.status !== undefined)          columns.status = patch.status
+    if (patch.messages !== undefined)        columns.messages = patch.messages
+    if (patch.pendingActionId !== undefined) columns.pending_action_id = patch.pendingActionId
+
+    const { data, error } = await this.db
+      .from('harness_conversations').update(columns).eq('id', id).select().maybeSingle()
+    if (error) throw new DatabaseError(`harness_conversations update failed: ${error.message}`, error)
+    return data ? toLocal(data) : null
+  }
+
+  /** Convenience: append one message and persist in one call — the
+   *  loop's most common write (every LLM turn, every tool result). */
+  async appendMessage(id, message) {
+    const current = await this.requireById(id)
+    return this.update(id, { messages: [...current.messages, message] })
+  }
+}

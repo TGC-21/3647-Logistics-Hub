@@ -30,23 +30,35 @@
 // reservation bookkeeping around it.
 
 import { InventoryInstanceRepository } from '../repositories/InventoryInstanceRepository.js'
+import { CategoryRepository } from '../repositories/CategoryRepository.js'
+import { ComponentRepository } from '../repositories/ComponentRepository.js'
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
 import { PartNumberRepository } from '../repositories/PartNumberRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError, ConflictError } from '../repositories/errors.js'
 import { AssemblyPartService } from './AssemblyPartService.js'
 
+const BULK_CATEGORY_NAME = 'Bulk / Untracked'
+const BULK_FALLBACK_NAME = 'Bulk stock'
+
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
+
+
 export class InventoryReservationService {
   constructor({
     instanceRepo   = new InventoryInstanceRepository(),
     partRepo       = new AssemblyPartRepository(),
     partNumberRepo = new PartNumberRepository(),
+    categoryRepo   = new CategoryRepository(),     // NEW
+    componentRepo  = new ComponentRepository(),     // NEW
     changeLogRepo  = new ChangeLogRepository(),
     assemblyPartService = new AssemblyPartService({ partRepo, changeLogRepo }),
   } = {}) {
     this.instanceRepo        = instanceRepo
     this.partRepo             = partRepo
     this.partNumberRepo       = partNumberRepo
+    this.categoryRepo         = categoryRepo
+    this.componentRepo        = componentRepo
     this.changeLogRepo        = changeLogRepo
     this.assemblyPartService  = assemblyPartService
   }
@@ -138,4 +150,82 @@ export class InventoryReservationService {
   async releaseAll(instanceIds) {
     await this.instanceRepo.releaseMany(instanceIds)
   }
+
+    /**
+   * Find-or-creates the single well-known unlimited pile everything
+   * quick-collected routes through — one fixed category, one fixed
+   * component, one unlimited=true instance. Mirrors the
+   * find-or-create-by-name pattern FabricationDetectionService._ensureCategory
+   * / fabricateFlow.js's ensureCustomPartCategory already use.
+   *
+   * Cached at module scope for the lifetime of a warm serverless
+   * invocation — the bulk pile's id never changes once created, so
+   * there's no reason to re-query it on every quick-collect click.
+   */
+  async _ensureBulkInstance() {
+    if (InventoryReservationService._bulkInstanceCache) {
+      return InventoryReservationService._bulkInstanceCache
+    }
+
+    let category = await this.categoryRepo.findByName(BULK_CATEGORY_NAME)
+    if (!category) {
+      category = await this.categoryRepo.insert({ id: genId(), name: BULK_CATEGORY_NAME, requiredKeysConfig: [] })
+    }
+
+    const existingComponents = await this.componentRepo.findByCategory(category.id)
+    let component = existingComponents[0]
+    if (!component) {
+      component = await this.componentRepo.insert({
+        id: genId(), categoryId: category.id, attributes: [],
+        fallbackName: BULK_FALLBACK_NAME,
+        fallbackDescription: 'Untracked bulk stock used by quick-collect — not a real inventory count.',
+        fallbackImage: null,
+      })
+    }
+
+    const existingInstances = await this.instanceRepo.findByComponent(component.id)
+    let instance = existingInstances.find(i => i.unlimited)
+    if (!instance) {
+      instance = await this.instanceRepo.insert({
+        id: genId(), componentId: component.id, name: BULK_FALLBACK_NAME,
+        location: 'Bulk / Untracked', quantity: 0, status: 'available', unlimited: true,
+      })
+    }
+
+    InventoryReservationService._bulkInstanceCache = instance
+    return instance
+  }
+
+  /**
+   * "Quick collect" — reserves `quantity` units off the bulk pile for
+   * `assemblyPartId`, without a category/component/location picker.
+   * Deliberately routes through the SAME reserve() every real link
+   * goes through (still qty-capped at remaining need, still recomputes
+   * status, still creates a real fork row in linked_instance_ids) — the
+   * only difference is which instance it reserves from.
+   *
+   * Deliberately does NOT pass componentId: reserve()'s
+   * `part.componentId || componentId` fallback means the part's own
+   * componentId is left untouched (stays null if it was null). This is
+   * intentional — quick-collecting washers should never permanently
+   * "resolve" the part's identity to the bulk-stock component, so
+   * findInventory/sendToFabricate stay available and a later real link
+   * still works normally.
+   */
+  async quickCollect({ assemblyPartId, quantity = 1, actorId = null }) {
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new ValidationError('quantity must be a positive integer')
+    }
+    const bulk = await this._ensureBulkInstance()
+    return this.reserve({
+      assemblyPartId,
+      instanceId: bulk.id,
+      componentId: null,
+      quantity,
+      location: 'Bulk / Untracked',
+      sourcePartNumber: null,
+      actorId,
+    })
+  }
 }
+

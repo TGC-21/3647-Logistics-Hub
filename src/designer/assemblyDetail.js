@@ -15,6 +15,9 @@ import {
   fetchActiveJobsForParts, fetchActiveCartItemsForParts,
   fetchRootAssemblyIdForChild,
 } from '../db.js'
+
+import { quickCollectUnits } from '../services/inventoryReservationApi.js'
+
 // findOrCreateComponent is no longer imported/used here — component
 // resolution for a confirmed fabrication detection now happens
 // server-side in FabricationDetectionService (via
@@ -731,6 +734,21 @@ export function initDesignerWiring() {
     onViewLinked: (partId, isChild) => toggleLinkedDetail(partId, isChild),
     onSendToFabricate: (partId, isChild) => openSendToFabricateModal(partId, isChild),
     onAddToCart: (partId, isChild) => addPartToCart(partId, isChild),
+    onQuickCollect: async (partId, isChild, quantity = 1) => {          // NEW
+      const part = getPartsFor(isChild).find(p => p.id === partId)
+      if (!part) return
+      try {
+        const { part: saved } = await quickCollectUnits({
+          assemblyPartId: partId, quantity, actorId: getCurrentMemberId(),
+        })
+        setPartsFor(replacePartIn(getPartsFor(isChild), saved), isChild)
+        await afterPartsChange(isChild)
+        toast(`+${quantity} collected`)
+      } catch (e) {
+        console.error(e)
+        toast(e.message || 'Error quick-collecting')
+      }
+    },
   })
 
   registerFabDetectionContext({

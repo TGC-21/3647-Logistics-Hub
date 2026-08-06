@@ -22,6 +22,7 @@ import { registerNewJob } from '../fabricate.js'
 import { getCurrentMemberId } from '../members.js'
 import { renderSegmentEditor, renderSegmentPreview } from '../segmentEditor.js'
 import { toast } from './state.js'
+import { renderSegmentPreview3D, disposeSegmentPreview3D } from '../segmentPreview3D.js'
 
 // ── Modal state ──────────────────────────────────────────────────
 let fabDetectPartId    = null
@@ -127,12 +128,18 @@ function openAxialShaftConfirmFields(part, meta) {
   const previewEl = document.getElementById('fab-detect-segments-preview')
   if (previewEl) renderSegmentPreview(previewEl, fabDetectSegments, { unit: 'in' })
 
+  const preview3DEl = document.getElementById('fab-detect-segments-preview-3d')
+  if (preview3DEl) renderSegmentPreview3D(preview3DEl, fabDetectSegments)
+
   const segListEl = document.getElementById('fab-detect-segments-list')
   if (segListEl) {
     renderSegmentEditor(segListEl, fabDetectSegments, {
       editable: true,
       unit: 'in',
-      onChange: () => {},
+      onChange: () => {
+        if (previewEl) renderSegmentPreview(previewEl, fabDetectSegments, { unit: 'in' })
+        if (preview3DEl) renderSegmentPreview3D(preview3DEl, fabDetectSegments)
+      },
     })
   } else {
     console.error('[fab-detect] #fab-detect-segments-list not found in the DOM.')
@@ -216,6 +223,7 @@ export function handleFabDetectCandidateChange() {
 }
 
 export function closeFabDetectConfirmModal() {
+  disposeSegmentPreview3D(document.getElementById('fab-detect-segments-preview-3d'))
   document.getElementById('fab-detect-confirm-overlay').style.display = 'none'
   fabDetectPartId = null
   fabDetectMatch  = null

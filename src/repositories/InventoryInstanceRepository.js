@@ -28,6 +28,7 @@ function toLocal(row) {
     tags:        row.tags ?? [],
     status:      row.status ?? 'available',
     notes:       row.notes ?? '',
+    unlimited:   row.unlimited ?? false,       // NEW
     createdAt:   row.created_at,
   }
 }
@@ -161,25 +162,27 @@ export class InventoryInstanceRepository {
   /** Full create — id is caller-supplied (the service generates it),
    *  same convention every other repository's insert() follows
    *  (AssemblyPartRepository.insert, ComponentRepository.insert). */
-  async insert({ id, componentId, name = '', description = '', image = null, location = '', quantity = 1, tags = [], status = 'available', notes = '' }) {
-    const { data, error } = await this.db
-      .from('inventory_instances')
-      .insert({
-        id,
-        component_id: componentId,
-        name:         name || null,
-        description:  description || null,
-        image_url:    image || null,
-        location,
-        quantity,
-        tags,
-        status,
-        notes,
-      })
-      .select().single()
-    if (error) throw new DatabaseError(`inventory_instances insert failed: ${error.message}`, error)
-    return toLocal(data)
-  }
+// insert() gains one field:
+async insert({ id, componentId, name = '', description = '', image = null, location = '', quantity = 1, tags = [], status = 'available', notes = '', unlimited = false }) {
+  const { data, error } = await this.db
+    .from('inventory_instances')
+    .insert({
+      id,
+      component_id: componentId,
+      name:         name || null,
+      description:  description || null,
+      image_url:    image || null,
+      location,
+      quantity,
+      tags,
+      status,
+      notes,
+      unlimited,   // NEW
+    })
+    .select().single()
+  if (error) throw new DatabaseError(`inventory_instances insert failed: ${error.message}`, error)
+  return toLocal(data)
+}
 
   // ── Whitelisted camelCase -> column mapping for partial updates ──
   // Same discipline AssemblyPartRepository.#PATCHABLE_FIELDS follows —
