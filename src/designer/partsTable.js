@@ -108,6 +108,7 @@ export function orderBadgesHTML(orders) {
 
 const ACTION_LABELS = {
   reviewCandidate: { label: 'Review candidate',  icon: 'ti-scan' },
+  quickCollect:    { label: 'Quick collect',     icon: 'ti-bolt' },   // NEW
   findInventory:   { label: 'Link inventory',    icon: 'ti-link' },
   sendToFabricate: { label: 'Send to Fabricate', icon: 'ti-tool' },
   addToCart:       { label: 'Add to cart',       icon: 'ti-shopping-cart-plus'},
@@ -205,9 +206,17 @@ export function bindPartCardEvents() {
     const actionEl = e.target.closest('[data-part-action]')
     if (actionEl) {
       closeAllMoreMenus()
+      if (actionEl.dataset.partAction === 'quickCollect' && e.shiftKey) {
+        const n = parseInt(window.prompt('Quantity to quick-collect:', '1'), 10)
+        if (Number.isInteger(n) && n > 0) dispatchPartAction('quickCollect', actionEl.dataset.id, false, n)
+        return
+      }
       dispatchPartAction(actionEl.dataset.partAction, actionEl.dataset.id, false)
       return
     }
+
+    // quickCollect button click handler, inside bindPartCardEvents' delegate:
+
 
     const moreBtn = e.target.closest('[data-part-more]')
     if (moreBtn) { toggleMoreMenu(moreBtn); return }
@@ -258,6 +267,7 @@ export function bindChildPartCardEvents() {
 
 function dispatchPartAction(action, id, isChild) {
   if (action === 'reviewCandidate') { openFabDetectConfirmModal(id, isChild); return }
+  if (action === 'quickCollect')    { ctx.onQuickCollect(id, isChild); return }   // NEW
   if (action === 'findInventory')   { ctx.onLinkInventory(id, isChild); return }
   if (action === 'sendToFabricate') { ctx.onSendToFabricate(id, isChild); return }
   if (action === 'addToCart')       { ctx.onAddToCart(id, isChild); return }

@@ -1,3 +1,7 @@
+PLEASE NOTE: The information below is irrelevant. At one point, the database was migrated to a pi, but we have decided to host the entirety of the application on an Oracle VM instance. Thank you. 
+
+
+
 # Partshelf Vercel → Raspberry Pi Migration Summary
 ## Current Architecture
 

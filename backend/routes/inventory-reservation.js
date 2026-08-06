@@ -38,8 +38,17 @@ inventoryReservation.post('/', async (c) => {
         })
         return c.json({ success: true, part })
       }
+
+      case 'quickCollect': {
+        const result = await service.quickCollect({
+          assemblyPartId: body.assemblyPartId,
+          quantity:       body.quantity || 1,
+          actorId:        body.actorId || null,
+        })
+        return c.json({ success: true, ...result })
+      }
       default:
-        return c.json({ error: `Unknown action "${body.action}" — expected one of: reserve, unreserve.` }, 400)
+        return c.json({ error: `Unknown action "${body.action}" — expected one of: reserve, unreserve, quickCollect.` }, 400)
     }
   } catch (err) {
     console.error('[inventory-reservation]', err)

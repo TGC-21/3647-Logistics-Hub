@@ -15,6 +15,7 @@
 import { Hono } from 'hono'
 import { HarnessGateway } from '../../src/services/HarnessGateway.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
+import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 import { statusForError } from '../../src/repositories/errors.js'
 
 const pendingActions = new Hono()
@@ -32,11 +33,26 @@ pendingActions.post('/', async (c) => {
       }
 
       case 'resolve': {
+        const conversationService = new HarnessConversationService()
+        const convo = await conversationService.findByPendingActionId(body.pendingActionId)
+        
         const updated = await gateway.resolvePendingAction({
           pendingActionId: body.pendingActionId,
           decision:        body.decision,
           resolvedBy:      body.resolvedBy,
         })
+        
+        // Flip the owning conversation's status too, if one is
+        // waiting on this decision — the conversation loop (not yet
+        // built) is what actually REPLAYS the tool call on approval;
+        // this only updates state so that loop has something correct
+        // to pick up next time it polls/wakes for this conversation.
+        if (convo) {
+          body.decision === 'approved'
+            ? await conversationService.resumeAfterApproval({ conversationId: convo.id })
+            : await conversationService.abandonAfterDenial({ conversationId: convo.id })
+        }
+
         return c.json({ success: true, pendingAction: updated })
       }
 

@@ -21,7 +21,7 @@ import { totalPromisedQty, partCanPromiseMore } from './state.js'
 import { fabDetectActionable } from './fabDetection.js'
 
 export const INTENT_PRIORITY = [
-  'reviewCandidate', 'collectResolved', 'findInventory',
+  'reviewCandidate', 'collectResolved', 'quickCollect', 'findInventory',
   'sendToFabricate', 'addToCart',
 ]
 
@@ -60,6 +60,7 @@ export function resolvePartIntent(part, { job = null, orders = [], availabilityB
   if (fabDetectActionable(part)) {
     main.push('reviewCandidate')
   } else if (!alreadyPromised(job, orders) && partCanPromiseMore(part, job, orders)) {
+    main.push('quickCollect')
     if (part.componentId && hasResolvedMatch(part, job, orders, availabilityByComponentId)) {
       main.push('collectResolved')
     } else {
@@ -68,7 +69,6 @@ export function resolvePartIntent(part, { job = null, orders = [], availabilityB
     main.push('sendToFabricate')
     main.push('addToCart')
   }
-
   return {
     main,
     aux: ['edit', 'history', 'delete'],

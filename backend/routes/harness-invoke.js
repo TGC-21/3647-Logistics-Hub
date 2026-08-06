@@ -8,47 +8,33 @@
 // confirmation gate.
 //
 // POST /api/harness-invoke
-//   { action: 'invoke',  actionName, args, memberId, isAgent?, reason? }
-// Member-facing inbox/resolve moved to /api/pending-actions (ungated —
+//   { action: 'list' }
+//   { action: 'invoke', toolName, args, memberId, isAgent?, reason? }// Member-facing inbox/resolve moved to /api/pending-actions (ungated —
 // no more sensitive than any other member-facing write in this codebase).
 
 import { Hono } from 'hono'
 import { assertHarnessToken } from '../../api/_lib/harnessAuth.js'
-import { resolveAction } from '../../api/_lib/harnessServiceRegistry.js'
-import { HarnessGateway } from '../../src/services/HarnessGateway.js'
-import { getSupabase } from '../../src/repositories/supabaseClient.js'
+import { listTools, executeTool } from '../../api/_lib/harnessToolRegistry.js'
 import { statusForError } from '../../src/repositories/errors.js'
 
 const harnessInvoke = new Hono()
 
-async function fetchMemberTrust(memberId) {
-  const { data, error } = await getSupabase().from('members').select('trust_level').eq('id', memberId).maybeSingle()
-  if (error) throw error
-  return data?.trust_level ?? 0
-}
+
 
 harnessInvoke.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({}))
-  const gateway = new HarnessGateway()
 
   try {
     assertHarnessToken({ headers: Object.fromEntries(c.req.raw.headers) })
 
     switch (body.action) {
-      case 'invoke': {
-        const resolved = resolveAction(body.actionName)
-        if (!resolved) return c.json({ error: `Unknown action "${body.actionName}"` }, 400)
+      case 'list': {
+        return c.json({ success: true, tools: listTools() })
+      }
 
-        const memberTrustLevel = await fetchMemberTrust(body.memberId)
-        const result = await gateway.invoke({
-          actionName:       body.actionName,
-          serviceInstance:  resolved.serviceInstance,
-          methodName:       resolved.methodName,
-          args:             body.args || {},
-          memberId:         body.memberId,
-          memberTrustLevel,
-          isAgent:          body.isAgent ?? true,
-          reason:           body.reason || null,
+      case 'invoke': {
+        const result = await executeTool(body.toolName, body.args || {}, {
+          memberId: body.memberId, isAgent: body.isAgent ?? true, reason: body.reason || null,
         })
         return c.json({ success: true, result })
       }

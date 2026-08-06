@@ -11,22 +11,26 @@
 // unified through the Pointer Events API. A built-in reset-view button
 // re-fits the camera and clears any orbit/pan.
 //
-// Callout labels: each segment gets an anchor point (attached as a
-// child of the mesh group at build time, in buildShaftGroup) sitting
-// just outside its outer radius. Every render frame, each anchor's
-// current WORLD position is projected through the camera into 2D
-// screen space and a small floating HTML label is repositioned there —
-// this is a hand-rolled version of what three.js's CSS2DRenderer
-// add-on does, kept in-house rather than pulling in another
-// three/examples/jsm subpath for a handful of labels. Because the
-// anchors are parented to the same group the meshes are, they inherit
-// every orbit/rotation/reset automatically — no separate label-tracking
-// logic needed for interaction, only for the screen-space projection.
+// Callout labels: STATIC, stacked in a fixed vertical column along the
+// container's right edge — their position never depends on the camera,
+// so they can never crowd or overlap regardless of viewing angle. What
+// DOES move is a thin SVG leader line + arrowhead from each label to
+// its segment's current on-screen position: every render frame, the
+// segment's anchor (an invisible Object3D parented into the mesh group
+// at build time, in buildShaftGroup) gets projected through the camera
+// into 2D, and that's the line's moving endpoint. A segment currently
+// facing away from the camera just fades its line/label rather than
+// letting it fly across the screen — this is a hand-rolled version of
+// what three.js's CSS2DRenderer add-on does for the projection math,
+// kept in-house rather than pulling in another three/examples/jsm
+// subpath for a handful of labels.
 //
 // Requires the `three` package (add to package.json — not yet a
 // dependency of this project). Any reasonably current version works.
 
 import * as THREE from 'three'
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
 
 const COLORS = {
   round:   0x378ADD,
@@ -36,6 +40,8 @@ const COLORS = {
   unknown: 0xE24B4A,
   bore:    0xF7C1C1,
 }
+
+function colorHex(t) { return '#' + (COLORS[t] ?? COLORS.unknown).toString(16).padStart(6, '0') }
 
 function segmentRadius(seg) {
   if (seg.type === 'round') return (seg.diameter || 0) / 2
@@ -79,9 +85,7 @@ function boreMesh(seg) {
   return new THREE.Mesh(geo, mat)
 }
 
-/** Short callout text for one segment — index + type + key dimension(s),
- *  matching the abbreviations the 2D preview / spec summary already use
- *  elsewhere, so the same shaft reads consistently across views. */
+/** Short callout text for one segment — index + type + key dimension(s). */
 function segmentLabelText(seg, index) {
   const len = seg.length != null ? seg.length.toFixed(3) : '?'
   const bore = seg.innerDiameter != null ? ` · ID ${seg.innerDiameter.toFixed(3)}"` : ''
@@ -108,9 +112,9 @@ function segmentLabelText(seg, index) {
  *
  * Also attaches `group.userData.labelAnchors`: one { segment, index,
  * object3D } entry per segment, where `object3D` is an invisible child
- * Object3D positioned just outside the segment's outer radius. Callers
- * that only want the mesh (buildShaftGroup used standalone) can ignore
- * this; createRig's label layer below is what actually reads it.
+ * Object3D positioned just outside the segment's outer radius —
+ * inherits every orbit/pan/reset transform for free since it's a real
+ * child of the same group the meshes are in.
  */
 export function buildShaftGroup(segments) {
   const group = new THREE.Group()
@@ -129,8 +133,6 @@ export function buildShaftGroup(segments) {
     const bore = boreMesh(seg)
     if (bore) { bore.position.y = cursor + len / 2; group.add(bore) }
 
-    // Invisible anchor, offset outward from the segment's own radius so
-    // the label sits just off the surface rather than overlapping it.
     const r = segmentRadius(seg)
     const anchor = new THREE.Object3D()
     anchor.position.set(r * 1.15 + 0.03, cursor + len / 2, 0)
@@ -166,7 +168,7 @@ function createResetButton(containerEl, onClick) {
   btn.setAttribute('aria-label', 'Reset view')
   btn.textContent = '⟲'
   Object.assign(btn.style, {
-    position: 'absolute', top: '8px', right: '8px', zIndex: '3',
+    position: 'absolute', top: '8px', right: '8px', zIndex: '4',
     width: '28px', height: '28px', borderRadius: '999px',
     border: '0.5px solid rgba(255,255,255,0.25)',
     background: 'rgba(0,0,0,0.45)', color: '#fafaf9',
@@ -180,58 +182,110 @@ function createResetButton(containerEl, onClick) {
   return btn
 }
 
-// ── Callout label layer ─────────────────────────────────────────────
-// One `<div>` per current segment, floating over the canvas. Rebuilt
-// whenever the mesh group changes (new/edited segments); repositioned
-// every render frame by projecting each anchor's world position
-// through the camera. `pointer-events: none` on the whole layer so
-// labels never intercept orbit/pan/pinch gestures aimed at the canvas
-// underneath them.
-function createLabelLayer(containerEl) {
-  const layer = document.createElement('div')
-  Object.assign(layer.style, {
-    position: 'absolute', inset: '0', zIndex: '1',
-    pointerEvents: 'none', overflow: 'hidden',
+// ── Callout layer: static label stack + dynamic SVG leader lines ────
+// Labels live in a plain HTML column, each pinned to a fixed vertical
+// slot (evenly spaced down the container, right-aligned) that never
+// changes no matter how the camera moves — this is what actually fixes
+// the crowding, since label position is now completely decoupled from
+// segment screen position. Only the connecting line's far endpoint
+// (the segment's projected anchor) is recomputed every frame.
+function createCalloutLayer(containerEl) {
+  const listEl = document.createElement('div')
+  Object.assign(listEl.style, {
+    position: 'absolute', inset: '0', zIndex: '2', pointerEvents: 'none',
   })
-  containerEl.appendChild(layer)
+  containerEl.appendChild(listEl)
 
-  let entries = []   // [{ anchorObject3D, el }]
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  Object.assign(svg.style, {
+    position: 'absolute', inset: '0', width: '100%', height: '100%',
+    zIndex: '1', pointerEvents: 'none',
+  })
+  containerEl.appendChild(svg)
+
+  // One reusable arrowhead marker, pointing along the line toward the
+  // segment (the moving end), oriented automatically per-line.
+  const defs = document.createElementNS(SVG_NS, 'defs')
+  const marker = document.createElementNS(SVG_NS, 'marker')
+  marker.setAttribute('id', 'segPreviewArrow')
+  marker.setAttribute('viewBox', '0 0 8 8')
+  marker.setAttribute('refX', '7')
+  marker.setAttribute('refY', '4')
+  marker.setAttribute('markerWidth', '6')
+  marker.setAttribute('markerHeight', '6')
+  marker.setAttribute('orient', 'auto-start-reverse')
+  const arrowPath = document.createElementNS(SVG_NS, 'path')
+  arrowPath.setAttribute('d', 'M0,0 L8,4 L0,8 Z')
+  arrowPath.setAttribute('fill', 'rgba(250,250,249,0.6)')
+  marker.appendChild(arrowPath)
+  defs.appendChild(marker)
+  svg.appendChild(defs)
+
+  let entries = []   // [{ anchorObject3D, el, line }]
   const worldPos = new THREE.Vector3()
 
   function setAnchors(labelAnchors) {
-    entries.forEach(e => e.el.remove())
-    entries = (labelAnchors || []).map(({ segment, index, object3D }) => {
+    entries.forEach(e => { e.el.remove(); e.line.remove() })
+    const n = (labelAnchors || []).length
+
+    entries = (labelAnchors || []).map(({ segment, index, object3D }, i) => {
       const el = document.createElement('div')
       el.textContent = segmentLabelText(segment, index)
       Object.assign(el.style, {
-        position: 'absolute', transform: 'translate(-50%, -50%)',
-        background: 'rgba(28,28,26,0.88)', color: '#fafaf9',
-        border: `1px solid #${(COLORS[segment.type] ?? COLORS.unknown).toString(16).padStart(6, '0')}`,
+        position: 'absolute', right: '8px',
+        top: `${((i + 1) / (n + 1)) * 100}%`,
+        transform: 'translateY(-50%)',
+        background: 'rgba(28,28,26,0.9)', color: '#fafaf9',
+        border: `1px solid ${colorHex(segment.type)}`,
         borderRadius: '5px', padding: '2px 6px',
         fontSize: '10.5px', fontFamily: 'inherit', whiteSpace: 'nowrap',
-        pointerEvents: 'none',
+        transition: 'opacity 0.15s',
       })
-      layer.appendChild(el)
-      return { anchorObject3D: object3D, el }
+      listEl.appendChild(el)
+
+      const line = document.createElementNS(SVG_NS, 'line')
+      line.setAttribute('stroke', 'rgba(250,250,249,0.5)')
+      line.setAttribute('stroke-width', '1')
+      line.setAttribute('marker-end', 'url(#segPreviewArrow)')
+      line.style.transition = 'opacity 0.15s'
+      svg.appendChild(line)
+
+      return { anchorObject3D: object3D, el, line }
     })
   }
 
-  function update(camera, containerEl) {
-    const w = containerEl.clientWidth, h = containerEl.clientHeight
-    if (!w || !h) return
-    for (const { anchorObject3D, el } of entries) {
+  /** Called every render frame. Projects each segment's anchor into
+   *  screen space and redraws its leader line from the (fixed) label
+   *  position to that (moving) point. */
+  function update(camera) {
+    for (const { anchorObject3D, el, line } of entries) {
       anchorObject3D.getWorldPosition(worldPos)
       const ndc = worldPos.clone().project(camera)
-      // Behind the camera, or projected way off to the side — hide
-      // rather than let it fly across the canvas.
-      if (ndc.z > 1 || ndc.z < -1) { el.style.display = 'none'; continue }
-      el.style.display = ''
-      el.style.left = `${(ndc.x * 0.5 + 0.5) * w}px`
-      el.style.top  = `${(-ndc.y * 0.5 + 0.5) * h}px`
+      const facingCamera = ndc.z >= -1 && ndc.z <= 1
+
+      const containerRect = { w: containerEl.clientWidth, h: containerEl.clientHeight }
+      const ax = (ndc.x * 0.5 + 0.5) * containerRect.w
+      const ay = (-ndc.y * 0.5 + 0.5) * containerRect.h
+
+      el.style.opacity = facingCamera ? '1' : '0.35'
+      line.style.opacity = facingCamera ? '1' : '0'
+
+      // Leader line starts at the label's own left edge, vertically
+      // centered — offsetLeft/offsetTop are safe here since the label
+      // is absolutely positioned via fixed top/right, not measured
+      // relative to the moving 3D content.
+      line.setAttribute('x1', el.offsetLeft)
+      line.setAttribute('y1', el.offsetTop + el.offsetHeight / 2)
+      line.setAttribute('x2', ax)
+      line.setAttribute('y2', ay)
     }
   }
 
-  function destroy() { entries.forEach(e => e.el.remove()); layer.remove() }
+  function destroy() {
+    entries.forEach(e => { e.el.remove(); e.line.remove() })
+    listEl.remove()
+    svg.remove()
+  }
 
   return { setAnchors, update, destroy }
 }
@@ -267,7 +321,7 @@ function createRig(containerEl) {
   let group = new THREE.Group()
   scene.add(group)
 
-  const labelLayer = createLabelLayer(containerEl)
+  const calloutLayer = createCalloutLayer(containerEl)
 
   const viewDir = new THREE.Vector3(0.7, 0.5, 0.9).normalize()
   const target = new THREE.Vector3(0, 0, 0)
@@ -379,7 +433,7 @@ function createRig(containerEl) {
   let rafId = null
   function loop() {
     renderer.render(scene, camera)
-    labelLayer.update(camera, containerEl)
+    calloutLayer.update(camera)
     rafId = requestAnimationFrame(loop)
   }
   loop()
@@ -392,7 +446,7 @@ function createRig(containerEl) {
     window.removeEventListener('pointerup', endPointer)
     window.removeEventListener('pointercancel', endPointer)
     resetBtn.remove()
-    labelLayer.destroy()
+    calloutLayer.destroy()
     renderer.dispose()
   }
 
@@ -401,7 +455,7 @@ function createRig(containerEl) {
       scene.remove(group)
       group = newGroup
       scene.add(group)
-      labelLayer.setAnchors(group.userData.labelAnchors)
+      calloutLayer.setAnchors(group.userData.labelAnchors)
     },
     frame,
     resize() {
@@ -417,11 +471,12 @@ function createRig(containerEl) {
 
 /**
  * Renders (or re-renders) a shaft's segment list into `containerEl` as
- * an interactive 3D view with per-segment callout labels. Safe to call
- * repeatedly on the same element — reuses the existing renderer/camera/
- * controls/label layer and just swaps the mesh group + label set, so
- * calling this on every segmentEditor.js edit is cheap (shafts top out
- * around 5 segments in practice).
+ * an interactive 3D view with static per-segment callout labels and
+ * dynamic leader lines. Safe to call repeatedly on the same element —
+ * reuses the existing renderer/camera/controls/callout layer and just
+ * swaps the mesh group + labels, so calling this on every
+ * segmentEditor.js edit is cheap (shafts top out around 5 segments in
+ * practice).
  */
 export function renderSegmentPreview3D(containerEl, segments) {
   if (!containerEl) return
@@ -444,8 +499,7 @@ export function renderSegmentPreview3D(containerEl, segments) {
  *  because the element is removed from the DOM — a caller that
  *  replaces a container's innerHTML (as both current call sites do, on
  *  every re-render) without calling this first leaks one running
- *  render loop (and now also one set of label DOM nodes) per prior
- *  open. */
+ *  render loop (and its label/leader-line DOM nodes) per prior open. */
 export function disposeSegmentPreview3D(containerEl) {
   const rig = rigsByContainer.get(containerEl)
   if (!rig) return

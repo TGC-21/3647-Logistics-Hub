@@ -322,17 +322,29 @@ function renderLinkedDetail(partId, instances, isChildPart) {
 
   if (!instances.length) { el.innerHTML = ''; el.style.display = 'none'; return }
 
-  el.innerHTML = instances.map(inst => `
-    <div class="inv-linked-row" data-instance-id="${inst.id}">
-      <i class="ti ti-map-pin" style="font-size:11px;color:var(--color-text-tertiary)" aria-hidden="true"></i>
-      <input type="text" class="inv-linked-loc-input" value="${inst.location || ''}"
-             placeholder="Set location…" data-loc-input="${inst.id}">
-      <button class="btn-icon" data-unlink-instance="${inst.id}" aria-label="Unlink" title="Unlink">
-        <i class="ti ti-unlink" style="font-size:12px"></i>
-      </button>
-    </div>
-  `).join('')
+  el.innerHTML = instances.map(inst => {
+    const isBulk = inst.location === 'Bulk / Untracked'   // heuristic: no extra query needed
+    return isBulk
+      ? `<div class="inv-linked-row" data-instance-id="${inst.id}">
+          <i class="ti ti-bolt" style="font-size:11px;color:var(--color-warning)" aria-hidden="true"></i>
+          <span style="flex:1;font-size:11px;color:var(--color-text-tertiary);font-style:italic">
+            Bulk / untracked (${inst.quantity})
+          </span>
+          <button class="btn-icon" data-unlink-instance="${inst.id}" aria-label="Unlink" title="Unlink">
+            <i class="ti ti-unlink" style="font-size:12px"></i>
+          </button>
+        </div>`
+      : `<div class="inv-linked-row" data-instance-id="${inst.id}">
+          <i class="ti ti-map-pin" style="font-size:11px;color:var(--color-text-tertiary)" aria-hidden="true"></i>
+          <input type="text" class="inv-linked-loc-input" value="${inst.location || ''}"
+                 placeholder="Set location…" data-loc-input="${inst.id}">
+          <button class="btn-icon" data-unlink-instance="${inst.id}" aria-label="Unlink" title="Unlink">
+            <i class="ti ti-unlink" style="font-size:12px"></i>
+          </button>
+        </div>`
+  }).join('')
 
+  // Only wire up blur/keydown for the location inputs that actually exist now.
   el.querySelectorAll('[data-loc-input]').forEach(input => {
     const save = async () => {
       try { await updateInstanceLocation(input.dataset.locInput, input.value.trim()) }
