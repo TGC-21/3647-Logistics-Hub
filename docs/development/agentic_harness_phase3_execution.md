@@ -164,7 +164,7 @@ Service: `src/services/HarnessConversationService.js` — `start`,
 
 This is the next thing to build. Concretely, in order:
 
-1. **`backend/harness/llmClient.js`** — thin wrapper around a `fetch`
+1. **`backend/harness/llmClient.js`** — thin wrapper around a `fetch` ✅
    to the home PC's `/v1/chat/completions`, OpenAI request/response
    shape. Should be buildable and unit-testable against a **mocked**
    response before the real inference server exists — don't block this
@@ -177,7 +177,7 @@ a. LLM_BASE_URL / LLM_MODEL env vars — I assumed these belong in the same env-
 b. tool_choice: 'auto' — this is the standard OpenAI default (model decides whether to call a tool), only sent when tools is non-empty. Worth confirming Qwen3's llama.cpp chat template actually honors this field correctly once the server's up — some local chat templates have had rougher tool-calling support than OpenAI's actual API; if Qwen3-14B's tool-calling turns out flaky, that's a template/server config issue to debug against the real server, not something fixable from this client code.
 -true. not confirmable at this point in time.
 
-2. **`backend/harness/toolSchema.js`** — pure function translating
+2. **`backend/harness/toolSchema.js`** — pure function translating ✅
    `harnessToolRegistry.listTools()`'s output into OpenAI's `tools`
    array format (`{ type: 'function', function: { name, description,
    parameters } }` per entry).
