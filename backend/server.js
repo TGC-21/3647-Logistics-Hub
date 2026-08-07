@@ -44,7 +44,7 @@ import agentChat from "./routes/agent-chat.js";
 
 const app = new Hono();
 
-// Mirrors api/_lib/onshape.js's applyCors() (Allow-Origin: *, GET/POST/OPTIONS,
+// Mirrors backend/_lib/onshape.js's applyCors() (Allow-Origin: *, GET/POST/OPTIONS,
 // Content-Type). Tighten this to your actual domain once you're behind
 // Caddy/WireGuard — wide open is fine for local dev only.
 app.use(

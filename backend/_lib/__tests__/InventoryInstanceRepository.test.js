@@ -1,4 +1,4 @@
-// api/_lib/__tests__/InventoryInstanceRepository.test.js
+// backend/_lib/__tests__/InventoryInstanceRepository.test.js
 
 import { describe, it, expect } from 'vitest'
 import { InventoryInstanceRepository } from '../../../repositories/InventoryInstanceRepository.js'

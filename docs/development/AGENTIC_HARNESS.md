@@ -26,7 +26,7 @@ purpose:
    fabrication job per part" that are enforced by a Postgres partial
    unique index rather than app code anywhere. There's also an existing
    client/server "twin" pattern worth not tripling — `src/changeLog.js`
-   (anon key, browser) and `api/_lib/changeLog.js` (service key, server)
+   (anon key, browser) and `backend/_lib/changeLog.js` (service key, server)
    already do the same job for two different callers; a service layer
    should reconcile that, not add a third copy.
 3. **There's no always-on process to host llama.cpp.** Vercel functions

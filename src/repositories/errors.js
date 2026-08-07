@@ -56,7 +56,7 @@ export class DatabaseError extends Error {
 
 /**
  * Thrown by a service when an action's severity (per the harness policy
- * map — see api/_lib/harnessPolicy.js) exceeds the caller's effective
+ * map — see backend/_lib/harnessPolicy.js) exceeds the caller's effective
  * trust level. Not a failure — the caller (harness executor) is expected
  * to catch this specifically, write a pending_actions row via
  * PendingActionRepository, and SUSPEND its current plan step rather than

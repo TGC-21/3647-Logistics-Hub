@@ -1,4 +1,4 @@
-// api/_lib/harnessTools.js
+// backend/_lib/harnessTools.js
 //
 // Tool definitions for the agent harness's function-calling payload —
 // one tool per ACTION_SEVERITY entry (1:1 with service methods, per

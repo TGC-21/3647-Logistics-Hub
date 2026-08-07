@@ -1,4 +1,4 @@
-// api/_lib/__tests__/ComponentService.test.js
+// backend/_lib/__tests__/ComponentService.test.js
 //
 // Fake repositories, same convention as the other service tests. The
 // rule under test: findOrCreate must return an EXISTING component when

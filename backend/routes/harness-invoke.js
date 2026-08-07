@@ -13,8 +13,8 @@
 // no more sensitive than any other member-facing write in this codebase).
 
 import { Hono } from 'hono'
-import { assertHarnessToken } from '../../api/_lib/harnessAuth.js'
-import { listTools, executeTool } from '../../api/_lib/harnessToolRegistry.js'
+import { assertHarnessToken } from '../../backend/_lib/harnessAuth.js'
+import { listTools, executeTool } from '../../backend/_lib/harnessToolRegistry.js'
 import { statusForError } from '../../src/repositories/errors.js'
 
 const harnessInvoke = new Hono()

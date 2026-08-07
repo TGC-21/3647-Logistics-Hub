@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { CategoryRepository } from '../CategoryRepository.js'
-import { createFakeSupabase } from '../../api/_lib/__tests__/testUtils/fakeSupabase.js'
+import { createFakeSupabase } from '../../backend/_lib/__tests__/testUtils/fakeSupabase.js'
 
 describe('CategoryRepository', () => {
   it('findAll orders by name', async () => {

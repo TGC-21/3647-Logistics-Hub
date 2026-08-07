@@ -132,11 +132,11 @@ Numbers are unit-less here since the config's `segmentUnit` already fixes the un
 Each phase should ship independently — no phase should leave detection half-wired into the UI or the schema in a partial state.
 
 ### Phase 1 — `bodydetails` client + fixtures only
-- Add `api/_lib/onshape-bodydetails.js`: thin wrapper POSTing to `partstudios/.../bodydetails` with `partIds`, mirroring `onshape-partstudio-features.js`'s shape/conventions (cache key by Part Studio, capped concurrency reuse of `MAX_ONSHAPE_CONCURRENCY`).
+- Add `backend/_lib/onshape-bodydetails.js`: thin wrapper POSTing to `partstudios/.../bodydetails` with `partIds`, mirroring `onshape-partstudio-features.js`'s shape/conventions (cache key by Part Studio, capped concurrency reuse of `MAX_ONSHAPE_CONCURRENCY`).
 - No detector, no UI, no schema changes. Just prove the fetch works against a couple of real rounded-hex parts and save fixture JSON responses for offline testing of Phase 2/3.
 
 ### Phase 2 — Axis + segment reconstruction (pure function, unit-testable, no API/DB involvement)
-- Add `api/_lib/detectors/axial-shaft.js` with the classification pipeline above, operating purely on an already-fetched `bodydetails` response (same separation-of-concerns as `spacer.js`'s `inspectPartStudioFeatures`).
+- Add `backend/_lib/detectors/axial-shaft.js` with the classification pipeline above, operating purely on an already-fetched `bodydetails` response (same separation-of-concerns as `spacer.js`'s `inspectPartStudioFeatures`).
 - Test against Phase 1's saved fixtures until segment lists come out correct for known real parts (start with the sample rounded-hex already inspected).
 - Still no candidateFilter/registry wiring, no persistence, no UI.
 

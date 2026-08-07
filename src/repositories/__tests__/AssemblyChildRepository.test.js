@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { AssemblyChildRepository } from '../AssemblyChildRepository.js'
-import { createFakeSupabase } from '../../api/_lib/__tests__/testUtils/fakeSupabase.js'
+import { createFakeSupabase } from '../../backend/_lib/__tests__/testUtils/fakeSupabase.js'
 
 /** Returns a different { data, error } for each successive `.eq(...)`
  *  call, in the order given — enough to script "one level of real

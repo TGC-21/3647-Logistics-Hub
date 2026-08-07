@@ -1,4 +1,4 @@
-// api/_lib/onshape-bodydetails.js
+// backend/_lib/onshape-bodydetails.js
 //
 // Phase 1 of AXIAL_SHAFT_DETECTION_ROADMAP.md. Thin wrapper around
 // GET /partstudios/d/{did}/{wvm}/{wvmid}/e/{eid}/bodydetails, used by the

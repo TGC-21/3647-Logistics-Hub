@@ -1,4 +1,4 @@
-// api/_lib/harnessAuth.js
+// backend/harnessAuth.js
 //
 // Cheap gate for routes the agent harness (or any other external
 // automated caller) is allowed to invoke. This is NOT a real per-user

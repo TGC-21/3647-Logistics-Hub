@@ -11,7 +11,7 @@
 // envelope and drop `severity` (an internal Partshelf concept the LLM
 // has no use for and shouldn't see).
 
-import { listTools } from '../../api/_lib/harnessToolRegistry.js'
+import { listTools } from '../../backend/_lib/harnessToolRegistry.js'
 
 /** Converts one harnessToolRegistry tool descriptor into one OpenAI
  *  `tools` array entry. Exported standalone so a caller with an

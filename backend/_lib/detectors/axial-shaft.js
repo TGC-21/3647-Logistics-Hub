@@ -1,4 +1,4 @@
-// api/_lib/detectors/axial-shaft.js
+// backend/_lib/detectors/axial-shaft.js
 //
 // Phase 2 of AXIAL_SHAFT_DETECTION_ROADMAP.md: reconstructs an ordered
 // list of axial segments (round / hex / square) from a single body's

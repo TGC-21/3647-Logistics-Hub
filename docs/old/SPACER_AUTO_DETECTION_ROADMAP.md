@@ -344,8 +344,8 @@ No UI changes yet. No fabrication jobs created automatically.
 Add server-side detector modules:
 
 ```text
-api/_lib/fabrication-detectors.js
-api/_lib/detectors/spacer.js
+backend/_lib/fabrication-detectors.js
+backend/_lib/detectors/spacer.js
 ```
 
 The registry should:

@@ -1,6 +1,8 @@
 # Partshelf
 
-## Goal: create a centralized logistics hub for tracking inventory parts, Onshape assemblies, fabrication jobs, and part orders. The user base is pretty small, at around 25 people, and parts are limited in scope; either COTS parts or custom machined parts, which fall under the categories of custom spacers, custom shafts, and custom plates. At some point, the system will also expand to incorporate users in a more direct way: including an agenda, tasks, and assignments for project management. This will replace spreadsheets, hand drawings, and memory with a single system.
+## Goal: 
+
+create a centralized logistics hub for tracking inventory parts, Onshape assemblies, fabrication jobs, and part orders. The user base is pretty small, at around 25 people, and parts are limited in scope; either COTS parts or custom machined parts, which fall under the categories of custom spacers, custom shafts, and custom plates. At some point, the system will also expand to incorporate users in a more direct way: including an agenda, tasks, and assignments for project management. This will replace spreadsheets, hand drawings, and memory with a single system.
 
 
 ## Engineering Philosophy: 
@@ -62,10 +64,10 @@ When BOM COTS parts are sent to be ordered, they are grouped by vendor. Each ven
 src/ 
 Frontend application, contains designer, fabrication, inventory, part orders, and UI
 ----------------------------------------------------------------------------------------------
-api/ 
-Serverless API endpoints primarily used for accessing Onshape functions
+backend/
+backend routes called via HTTP and served by Hono
 ------------------------------------------------------------------------------------
-_lib/
+backend/_lib/
 shared backend utilities
 ------------------------------------------------------------------------------------
 docs/
@@ -76,6 +78,9 @@ known issues/ - work in progress, don't expect anything yet
 ------------------------------------------------------------------------------------
 docs/development/
 new features to implement down the road
+------------------------------------------------------------------------------------
+api/ 
+Serverless API endpoints for vercel, deprecated
 ------------------------------------------------------------------------------------
 
 ## Documentation guide

@@ -2,7 +2,7 @@
 //
 // NOTE: the original file's header comment claimed this route was
 // "Gated behind the harness shared secret" — but no such gate exists
-// anywhere in its handler body, and api/_lib/harnessAuth.js is never
+// anywhere in its handler body, and backend/_lib/harnessAuth.js is never
 // imported here. That comment was stale even on Vercel. This route
 // runs with no auth gate, same as every other route in this file set —
 // flag this to whoever owns Migration Plan Phase 3 (real auth) so the

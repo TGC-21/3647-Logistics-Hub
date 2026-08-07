@@ -5,7 +5,7 @@
 //
 // AUTH DECISION (the thing every route in this migration pass deferred
 // with "needs a real decision, not just removal" — see
-// api/_lib/harnessAuth.js's own doc comment): this route is now called
+// backend/_lib/harnessAuth.js's own doc comment): this route is now called
 // directly by the browser (src/services/categoriesApi.js, from the
 // Manage Categories modal), so it can no longer require the
 // harness-only shared secret — a browser has no safe way to hold that

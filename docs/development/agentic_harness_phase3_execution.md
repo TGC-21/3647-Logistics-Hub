@@ -48,9 +48,9 @@ Oracle VM (existing Partshelf backend, Node/Hono)
 │
 ├── backend/routes/harness-invoke.js ✅ list/invoke, token-gated (harness-only)
 ├── backend/routes/pending-actions.js ✅ inbox/resolve, member-facing (ungated)
-├── api/_lib/harnessPolicy.js ✅ severity map + trust thresholds
-├── api/_lib/harnessTools.js ✅ JSON Schema per tool (1:1 w/ service methods)
-├── api/_lib/harnessToolRegistry.js ✅ listTools/getTool/executeTool
+├── backend/_lib/harnessPolicy.js ✅ severity map + trust thresholds
+├── backend/_lib/harnessTools.js ✅ JSON Schema per tool (1:1 w/ service methods)
+├── backend/_lib/harnessToolRegistry.js ✅ listTools/getTool/executeTool
 ├── src/services/HarnessGateway.js ✅ trust-level gate + pending_actions write
 ├── src/repositories/PendingActionRepository.js ✅
 ├── src/repositories/HarnessConversationRepository.js ✅
@@ -112,7 +112,7 @@ IP or inbound port-forwarding).
 ### Auth + trust
 `members.trust_level` (int, per-member ceiling, `min(memberTrustLevel,
 MAX_TRUST_LEVEL)` where `MAX_TRUST_LEVEL` is a hardcoded constant in
-`api/_lib/harnessPolicy.js`, currently `1`). Password auth via Supabase
+`backend/_lib/harnessPolicy.js`, currently `1`). Password auth via Supabase
 Auth (`members.auth_user_id`, synthetic `{id}@partshelf.local` email
 under the hood, member never sees it). `src/members.js` rewritten;
 `src/loginScreen.js` has three panes (login / create / set-password for

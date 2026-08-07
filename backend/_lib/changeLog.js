@@ -1,4 +1,4 @@
-// api/_lib/changeLog.js
+// backend/_lib/changeLog.js
 //
 // Server-side counterpart to src/changeLog.js. Vercel functions
 // (api/onshape-bom.js, api/onshape-detect-fabrication.js, etc.) run with

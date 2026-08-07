@@ -1,7 +1,7 @@
 // services/DetectionService.js
 //
 // Migration Plan Phase 1, item 7 ("Fabrication detectors"). The three
-// geometry classifiers under api/_lib/detectors/*.js (spacer,
+// geometry classifiers under backend/_lib/detectors/*.js (spacer,
 // axial-shaft, plate) were already pure functions with no SQL — nothing
 // about THEM needed to change. What this service extracts is the
 // orchestration that used to live directly in
@@ -15,17 +15,17 @@
 // AssemblyRepository / AssemblyPartRepository, same as every other
 // service in this codebase.
 //
-// api/_lib/fabrication-detectors.js (the DETECTORS registry) and
-// api/_lib/onshape-bodydetails.js (the bodydetails fetch/cache-key
+// backend/_lib/fabrication-detectors.js (the DETECTORS registry) and
+// backend/_lib/onshape-bodydetails.js (the bodydetails fetch/cache-key
 // helpers) are reused as-is, same "pure external-API/algorithm layer,
 // not a repository" reasoning OnshapeImportService already applies to
-// api/_lib/onshape.js.
+// backend/_lib/onshape.js.
 //
 // No @supabase/supabase-js import, no req/res.
 
-import { fetchBodyDetails, bodyDetailsCacheKey, findBodyByPartId } from '../../api/_lib/onshape-bodydetails.js'
-import { DETECTORS, candidateRowsForDetector } from '../../api/_lib/fabrication-detectors.js'
-import { MAX_ONSHAPE_CONCURRENCY } from '../../api/_lib/onshape.js'
+import { fetchBodyDetails, bodyDetailsCacheKey, findBodyByPartId } from '../../backend/_lib/onshape-bodydetails.js'
+import { DETECTORS, candidateRowsForDetector } from '../../backend/_lib/fabrication-detectors.js'
+import { MAX_ONSHAPE_CONCURRENCY } from '../../backend/_lib/onshape.js'
 import { AssemblyRepository } from '../repositories/AssemblyRepository.js'
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
 import { ValidationError, NotFoundError } from '../repositories/errors.js'

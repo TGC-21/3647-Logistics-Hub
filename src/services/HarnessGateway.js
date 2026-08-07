@@ -16,7 +16,7 @@
 // product decision that a human acting directly never needs to confirm
 // their own clicks to themselves.
 
-import { canAutoExecute, severityOf } from '../../api/_lib/harnessPolicy.js'
+import { canAutoExecute, severityOf } from '../../backend/_lib/harnessPolicy.js'
 import { PendingActionRepository } from '../repositories/PendingActionRepository.js'
 import { ConfirmationRequiredError, ValidationError } from '../repositories/errors.js'
 

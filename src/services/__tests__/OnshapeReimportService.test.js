@@ -1,7 +1,7 @@
 // services/__tests__/OnshapeReimportService.test.js
 //
 // Same convention as FabricationJobService.test.js / CartService.test.js:
-// plain fake repositories, no Supabase, no mocking of api/_lib/onshape.js
+// plain fake repositories, no Supabase, no mocking of backend/_lib/onshape.js
 // (buildSourceKey/fabricationIdentityKey are pure and used as-is).
 // Scoped to carryOverPromises and logReimportChanges — the two methods
 // that contain the actual "did this part survive reimport" business

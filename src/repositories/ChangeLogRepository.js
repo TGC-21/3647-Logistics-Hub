@@ -1,6 +1,6 @@
 // repositories/ChangeLogRepository.js
 //
-// Phase 0, item 1 of MIGRATION_PLAN.md. Wraps api/_lib/changeLog.js's
+// Phase 0, item 1 of MIGRATION_PLAN.md. Wraps backend/_lib/changeLog.js's
 // recordChangeServer/genCommitId behind the same repository contract
 // every other data source in this codebase uses — closes the "known
 // debt" flagged in MIGRATION_EXAMPLE.md's Fabrication Jobs example,
@@ -20,7 +20,7 @@
 // FabricationJobRepository/AssemblyPartRepository already are.
 
 import { getSupabase } from './supabaseClient.js'
-import { recordChangeServer, genCommitId } from '../../api/_lib/changeLog.js'
+import { recordChangeServer, genCommitId } from '../../backend/_lib/changeLog.js'
 import { DatabaseError } from './errors.js'
 
 export class ChangeLogRepository {

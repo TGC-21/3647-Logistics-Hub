@@ -1,4 +1,4 @@
-// api/_lib/detectors/spacer.js
+// backend/_lib/detectors/spacer.js
 //
 // Detects spacers directly from B-rep geometry, the same way
 // axial-shaft.js does — see AXIAL_SHAFT_DETECTION_ROADMAP.md and

@@ -90,7 +90,7 @@ Since this doc was first written, `MIGRATION_PLAN.md`'s Phase 0 shipped:
   `services/__tests__/FabricationJobService.test.js` for the pattern to
   copy on the next domain. Run with `npm test` (vitest).
 - **`api/fabrication-jobs.js` is now gated behind a shared harness
-  token** (`api/_lib/harnessAuth.js`) — see that file's own doc comment
+  token** (`backend/_lib/harnessAuth.js`) — see that file's own doc comment
   for why this is scoped narrowly and isn't a substitute for real
   per-member auth.
 

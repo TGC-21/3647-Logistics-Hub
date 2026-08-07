@@ -1,4 +1,4 @@
-// api/_lib/__tests__/CategoryRepository.test.js
+// backend/_lib/__tests__/CategoryRepository.test.js
 
 import { describe, it, expect } from 'vitest'
 import { CategoryRepository } from '../../../repositories/CategoryRepository.js'

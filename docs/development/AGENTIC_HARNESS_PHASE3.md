@@ -46,7 +46,7 @@ but the member can drive their own browser) but not fine for the harness
 - **Trust `actorId` straight from the harness's request body** (i.e. the
   harness just says "I'm acting as member X"): this is the status quo
   and the thing Phase 3 exists to fix. The harness-token shared secret
-  (`api/_lib/harnessAuth.js`) only proves "this caller is the harness
+  (`backend/_lib/harnessAuth.js`) only proves "this caller is the harness
   process" — it says nothing about which member actually authorized a
   given action, so a bug in intent-extraction or a compromised harness
   could silently attribute (or misattribute) writes to any member.
@@ -159,7 +159,7 @@ Purely observational:
   `api/cart-items.js`, etc.) — no auth gate added; that's still the
   correct call per those routes' own documented reasoning ("no real
   per-member auth boundary exists yet, gating one route is theater").
-- `api/_lib/harnessAuth.js` / `assertHarnessToken` — reused as-is for
+- `backend/_lib/harnessAuth.js` / `assertHarnessToken` — reused as-is for
   the process-level half of the check.
 
 **New:**
@@ -175,7 +175,7 @@ Purely observational:
 - `api/member-pairing.js` — browser-facing, no gate (same as every other
   member-facing route today): `create` (mint a code while logged in),
   and nothing else — redemption happens from the harness side.
-- `api/_lib/harnessMemberAuth.js` — `assertHarnessMemberToken(req) ->
+- `backend/_lib/harnessMemberAuth.js` — `assertHarnessMemberToken(req) ->
   memberId`, requiring both `X-Harness-Token` and `X-Member-Session`,
   throwing the existing `UnauthorizedError` on any failure. This is the
   one new piece of shared plumbing every harness-reachable route calls.

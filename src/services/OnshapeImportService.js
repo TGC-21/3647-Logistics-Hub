@@ -8,9 +8,9 @@
 //
 // Deliberately does NOT re-implement Onshape fetching/BOM parsing —
 // resolveBomWithSubassemblies, fetchDocumentOwnerId, MAX_CHILD_DEPTH,
-// MAX_ONSHAPE_CONCURRENCY etc. in api/_lib/onshape.js are already pure
+// MAX_ONSHAPE_CONCURRENCY etc. in backend/_lib/onshape.js are already pure
 // (no SQL, no req/res) and are reused as-is, the same way a service is
-// allowed to call another service. api/_lib/onshape.js is this
+// allowed to call another service. backend/_lib/onshape.js is this
 // codebase's "external API client" layer, not a repository — nothing
 // about how it talks to Onshape belongs behind a DB repository
 // boundary.
@@ -21,7 +21,7 @@
 import {
   resolveBomWithSubassemblies, fetchBom, parseBomRows, fetchDocumentOwnerId,
   MAX_CHILD_DEPTH, MAX_ONSHAPE_CONCURRENCY,
-} from '../../api/_lib/onshape.js'
+} from '../../backend/_lib/onshape.js'
 import { AssemblyRepository } from '../repositories/AssemblyRepository.js'
 import { AssemblyChildRepository } from '../repositories/AssemblyChildRepository.js'
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'

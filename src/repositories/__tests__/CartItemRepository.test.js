@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { CartItemRepository } from '../CartItemRepository.js'
-import { createFakeSupabase } from '../../api/_lib/__tests__/testUtils/fakeSupabase.js'
+import { createFakeSupabase } from '../../backend/_lib/__tests__/testUtils/fakeSupabase.js'
 
 describe('CartItemRepository', () => {
   it('findById maps a found row into the local camelCase shape', async () => {

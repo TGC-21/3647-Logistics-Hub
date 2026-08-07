@@ -1,4 +1,4 @@
-// api/_lib/harnessServiceRegistry.js
+// backend/_lib/harnessServiceRegistry.js
 // Maps "ServiceClass.methodName" action names (harnessPolicy.js's keys)
 // to actual instances, so the route doesn't need a giant switch. Lazily
 // instantiated (each service already defaults its own repos).

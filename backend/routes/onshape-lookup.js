@@ -7,7 +7,7 @@
 // GET /api/onshape-lookup?action=bom-preview&documentId=...&workspaceId=...&elementId=...
 
 import { Hono } from 'hono'
-import { onshapeGet, resolveBomWithSubassemblies, fetchDocumentOwnerId } from '../../api/_lib/onshape.js'
+import { onshapeGet, resolveBomWithSubassemblies, fetchDocumentOwnerId } from '../../backend/_lib/onshape.js'
 
 const onshapeLookup = new Hono()
 

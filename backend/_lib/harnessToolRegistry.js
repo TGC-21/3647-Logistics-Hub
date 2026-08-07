@@ -1,4 +1,4 @@
-// api/_lib/harnessToolRegistry.js
+// backend/_lib/harnessToolRegistry.js
 //
 // The execution surface the harness process actually calls: list tools
 // (for the LLM's function-calling payload) and execute one by name.

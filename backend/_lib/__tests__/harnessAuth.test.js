@@ -1,4 +1,4 @@
-// api/_lib/__tests__/harnessAuth.test.js
+// backend/_lib/__tests__/harnessAuth.test.js
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { assertHarnessToken } from '../harnessAuth.js'

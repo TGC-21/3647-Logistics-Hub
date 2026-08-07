@@ -1,4 +1,4 @@
-// api/_lib/fabrication-detectors.js
+// backend/_lib/fabrication-detectors.js
 //
 // Generic detector registry. The importer/detection endpoint only knows
 // that a detector has a candidateFilter (cheap BOM-row prefilter), an

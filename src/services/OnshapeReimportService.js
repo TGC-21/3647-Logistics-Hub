@@ -8,13 +8,13 @@
 // "snapshot → wipe → reseed → relink," and seeding is that service's
 // whole job.
 //
-// Reuses buildSourceKey / fabricationIdentityKey from api/_lib/onshape.js
+// Reuses buildSourceKey / fabricationIdentityKey from backend/_lib/onshape.js
 // unchanged — the "same underlying Onshape part across two imports"
 // identity rules live there and shouldn't be re-derived here.
 //
 // No @supabase/supabase-js import, no req/res.
 
-import { buildSourceKey, fabricationIdentityKey, fetchDocumentOwnerId } from '../../api/_lib/onshape.js'
+import { buildSourceKey, fabricationIdentityKey, fetchDocumentOwnerId } from '../../backend/_lib/onshape.js'
 import { OnshapeImportService } from './OnshapeImportService.js'
 import { AssemblyRepository } from '../repositories/AssemblyRepository.js'
 import { AssemblyChildRepository } from '../repositories/AssemblyChildRepository.js'

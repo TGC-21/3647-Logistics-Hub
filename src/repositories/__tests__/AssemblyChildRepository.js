@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { AssemblyRepository } from '../AssemblyRepository.js'
-import { createFakeSupabase } from '../../api/_lib/__tests__/testUtils/fakeSupabase.js'
+import { createFakeSupabase } from '../../backend/_lib/__tests__/testUtils/fakeSupabase.js'
 import { NotFoundError } from '../errors.js'
 
 describe('AssemblyRepository', () => {

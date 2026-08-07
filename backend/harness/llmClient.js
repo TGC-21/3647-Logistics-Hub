@@ -6,7 +6,7 @@
 // about Partshelf's tools, conversations, or confirmation flow — it
 // only knows how to send a chat-completions request and hand back the
 // response, same "pure client, no business logic" discipline
-// api/_lib/onshape.js already follows for the Onshape API.
+// backend/_lib/onshape.js already follows for the Onshape API.
 //
 // Buildable/testable against a mocked fetch before the real inference
 // server exists — see AGENTIC_HARNESS_PHASE3_EXECUTION.md's "Next

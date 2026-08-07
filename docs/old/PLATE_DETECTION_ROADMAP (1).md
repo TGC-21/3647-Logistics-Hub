@@ -110,7 +110,7 @@ Resolved: no per-hole schedule is persisted. `dimensions` is intentionally just 
 ## Implementation Phases (mirrors the shaft roadmap's structure)
 
 ### Phase 1 — Plate reconstruction as a pure function
-- Add `api/_lib/detectors/plate.js` with the dominant-plane-pair + per-hole band-sweep logic above, operating purely on an already-fetched `bodydetails` response.
+- Add `backend/_lib/detectors/plate.js` with the dominant-plane-pair + per-hole band-sweep logic above, operating purely on an already-fetched `bodydetails` response.
 - Factor the axial band-sweep primitives (project-onto-axis, build-bands, classify-band-by-active-faces) out of `axial-shaft.js` into a shared helper if practical, since plate's per-hole counterbore reconstruction is the same sweep technique applied at a different scope/axis. Worth deciding whether this refactor happens now or plate just duplicates the pattern initially and gets unified later — see open question.
 - Test against saved fixture responses (need at least one plain plate, one plate with counterbores, one thin-but-not-plate part to confirm the aspect-ratio gate rejects it).
 

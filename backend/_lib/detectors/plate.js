@@ -1,4 +1,4 @@
-// api/_lib/detectors/plate.js
+// backend/_lib/detectors/plate.js
 //
 // See PLATE_DETECTION_ROADMAP.md. Detects flat custom stock (aluminum /
 // polycarbonate / acrylic plates) from B-rep geometry via

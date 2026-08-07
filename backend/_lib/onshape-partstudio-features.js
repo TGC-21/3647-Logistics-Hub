@@ -1,4 +1,4 @@
-// api/_lib/onshape-partstudio-features.js
+// backend/_lib/onshape-partstudio-features.js
 //
 // Thin wrapper around GET /partstudios/d/{did}/{wvm}/{wvmid}/e/{eid}/features,
 // used by the fabrication-detection endpoint to inspect FeatureScript

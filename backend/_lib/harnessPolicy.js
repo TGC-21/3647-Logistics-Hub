@@ -1,4 +1,4 @@
-// api/_lib/harnessPolicy.js
+// backend/_lib/harnessPolicy.js
 //
 // The hardcoded severity map (Migration Plan / AGENTIC_HARNESS.md Phase
 // 3, product decision: "a hardcoded table/map that links each level to

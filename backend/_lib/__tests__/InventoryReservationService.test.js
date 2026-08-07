@@ -1,4 +1,4 @@
-// api/_lib/__tests__/InventoryReservationService.test.js
+// backend/_lib/__tests__/InventoryReservationService.test.js
 //
 // Fake repositories all the way down, same convention as
 // FabricationJobService.test.js — this file proves the business rules

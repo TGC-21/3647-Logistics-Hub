@@ -18,10 +18,10 @@
 
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
-import { executeTool } from '../../api/_lib/harnessToolRegistry.js'
+import { executeTool } from '../../backend/_lib/harnessToolRegistry.js'
 import { chatCompletion } from './llmClient.js'
 import { buildToolSchema, parseToolCall } from './toolSchema.js'
-import { getTool } from '../../api/_lib/harnessToolRegistry.js'
+import { getTool } from '../../backend/_lib/harnessToolRegistry.js'
 
 const MAX_TOOL_ITERATIONS = 8   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
 

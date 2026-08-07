@@ -6,7 +6,7 @@
 // module level below, since DetectionService imports DETECTORS and the
 // bodydetails helpers directly rather than taking them as constructor
 // args (they're pure algorithm/gateway modules, not repositories — same
-// reasoning OnshapeImportService already applies to api/_lib/onshape.js).
+// reasoning OnshapeImportService already applies to backend/_lib/onshape.js).
 // vi.mock intercepts those two imports so this file can control exactly
 // what "geometry" and "detector" behavior each test exercises without
 // needing a real Onshape response or real B-rep math.
@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockFetchBodyDetails = vi.fn()
 const mockFindBodyByPartId = vi.fn()
-vi.mock('../../api/_lib/onshape-bodydetails.js', () => ({
+vi.mock('../../backend/_lib/onshape-bodydetails.js', () => ({
   fetchBodyDetails: (...args) => mockFetchBodyDetails(...args),
   findBodyByPartId: (...args) => mockFindBodyByPartId(...args),
   bodyDetailsCacheKey: (documentId, wvmType, wvmId, elementId, fullConfiguration) =>
@@ -33,7 +33,7 @@ function makeDetector(kind, { candidateNames = [], classify = () => ({ status: '
 }
 
 let spacerDetector, plateDetector
-vi.mock('../../api/_lib/fabrication-detectors.js', () => ({
+vi.mock('../../backend/_lib/fabrication-detectors.js', () => ({
   get DETECTORS() { return [spacerDetector, plateDetector] },
   candidateRowsForDetector: (detector, rows, rootDocumentId) =>
     rows.filter(row => detector.candidateFilter(row) && detector.isFromRootDocument(row, rootDocumentId)),

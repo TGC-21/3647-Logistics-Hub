@@ -1,4 +1,4 @@
-// api/_lib/__tests__/AssemblyPartService.test.js
+// backend/_lib/__tests__/AssemblyPartService.test.js
 //
 // Same convention as FabricationJobService.test.js: inject plain fake
 // repository objects, never touch Supabase (real or fake) at this
