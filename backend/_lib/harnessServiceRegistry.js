@@ -16,6 +16,7 @@ import { CategoryService } from '../../src/services/CategoryService.js'
 import { ComponentService } from '../../src/services/ComponentService.js'
 import { AgendaService } from '../../src/services/AgendaService.js'
 import { InventoryInstanceService } from '../../src/services/InventoryInstanceService.js'
+import { DetectionService } from '../../src/services/DetectionService.js'
 
 let instances = null
 function registry() {
@@ -29,6 +30,7 @@ function registry() {
     InventoryReservationService: new InventoryReservationService(),
     FabricationJobService: new FabricationJobService(),
     FabricationDetectionService: new FabricationDetectionService(),
+    DetectionService: new DetectionService(),
     CartService: new CartService(),
     CategoryService: new CategoryService(),
     ComponentService: new ComponentService(),

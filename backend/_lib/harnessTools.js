@@ -179,6 +179,12 @@ const HAND_WRITTEN = {
     description: 'Marks an auto-detected fabrication candidate as "not actually this kind" — no component or job created.',
     parameters: { type: 'object', properties: { partId: { type: 'string' } }, required: ['partId'] },
   },
+
+  'DetectionService.detectFabricationCandidates': {
+    description: 'Uses geometry analysis algorithms to detect dimensions for spacers, shafts, and plates. After this tool runs, FabricationDetectionService.confirmDetection and FabricationDetectionService.ignoreDetection become available. Use whenever the user requests "autodetect," "detect for fabrication," "automatically find assembly parts to fabricate" or similar.',
+    parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
+  },
+
   'CartService.createCartItem': {
     description: 'Adds a new item to a vendor cart.',
     parameters: {
@@ -369,6 +375,7 @@ const HAND_WRITTEN = {
     description: 'Lists every agenda task across every status. Use to answer "what\'s on the agenda" before editing/completing/linking a specific task.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+
 }
 
 // ── Simple auto-generated actions (id-shaped, no real structure) ─────
@@ -406,6 +413,7 @@ const DESCRIPTIONS = {
   'AssemblyService.listChildren': "Lists a root assembly's direct subassemblies.",
   'AssemblyService.listWholeTree': "Lists every nested subassembly beneath a root assembly.",
   'FabricationJobService.findJobs': 'Finds fabrication jobs by matching part identity, with job progress included.',
+  'DetectionService.detectFabricationCandidates': 'Uses geometry analysis to automatically detect shafts, spacers, and plates. Detected candidates can be reviewed and sent to fabrication jobs.',
   'AssemblyPartService.updateQuantityNeeded': "Changes an assembly part's required quantity.",
   'AssemblyPartService.linkComponent': 'Links an assembly part to an already-resolved catalog component.',
   'AssemblyPartService.deletePart': 'Deletes an assembly part, releasing any reserved inventory first.',

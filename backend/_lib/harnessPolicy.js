@@ -71,6 +71,7 @@ export const ACTION_SEVERITY = {
   // Fabrication detection confirm
   'FabricationDetectionService.confirmDetection': SEVERITY.WRITE,
   'FabricationDetectionService.ignoreDetection':  SEVERITY.WRITE,
+  'DetectionService.detectFabricationCandidates': SEVERITY.WRITE,
 
   // Cart / Part Orders
   'CartService.createCartItem':               SEVERITY.WRITE,

@@ -84,9 +84,12 @@ export function buildContextWindow(messages, { maxHistoryBytes = DEFAULT_MAX_HIS
     : messages.length
   const omitted = messages.slice(0, userIndex).concat(messages.slice(userIndex + 1, firstSelectedIndex))
   const trimmed = omitted.length > 0
+  const systemContent = trimmed
+  ? `${CLINKER_RESPONSE_INSTRUCTIONS}\n\n${summaryFor(omitted).content}`
+  : CLINKER_RESPONSE_INSTRUCTIONS
+
   const contextMessages = [
-    { role: 'system', content: CLINKER_RESPONSE_INSTRUCTIONS },
-    ...(trimmed ? [summaryFor(omitted)] : []),
+    { role: 'system', content: systemContent },
     userMessage,
     ...selectedMessages,
   ]

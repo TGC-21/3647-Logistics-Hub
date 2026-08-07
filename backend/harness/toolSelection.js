@@ -5,7 +5,7 @@
 import { HARNESS_TOOLS } from '../../backend/_lib/harnessTools.js'
 
 const DOMAIN_PATTERNS = [
-  { pattern: /\b(?:fabricat|machin|spacer|plate|shaft|cnc)/i, services: ['FabricationJobService', 'FabricationDetectionService', 'AssemblyPartService', 'AssemblyService', 'ComponentService'] },
+  { pattern: /\b(?:fabricat|machin|spacer|plate|shaft|cnc)/i, services: ['FabricationJobService', 'FabricationDetectionService', 'AssemblyPartService', 'AssemblyService', 'ComponentService', 'DetectionService'] },
   { pattern: /\b(?:assembl|subassembl|bom|onshape|part|import)/i, services: ['AssemblyService', 'AssemblyPartService', 'FabricationJobService', 'InventoryReservationService', 'OnshapeLookupService', 'OnshapeImportService', 'OnshapeReimportService'] },
   { pattern: /\b(?:inventory|component|stock|bin|location|gear|pulley)/i, services: ['ComponentService', 'InventoryInstanceService', 'CategoryService', 'AssemblyPartService', 'InventoryReservationService'] },
   { pattern: /\b(?:cart|order|vendor|purchas)/i, services: ['CartService', 'AssemblyPartService'] },

@@ -13,7 +13,7 @@ describe('buildContextWindow', () => {
     const result = buildContextWindow(messages, { maxHistoryBytes: 700 })
 
     expect(result.trimmed).toBe(true)
-    expect(result.messages.map(message => message.role)).toEqual(['system', 'system', 'user', 'assistant', 'tool'])
+    expect(result.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'tool'])
     expect(result.messages[2].content).toBe('current request')
     expect(result.messages[3].tool_calls[0].id).toBe('new')
     expect(result.messages[4].tool_call_id).toBe('new')

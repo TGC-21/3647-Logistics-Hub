@@ -154,7 +154,17 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
 
     const toolCalls = assistantMessage.tool_calls || []
     if (!toolCalls.length) {
-      await conversationService.complete({ conversationId })
+      // Conversations are chat-style and infinitely continuable now — a
+      // plain-text reply just means this TURN is done, not that the
+      // conversation itself is over. We deliberately do NOT flip the DB
+      // status to 'completed' here anymore: doing so used to make
+      // runTurn() refuse a same-conversationId follow-up message ("import
+      // this assembly" -> reply -> "now run detection" would throw,
+      // because a completed conversation can only be read, never
+      // continued). The conversation stays 'active' indefinitely; nothing
+      // in this codebase currently marks it 'completed' except the old
+      // call removed here. If an explicit "end conversation" action is
+      // ever added, call conversationService.complete() there instead.
       return { conversationId, status: 'completed', reply: assistantMessage.content || '' }
     }
 
