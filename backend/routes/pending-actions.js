@@ -16,6 +16,7 @@ import { Hono } from 'hono'
 import { HarnessGateway } from '../../src/services/HarnessGateway.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
+import { resumeTurn } from '../harness/conversationLoop.js'
 import { statusForError } from '../../src/repositories/errors.js'
 
 const pendingActions = new Hono()
@@ -42,18 +43,36 @@ pendingActions.post('/', async (c) => {
           resolvedBy:      body.resolvedBy,
         })
         
-        // Flip the owning conversation's status too, if one is
-        // waiting on this decision — the conversation loop (not yet
-        // built) is what actually REPLAYS the tool call on approval;
-        // this only updates state so that loop has something correct
-        // to pick up next time it polls/wakes for this conversation.
-        if (convo) {
-          body.decision === 'approved'
-            ? await conversationService.resumeAfterApproval({ conversationId: convo.id })
-            : await conversationService.abandonAfterDenial({ conversationId: convo.id })
+        if (!convo) {
+          return c.json({ success: true, pendingAction: updated })
         }
 
-        return c.json({ success: true, pendingAction: updated })
+        if (body.decision === 'denied') {
+          await conversationService.abandonAfterDenial({ conversationId: convo.id })
+          return c.json({ success: true, pendingAction: updated })
+        }
+
+        // Approved: flip conversation back to active, then immediately
+        // replay the blocked tool call and continue the loop — the
+        // member's approval click is what drives resumption, not a
+        // separate poll/wake step.
+        await conversationService.resumeAfterApproval({ conversationId: convo.id })
+
+        try {
+          const turnResult = await resumeTurn({
+            conversationId: convo.id,
+            memberId: updated.memberId,
+            isAgent: updated.isAgent,
+          })
+          return c.json({ success: true, pendingAction: updated, turn: turnResult })
+        } catch (err) {
+          // Resume failing shouldn't mask that the approval itself
+          // succeeded — surface both: the pending_actions row IS
+          // resolved, but the conversation didn't advance. Caller
+          // (chat UI) can retry the resume separately if needed.
+          console.error('[pending-actions] resumeTurn failed after approval', err)
+          return c.json({ success: true, pendingAction: updated, turnError: err.message })
+        }
       }
 
       default:
