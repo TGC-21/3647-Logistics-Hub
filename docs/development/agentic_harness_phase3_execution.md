@@ -81,9 +81,7 @@ WireGuard tunnel — VM initiates outbound to home PC's tunnel IP
 Home PC (RTX 3070 Ti 8GB VRAM, 32GB RAM, i5-11400)
 └── llama.cpp server (or Ollama) — OpenAI-compatible
 POST /v1/chat/completions
-Model: Qwen3-14B-Instruct, Q4_K_M GGUF (released April 2025)
-Fallback if too slow: Qwen3-8B-Instruct (or Qwen2.5-7B-Instruct
-if Qwen3-8B isn't stable yet)
+Model: Qwen3-8B-Instruct Q4_K_M
 
 ### Why the loop lives in the Partshelf process, not a separate service
 
@@ -169,19 +167,19 @@ This is the next thing to build. Concretely, in order:
    shape. Should be buildable and unit-testable against a **mocked**
    response before the real inference server exists — don't block this
    on the home PC setup.
-* claude has written the file, but with two questions: 
+   *  claude has written the file, but with two questions: 
 
-a. LLM_BASE_URL / LLM_MODEL env vars — I assumed these belong in the same env-var convention as HARNESS_API_TOKEN/ONSHAPE_ACCESS_KEY (set on the Oracle VM). LLM_BASE_URL should point at the WireGuard tunnel IP once that's set up (e.g. http://10.x.x.x:8080/v1 — llama.cpp's server default port is 8080, adjust if you configure differently).
-- yes, the env vars can slot in alongside the Harness_api_token and onshape-access-key. 
+   a. LLM_BASE_URL / LLM_MODEL env vars — I assumed these belong in the same env-var convention as HARNESS_API_TOKEN/ONSHAPE_ACCESS_KEY (set on the Oracle VM). LLM_BASE_URL should point at the WireGuard tunnel IP once that's set up (e.g. http://10.x.x.x:8080/v1 — llama.cpp's server default port is 8080, adjust if you configure differently).
+   - yes, the env vars can slot in alongside the Harness_api_token and onshape-access-key. 
 
-b. tool_choice: 'auto' — this is the standard OpenAI default (model decides whether to call a tool), only sent when tools is non-empty. Worth confirming Qwen3's llama.cpp chat template actually honors this field correctly once the server's up — some local chat templates have had rougher tool-calling support than OpenAI's actual API; if Qwen3-14B's tool-calling turns out flaky, that's a template/server config issue to debug against the real server, not something fixable from this client code.
--true. not confirmable at this point in time.
+   b. tool_choice: 'auto' — this is the standard OpenAI default (model decides whether to call a tool), only sent when tools is non-empty. Worth confirming Qwen3-8B's llama.cpp chat template actually honors this field correctly once the server's up — some local chat templates have had rougher tool-calling support than OpenAI's actual API; if Qwen3-8B-Instruct's tool-calling turns out flaky, that's a template/server config issue to debug against the real server, not something fixable from this client code.
+   - true. not confirmable at this point in time.
 
 2. **`backend/harness/toolSchema.js`** — pure function translating ✅
    `harnessToolRegistry.listTools()`'s output into OpenAI's `tools`
    array format (`{ type: 'function', function: { name, description,
    parameters } }` per entry).
-3. **`backend/harness/conversationLoop.js`** — the actual loop:
+3. **`backend/harness/conversationLoop.js`** — the actual loop: ✅
    `runTurn({ conversationId, memberId, message })`:
    - load or start conversation via `HarnessConversationService`
    - append the member's message
@@ -194,6 +192,10 @@ b. tool_choice: 'auto' — this is the standard OpenAI default (model decides wh
      append the tool result message and loop back to the LLM
    - if plain text: append assistant message, return it as the turn's
      reply
+   - Use standard OpenAi Shape: { role: 'tool', tool_call_id, content: JSON.stringify(result) } appended after each successful executeTool() call
+   - process tool_calls in order, stop at the first that throws ConfirmationRequiredError, and any tool_calls before it in that same batch that already succeeded stay appended as messages (partial progress persisted), but we never call the LLM again until resumed.
+   - conversationId can be optional (start a new conversation via HarnessConversationService.start() if omitted), matching agent-chat.js's eventual { memberId, message, conversationId? } call shape
+   - add a iteration limit (8 tool call rounds)
 4. **`backend/routes/agent-chat.js`** — thin HTTP entry point,
    `POST { memberId, message, conversationId? }`, calls
    `conversationLoop.runTurn()`, returns the reply or the
@@ -213,14 +215,14 @@ with a **mocked LLM response** — no need to wait on the home PC.
 
 ## Next step (parallel track): LLM inference server
 
-1. Pull `Qwen3-14B-Instruct` GGUF, Q4_K_M quantization.
+1. Pull `Qwen3-8B-Instruct` GGUF, Q4_K_M quantization.
 2. Run via `llama-server` (llama.cpp) with tool-calling / chat-template
    support enabled — confirm `/v1/chat/completions` responds correctly
    to a raw curl with a `tools` array before wiring anything else to it.
 3. Set up WireGuard: home PC as a peer, Oracle VM as the initiator.
    Confirm the VM can `curl` the home PC's tunnel IP:port before
    touching any Partshelf code.
-4. Benchmark 14B vs. the 7B fallback for real inference latency on this
+4. Benchmark 8B vs. other alternatives for real inference latency on this
    hardware (RTX 3070 Ti 8GB, 32GB RAM) — decide only after measuring,
    not before.
 
