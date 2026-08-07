@@ -7,6 +7,7 @@ import { AssemblyPartService } from '../../src/services/AssemblyPartService.js'
 import { AssemblyService } from '../../src/services/AssemblyService.js'
 import { OnshapeImportService } from '../../src/services/OnshapeImportService.js'
 import { OnshapeReimportService } from '../../src/services/OnshapeReimportService.js'
+import { OnshapeLookupService } from '../../src/services/OnshapeLookupService.js'
 import { InventoryReservationService } from '../../src/services/InventoryReservationService.js'
 import { FabricationJobService } from '../../src/services/FabricationJobService.js'
 import { FabricationDetectionService } from '../../src/services/FabricationDetectionService.js'
@@ -24,6 +25,7 @@ function registry() {
     AssemblyService: new AssemblyService(),
     OnshapeImportService: new OnshapeImportService(),
     OnshapeReimportService: new OnshapeReimportService(),
+    OnshapeLookupService: new OnshapeLookupService(),
     InventoryReservationService: new InventoryReservationService(),
     FabricationJobService: new FabricationJobService(),
     FabricationDetectionService: new FabricationDetectionService(),

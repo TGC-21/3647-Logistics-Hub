@@ -55,6 +55,9 @@ export const ACTION_SEVERITY = {
   // Onshape import/reimport
   'OnshapeImportService.importAssembly':      SEVERITY.WRITE,
   'OnshapeReimportService.reimportAssembly':  SEVERITY.DESTRUCTIVE,   // can silently drop jobs/links — per product decision
+  'OnshapeLookupService.searchDocuments':     SEVERITY.READ,
+  'OnshapeLookupService.listAssemblyElements': SEVERITY.READ,
+  'OnshapeLookupService.previewAssembly':     SEVERITY.READ,
 
   // Inventory reservation
   'InventoryReservationService.reserve':      SEVERITY.WRITE,

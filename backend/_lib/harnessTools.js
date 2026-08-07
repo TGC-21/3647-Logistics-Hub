@@ -98,6 +98,18 @@ const HAND_WRITTEN = {
     description: 'Re-syncs an assembly\'s BOM tree from Onshape. Wipes and rebuilds parts/subassemblies; carries over inventory links, fabrication jobs, and cart earmarks by matching Onshape part identity where possible, but any that no longer match are lost. Cannot be undone.',
     parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
   },
+  'OnshapeLookupService.searchDocuments': {
+    description: 'Searches accessible Onshape documents by name. Returns each document id, name, and default workspace id; then use listAssemblyElements to find an importable Assembly tab.',
+    parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 25 } }, required: [] },
+  },
+  'OnshapeLookupService.listAssemblyElements': {
+    description: 'Lists Assembly tabs in one Onshape document/workspace. Use searchDocuments first to obtain the documentId and workspaceId.',
+    parameters: { type: 'object', properties: { documentId: { type: 'string' }, workspaceId: { type: 'string' } }, required: ['documentId', 'workspaceId'] },
+  },
+  'OnshapeLookupService.previewAssembly': {
+    description: 'Shows compact BOM counts and a sample of direct parts/subassemblies for an Onshape Assembly tab before importing it. This is read-only.',
+    parameters: { type: 'object', properties: { documentId: { type: 'string' }, workspaceId: { type: 'string' }, elementId: { type: 'string' } }, required: ['documentId', 'workspaceId', 'elementId'] },
+  },
   'InventoryReservationService.reserve': {
     description: 'Reserves (forks) units of an inventory instance to satisfy an assembly part\'s remaining need.',
     parameters: {
