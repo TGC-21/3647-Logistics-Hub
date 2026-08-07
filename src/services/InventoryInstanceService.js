@@ -94,6 +94,9 @@ export class InventoryInstanceService {
     return this.instanceRepo.findByComponent(componentId)
   }
 
+  async listForComponents({ componentIds }) {
+    return this.instanceRepo.findByComponentIds(componentIds)
+  }
   /**
    * Creates a brand-new instance. Resolves (or creates) the component it
    * belongs to first — `categoryId`/`attrs`/`fallback` are the exact

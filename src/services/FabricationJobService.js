@@ -52,6 +52,10 @@ export class FabricationJobService {
     this.changeLogRepo = changeLogRepo
   }
 
+  async listJobs() {
+    return this.jobRepo.findAll()
+  }
+
   /**
    * Business rules:
    *   - quantityRequested must be a positive integer

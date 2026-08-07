@@ -32,6 +32,15 @@ export class FabricationJobRepository {
     this.db = supabase
   }
 
+  /** Every job, any status — the harness's "what's in the fab queue"
+   *  read. Deliberately unfiltered here; callers wanting only active
+   *  jobs already have findActiveForPart for the per-part case. */
+  async findAll() {
+    const { data, error } = await this.db.from('fabrication_jobs').select('*').order('created_at', { ascending: true })
+    if (error) throw new DatabaseError(`fabrication_jobs lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   async findById(id) {
     const { data, error } = await this.db
       .from('fabrication_jobs').select('*').eq('id', id).maybeSingle()
@@ -119,4 +128,6 @@ export class FabricationJobRepository {
     if (error) throw new DatabaseError(error.message, error)
     return toLocal(data)
   }
+
+  
 }

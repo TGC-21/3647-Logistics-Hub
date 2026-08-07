@@ -59,6 +59,16 @@ export class CartService {
    * assembly link) are both legitimate, same as src/partOrders.js's
    * saveItemModal already allows.
    */
+
+  async listCarts() {
+    return this.cartRepo.findAll()
+  }
+
+  async listItemsForCart({ cartId }) {
+    if (!cartId) throw new ValidationError('cartId is required')
+    return this.cartItemRepo.findByCartId(cartId)
+ }
+
   async createCartItem({ cartId, vendorListingId = null, assemblyPartId = null, nameOverride = '', linkOverride = '', priceOverride = null, quantity, actorId = null }) {
     if (!cartId) throw new ValidationError('cartId is required')
     if (!Number.isInteger(quantity) || quantity <= 0) {

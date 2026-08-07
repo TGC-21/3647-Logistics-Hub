@@ -32,6 +32,14 @@ export class TaskRepository {
   constructor(supabase = getSupabase()) {
     this.db = supabase
   }
+  /** Every task, any status — the harness's "what's on the agenda"
+   *  read. Filtering (overdue/day-view/etc.) stays client-side view-
+   *  model logic (src/agenda.js) — this is the unfiltered base list. */
+  async findAll() {
+    const { data, error } = await this.db.from('tasks').select('*').order('created_at', { ascending: false })
+    if (error) throw new DatabaseError(`tasks lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
 
   async findById(id) {
     const { data, error } = await this.db.from('tasks').select('*').eq('id', id).maybeSingle()

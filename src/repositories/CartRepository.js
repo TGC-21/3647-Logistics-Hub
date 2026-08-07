@@ -25,6 +25,13 @@ export class CartRepository {
     this.db = supabase
   }
 
+  /** Every cart, any status — the harness's "what carts exist" read. */
+  async findAll() {
+    const { data, error } = await this.db.from('carts').select('*').order('created_at', { ascending: false })
+    if (error) throw new DatabaseError(`carts lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   async findOpenForVendor(vendorId) {
     const { data, error } = await this.db
       .from('carts').select('*').eq('vendor_id', vendorId).eq('status', 'open').maybeSingle()

@@ -14,6 +14,7 @@ import { CartService } from '../../src/services/CartService.js'
 import { CategoryService } from '../../src/services/CategoryService.js'
 import { ComponentService } from '../../src/services/ComponentService.js'
 import { AgendaService } from '../../src/services/AgendaService.js'
+import { InventoryInstanceService } from '../../src/services/InventoryInstanceService.js'
 
 let instances = null
 function registry() {
@@ -30,6 +31,7 @@ function registry() {
     CategoryService: new CategoryService(),
     ComponentService: new ComponentService(),
     AgendaService: new AgendaService(),
+    InventoryInstanceService: new InventoryInstanceService(),
   }
   return instances
 }

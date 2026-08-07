@@ -27,6 +27,15 @@ export class CartItemRepository {
   constructor(supabase = getSupabase()) {
     this.db = supabase
   }
+  
+  /** Every item in one cart, any status — the harness's "what's in
+   *  this cart" read, distinct from findByAssemblyPartIds (which is
+   *  keyed the other direction, by the parts they're earmarked to). */
+  async findByCartId(cartId) {
+    const { data, error } = await this.db.from('cart_items').select('*').eq('cart_id', cartId)
+    if (error) throw new DatabaseError(`cart_items lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
 
   async findById(id) {
     const { data, error } = await this.db

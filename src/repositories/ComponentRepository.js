@@ -80,4 +80,43 @@ export class ComponentRepository {
     const { error } = await this.db.from('components').delete().eq('id', id)
     if (error) throw new DatabaseError(`component delete failed: ${error.message}`, error)
   }
+
+  
+  /** Every component, any category — the "browse everything" read the
+   *  harness needs for list_components. Mirrors
+   *  InventoryInstanceRepository.findAll()'s shape/reasoning. */
+  async findAll() {
+    const { data, error } = await this.db.from('components').select('*')
+    if (error) throw new DatabaseError(`components lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
+
+  /**
+   * Free-text search over a component's fallback_name AND its
+   * attribute VALUES (e.g. "24T" matching a gear whose "Tooth Count"
+   * attribute is "24"). Postgres can't cleanly ilike into a jsonb
+   * array's nested values in one indexable expression, so this
+   * queries fallback_name via ilike (cheap, indexable) and separately
+   * pulls every component to filter attribute values in JS — fine at
+   * Partshelf's stated scale (inventories in the hundreds, not
+   * millions; README.md's own scale assumption). Revisit with a real
+   * Postgres full-text/GIN index on attributes if the catalog ever
+   * grows past that.
+   */
+  async search(query) {
+    const q = (query || '').trim().toLowerCase()
+    if (!q) return []
+
+    const { data, error } = await this.db.from('components').select('*')
+    if (error) throw new DatabaseError(`components search failed: ${error.message}`, error)
+
+    return (data ?? [])
+      .map(toLocal)
+      .filter(c =>
+        (c.fallbackName || '').toLowerCase().includes(q) ||
+        (c.fallbackDescription || '').toLowerCase().includes(q) ||
+        (c.attributes || []).some(a => String(a.value ?? '').toLowerCase().includes(q) || String(a.key ?? '').toLowerCase().includes(q))
+      )
+  }
 }

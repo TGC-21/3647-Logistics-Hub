@@ -91,6 +91,30 @@ export const ACTION_SEVERITY = {
   'AgendaService.addTaskLink':                 SEVERITY.WRITE,
   'AgendaService.deleteTask':                  SEVERITY.DESTRUCTIVE,
   'AgendaService.removeTaskLink':              SEVERITY.WRITE,
+
+
+  // Categories (read)
+  'CategoryService.list':                     SEVERITY.READ,
+
+  // Components (read)
+  'ComponentService.listAll':                 SEVERITY.READ,
+  'ComponentService.search':                  SEVERITY.READ,
+  // Inventory Instances (read)
+  'InventoryInstanceService.listAll':         SEVERITY.READ,
+  'InventoryInstanceService.listForComponent':SEVERITY.READ,
+  'InventoryInstanceService.listForComponents':SEVERITY.READ,
+  // Assemblies (read)
+  'AssemblyService.listAssemblies':           SEVERITY.READ,
+
+  // Fabrication Jobs (read)
+  'FabricationJobService.listJobs':           SEVERITY.READ,
+
+  // Cart / Part Orders (read)
+  'CartService.listCarts':                    SEVERITY.READ,
+  'CartService.listItemsForCart':              SEVERITY.READ,
+
+  // Agenda (read)
+  'AgendaService.listTasks':                   SEVERITY.READ,
 }
 
 /** effectiveTrustLevel = min(member's own trust_level, MAX_TRUST_LEVEL) —

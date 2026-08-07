@@ -35,6 +35,12 @@ export class AssemblyRepository {
     return data ? toLocal(data) : null
   }
 
+  async findAll() {
+    const { data, error } = await this.db.from('assemblies').select('*').order('created_at', { ascending: false })
+    if (error) throw new DatabaseError(`assemblies lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   async requireById(id) {
     const found = await this.findById(id)
     if (!found) throw new NotFoundError(`Assembly ${id} not found`)
@@ -111,4 +117,9 @@ export class AssemblyRepository {
     if (error) throw new DatabaseError(`assemblies status update failed: ${error.message}`, error)
     return data ? toLocal(data) : null
   }
+
+    /** Every assembly — the harness's "what assemblies do I have"
+   *  read. Client-side fetchAssemblies() in db.js already does this;
+   *  this is the service-layer equivalent for non-browser callers. */
+
 }

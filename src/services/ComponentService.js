@@ -80,6 +80,41 @@ export class ComponentService {
     return created
   }
 
+   /** Every component, category-name-joined for readability — same
+   *  shape src/db.js's fetchComponentsForFabricatePicker already
+   *  builds client-side, given a service-level home here for the
+   *  harness's list_components tool. */
+  async listAll() {
+    const [components, categories] = await Promise.all([
+      this.componentRepo.findAll(),
+      this.categoryRepo.findAll(),
+    ])
+    const catById = Object.fromEntries(categories.map(c => [c.id, c]))
+    return components.map(c => ({
+      ...c,
+      categoryName: c.categoryId ? (catById[c.categoryId]?.name || 'Uncategorized') : 'Uncategorized',
+    }))
+  }
+
+
+  /** Free-text search across name/description/attribute values — the
+   *  "find a 24T gear" case. Joins category name in, same shape as
+   *  listAll(), so a caller never needs a second lookup for readable
+   *  results. */
+  async search({ query }) {
+    if (!query || !query.trim()) throw new ValidationError('query is required')
+    const [matches, categories] = await Promise.all([
+      this.componentRepo.search(query),
+      this.categoryRepo.findAll(),
+    ])
+    const catById = Object.fromEntries(categories.map(c => [c.id, c]))
+    return matches.map(c => ({
+      ...c,
+      categoryName: c.categoryId ? (catById[c.categoryId]?.name || 'Uncategorized') : 'Uncategorized',
+    }))
+  }
+
+
   async updateFallback({ componentId, name, description, image, actorId = null }) {
     if (!componentId) throw new ValidationError('componentId is required')
     const before = await this.componentRepo.findById(componentId).catch(() => null)

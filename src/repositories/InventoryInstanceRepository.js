@@ -126,6 +126,20 @@ export class InventoryInstanceRepository {
     return (data ?? []).map(toLocal)
   }
 
+
+  /** Every instance across MULTIPLE components in one query — used
+   *  after a component search returns several matches, so the harness
+   *  can get every match's locations in one tool call instead of one
+   *  InventoryInstanceService.listForComponent call per match. */
+  async findByComponentIds(componentIds) {
+    const ids = [...new Set((componentIds ?? []).filter(Boolean))]
+    if (!ids.length) return []
+    const { data, error } = await this.db
+      .from('inventory_instances').select('*').in('component_id', ids).order('created_at', { ascending: true })
+    if (error) throw new DatabaseError(`inventory_instances lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   /** Only instances free to be linked to an assembly part — mirrors
    *  db.js's fetchAvailableInstances, now available server-side. */
   async findAvailableForComponent(componentId) {

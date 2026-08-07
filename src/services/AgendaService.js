@@ -75,6 +75,11 @@ export class AgendaService {
    *   - completedAt is always DERIVED from status via
    *     completedAtForStatus, never accepted directly from the caller
    */
+
+  async listTasks() {
+    return this.taskRepo.findAll()
+  }
+
   async createTask({ title, description = '', deadline = null, startDate = null, status = 'not_started', priority = 'medium', assignerId = null, executors = [] }) {
     const trimmedTitle = (title || '').trim()
     if (!trimmedTitle) throw new ValidationError('title is required')

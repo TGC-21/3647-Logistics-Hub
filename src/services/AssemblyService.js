@@ -47,6 +47,10 @@ export class AssemblyService {
     this.changeLogRepo        = changeLogRepo
   }
 
+  async listAssemblies() {
+    return this.assemblyRepo.findAll()
+  }
+
   /** Plain "New assembly" creation — no Onshape link. A user links one
    *  later via the separate Onshape import flow, same as today. */
   async createAssembly({ name, description = '', onshapeUrl = '', status = 'draft', actorId = null }) {
@@ -168,4 +172,6 @@ export class AssemblyService {
       commitId,
     }
   }
+
+
 }

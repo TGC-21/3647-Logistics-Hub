@@ -290,6 +290,57 @@ const HAND_WRITTEN = {
       required: ['taskId', 'entityType', 'entityId'],
     },
   },
+  
+  'CategoryService.list': {
+    description: 'Lists every component category (e.g. Spacer, Plate, Bearings) along with each category\'s required characteristics. Use this to discover what categories exist before searching or creating components.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  'ComponentService.listAll': {
+    description: 'Lists every component in the catalog — the deduplicated (category + attributes) identities inventory instances reference. Includes category name and attribute values for each, e.g. useful for finding "a 24T gear" by scanning names/attributes. Does not include physical location/quantity — use InventoryInstanceService.listForComponent for that, once you have a component id.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+    'ComponentService.search': {
+    description: 'Free-text search over the component catalog by name, description, or attribute values (e.g. searching "24T" finds a gear whose tooth-count attribute is 24, without needing to know the exact category or attribute key). Use this INSTEAD OF ComponentService.listAll when looking for something specific by name/spec — much more direct than scanning the full catalog yourself.',
+    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  },
+
+  'InventoryInstanceService.listAll': {
+    description: 'Lists every physical inventory instance (a pile of a component at one location, with quantity/status). Use ComponentService.listAll first to find a component id if searching by name/attributes.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  'InventoryInstanceService.listForComponent': {
+    description: 'Lists every physical inventory instance (location + quantity) for one specific component id — use this once you know which component you\'re looking for, e.g. after finding it via ComponentService.listAll.',
+    parameters: { type: 'object', properties: { componentId: { type: 'string' } }, required: ['componentId'] },
+  },
+  'InventoryInstanceService.listForComponents': {
+    description: 'Lists physical inventory instances (location + quantity) across MULTIPLE component ids at once — use after ComponentService.search returns several matches, to get every match\'s locations in one call instead of one call per match.',
+    parameters: {
+      type: 'object',
+      properties: { componentIds: { type: 'array', items: { type: 'string' } } },
+      required: ['componentIds'],
+    },
+  },
+
+  'AssemblyService.listAssemblies': {
+    description: 'Lists every assembly (root-level project/subsystem), with name, status (draft/active/complete), and Onshape link info if linked. Use this to discover what assemblies exist before looking up parts within one.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  'FabricationJobService.listJobs': {
+    description: 'Lists every fabrication job across every status (queued/committed/in_progress/complete/archived) and batch. Use to answer "what\'s being machined" or find a specific job before recording progress or deleting it.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  'CartService.listCarts': {
+    description: 'Lists every vendor cart (one cart per vendor being ordered from).',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  'CartService.listItemsForCart': {
+    description: 'Lists every item in one specific cart, any status. Use CartService.listCarts first to find the cart id.',
+    parameters: { type: 'object', properties: { cartId: { type: 'string' } }, required: ['cartId'] },
+  },
+  'AgendaService.listTasks': {
+    description: 'Lists every agenda task across every status. Use to answer "what\'s on the agenda" before editing/completing/linking a specific task.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
 }
 
 // ── Simple auto-generated actions (id-shaped, no real structure) ─────
