@@ -18,9 +18,9 @@ the *why*, this doc for the *what's built* and *what's next*.
 | Confirm/deny inbox UI (standalone modal) | ✅ Done (placeholder — see Future Direction) |
 | `harness_conversations` schema + repository + service | ✅ Done |
 | Resume/abandon wiring into `pending-actions.js`'s `resolve` action | ✅ Done |
-| **Conversation loop** (`backend/harness/`) | ⬜ Not started — next step |
-| **LLM inference server** (home PC) | ⬜ Not started |
-| Chat entry route (e.g. `agent-chat.js`) | ⬜ Not started |
+| **Conversation loop** (`backend/harness/`) | ✅ `llmClient.js`, `toolSchema.js`, `conversationLoop.js` (runTurn + resumeTurn) done |
+| **LLM inference server** (home PC) | ✅ Live — Qwen3.5-9B, reachable at `http://10.100.0.2:8080` over WireGuard |
+| Chat entry route (e.g. `agent-chat.js`) | ⬜ Not started — next step |
 | Agent sidebar UI | ⬜ Not started (future direction) |
 | Tests for tool registry / conversation service | ⬜ Deferred by product decision |
 
@@ -82,6 +82,15 @@ Home PC (RTX 3070 Ti 8GB VRAM, 32GB RAM, i5-11400)
 └── llama.cpp server (or Ollama) — OpenAI-compatible
 POST /v1/chat/completions
 Model: Qwen3-8B-Instruct Q4_K_M
+
+UPDATE: actually running Qwen3.5-9B (chosen for VRAM/speed balance on
+the RTX 3070 Ti 8GB). Live and reachable from the Oracle VM at
+http://10.100.0.2:8080 over WireGuard. LLM_BASE_URL should be set to
+http://10.100.0.2:8080/v1, LLM_MODEL to whatever model name the
+server's /v1/models (or its own config) reports — confirm the exact
+string llama.cpp/Ollama expects in the `model` field before the first
+real chatCompletion() call, since llama.cpp servers are sometimes
+permissive about this field and sometimes strict.
 
 ### Why the loop lives in the Partshelf process, not a separate service
 

@@ -40,6 +40,7 @@ import onshapeAssembly from "./routes/onshape-assembly.js";
 import onshapeLookup from "./routes/onshape-lookup.js";
 import harnessInvoke from "./routes/harness-invoke.js";
 import pendingActions from "./routes/pending-actions.js";
+import agentChat from "./routes/agent-chat.js";
 
 const app = new Hono();
 
@@ -73,6 +74,7 @@ app.route("/api/onshape-assembly", onshapeAssembly);
 app.route("/api/onshape-lookup", onshapeLookup);
 app.route("/api/harness-invoke", harnessInvoke);
 app.route("/api/pending-actions", pendingActions);
+app.route("/api/agent-chat", agentChat);
 
 // Static frontend (Vite's built dist/) + SPA fallback. Only mounted if a
 // build was found at boot — see the try/catch above.
