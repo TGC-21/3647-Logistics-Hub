@@ -56,6 +56,30 @@ export class FabricationJobService {
     return this.jobRepo.findAll()
   }
 
+  /** Searches fabrication jobs with their assembly-part identity already
+   * joined in. This prevents the harness from listing every job and then
+   * fanning out one getById call per part just to answer a name query. */
+  async findJobs({ query = '', status = null } = {}) {
+    const jobs = await this.jobRepo.findAll()
+    const statusFiltered = status ? jobs.filter(job => job.status === status) : jobs
+    const parts = await this.partRepo.findByIds(statusFiltered.map(job => job.assemblyPartId))
+    const partById = new Map(parts.map(part => [part.id, part]))
+    const needle = String(query).trim().toLowerCase()
+
+    return statusFiltered
+      .map(job => {
+        const part = partById.get(job.assemblyPartId)
+        return {
+          id: job.id, status: job.status, quantityRequested: job.quantityRequested,
+          quantityMachined: job.quantityMachined, batchId: job.batchId,
+          assemblyPartId: job.assemblyPartId, partName: part?.partName ?? 'Unknown part',
+          partNumber: part?.partNumber ?? '', fabricationKind: part?.fabricationMetadata?.kind ?? null,
+        }
+      })
+      .filter(job => !needle || [job.partName, job.partNumber, job.fabricationKind]
+        .some(value => String(value || '').toLowerCase().includes(needle)))
+  }
+
   /**
    * Business rules:
    *   - quantityRequested must be a positive integer

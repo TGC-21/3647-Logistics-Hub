@@ -138,7 +138,17 @@ Example:
 > ↓
 > Inventory
 
+## Agenda Tasks
+
+Agenda Tasks track action items. They have a start date, deadline, status (complete, not started, etc), priority level, executors, and linked items. executors refers to members that carry out the task, and linked items can be components, assemblies, cart items, fabrication jobs, or assembly parts.
+
 # System responsibilities
+
+## Agenda
+Responsible for:
+- Agenda Tasks
+- Communicating action items and to-do items to users
+- Answers "What should I be doing today? What is there to work on?
 
 ## Inventory
 Responsible for:

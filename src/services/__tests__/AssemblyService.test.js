@@ -20,6 +20,7 @@ function makeFakeRepos(overrides = {}) {
     ...overrides.assemblyRepo,
   }
   const assemblyChildRepo = {
+    findDirectChildren: vi.fn(async () => []),
     findWholeTree: vi.fn(async () => []),
     ...overrides.assemblyChildRepo,
   }
@@ -63,6 +64,30 @@ describe('AssemblyService.createAssembly', () => {
     const asm = await service.createAssembly({ name: 'Drivetrain', actorId: 'member1' })
     expect(asm.name).toBe('Drivetrain')
     expect(repos.changeLogRepo.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', actorId: 'member1' }))
+  })
+})
+
+describe('AssemblyService subassembly traversal', () => {
+  it('exposes direct children for a root assembly', async () => {
+    const repos = makeFakeRepos({ assemblyChildRepo: { findDirectChildren: vi.fn(async () => [{ id: 'child1' }]) } })
+    const service = new AssemblyService(repos)
+
+    await expect(service.listChildren({ assemblyId: 'asm1' })).resolves.toEqual([{ id: 'child1' }])
+    expect(repos.assemblyChildRepo.findDirectChildren).toHaveBeenCalledWith('asm1')
+  })
+
+  it('exposes the full nested tree for a root assembly', async () => {
+    const repos = makeFakeRepos({ assemblyChildRepo: { findWholeTree: vi.fn(async () => [{ id: 'child1' }, { id: 'child2', parentChildId: 'child1' }]) } })
+    const service = new AssemblyService(repos)
+
+    await expect(service.listWholeTree({ assemblyId: 'asm1' })).resolves.toHaveLength(2)
+    expect(repos.assemblyChildRepo.findWholeTree).toHaveBeenCalledWith('asm1')
+  })
+
+  it('requires an assembly id for either traversal', async () => {
+    const service = new AssemblyService(makeFakeRepos())
+    await expect(service.listChildren({})).rejects.toBeInstanceOf(ValidationError)
+    await expect(service.listWholeTree({})).rejects.toBeInstanceOf(ValidationError)
   })
 })
 

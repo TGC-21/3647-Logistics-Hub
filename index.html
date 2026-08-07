@@ -73,7 +73,7 @@
       <button class="btn btn-primary" id="btn-new-cart-topbar"><i class="ti ti-plus" aria-hidden="true"></i><span> New cart</span></button>
     </div>
 
-    <button class="btn-icon" id="btn-open-pending-actions" aria-label="Pending agent actions" style="position:relative">
+    <button class="btn-icon" id="btn-open-agent-panel" aria-label="Open agent" aria-expanded="false" style="position:relative">
       <i class="ti ti-robot" style="font-size:18px" aria-hidden="true"></i>
       <span id="pending-actions-badge" class="nav-count" style="display:none;position:absolute;top:-2px;right:-2px;background:var(--color-accent);color:#fff">0</span>
     </button>
@@ -121,6 +121,27 @@
         </div>
       </div>
     </div>
+
+    <!-- Agent panel: starts fresh whenever the page loads; selecting a
+         previous topic is an explicit read-only review action. -->
+    <aside class="agent-panel" id="agent-panel" aria-label="Partshelf agent" aria-hidden="true">
+      <div class="agent-panel-header">
+        <div><div class="agent-panel-title"><i class="ti ti-sparkles" aria-hidden="true"></i> Clinker </div><div class="agent-panel-subtitle">Partshelf actions</div></div>
+        <button class="btn-icon" id="btn-close-agent-panel" aria-label="Close agent"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </div>
+      <div class="agent-thread" id="agent-thread" aria-live="polite">
+        <div class="agent-welcome"><i class="ti ti-sparkles" aria-hidden="true"></i><div><strong>What can I help with?</strong><p>Ask Clinker to find, organize, or update your Partshelf workspace.</p></div></div>
+      </div>
+      <div class="agent-confirmations" id="agent-confirmations"></div>
+      <form class="agent-composer" id="agent-composer">
+        <textarea id="agent-message" rows="2" placeholder="Ask Clinker to take an action…" aria-label="Message Clinker"></textarea>
+        <button class="btn btn-primary btn-sm" id="btn-send-agent-message" type="submit"><i class="ti ti-arrow-up" aria-hidden="true"></i><span>Send</span></button>
+      </form>
+      <section class="agent-history" aria-label="Previous topics">
+        <div class="agent-history-label">Previous topics</div>
+        <div id="agent-history-list"><div class="agent-history-empty">No previous topics yet</div></div>
+      </section>
+    </aside>
   </div>
 
   <!-- Mobile-only: bottom tab bar, replaces cramped icon-only topbar actions -->
@@ -1018,16 +1039,6 @@
     <div class="modal-footer">
       <button class="btn" id="btn-close-history-2">Close</button>
     </div>
-  </div>
-</div>
-
-<div class="overlay" id="pending-actions-overlay" style="display:none">
-  <div class="modal" style="max-width:560px">
-    <div class="modal-header">
-      <div class="modal-title">Pending agent actions</div>
-      <button class="btn-icon" id="btn-close-pending-actions"><i class="ti ti-x" aria-hidden="true"></i></button>
-    </div>
-    <div class="modal-body" id="pending-actions-body" style="min-height:100px"></div>
   </div>
 </div>
 

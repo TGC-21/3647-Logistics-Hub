@@ -22,6 +22,9 @@ import { executeTool } from '../../backend/_lib/harnessToolRegistry.js'
 import { chatCompletion } from './llmClient.js'
 import { buildToolSchema, parseToolCall } from './toolSchema.js'
 import { getTool } from '../../backend/_lib/harnessToolRegistry.js'
+import { compactToolResult } from './toolResultCompactor.js'
+import { buildContextWindow } from './contextWindow.js'
+import { selectToolActions } from './toolSelection.js'
 
 const MAX_TOOL_ITERATIONS = 8   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
 
@@ -55,8 +58,6 @@ export async function runTurn({ memberId, message, conversationId = null, isAgen
     const updated = await conversationService.appendMessage({ conversationId, message: { role: 'user', content: message } })
     messages = updated.messages
   }
-
-  const tools = buildToolSchema()
 
   return continueLoop({ conversationId: convo.id, memberId, isAgent, messages })
 
@@ -99,7 +100,7 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true }) {
   let toolResultContent
   try {
     const result = await executeTool(toolName, { ...resolvedArgs, confirmed: true }, { memberId, isAgent, reason: null })
-    toolResultContent = JSON.stringify(result ?? { success: true })
+    toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
   } catch (err) {
     // A second ConfirmationRequiredError here would mean trust level
     // dropped between pause and approval, or a policy bug — surface it
@@ -144,10 +145,10 @@ function findUnansweredToolCall(messages) {
  *  handling a second time. */
 async function continueLoop({ conversationId, memberId, isAgent, messages }) {
   const conversationService = new HarnessConversationService()
-  const tools = buildToolSchema()
-
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const assistantMessage = await chatCompletion({ messages, tools })
+    const context = buildContextWindow(messages)
+    const tools = buildToolSchema({ actionNames: selectToolActions(context.messages) })
+    const assistantMessage = await chatCompletion({ messages: context.messages, tools })
     const withAssistant = await conversationService.appendMessage({ conversationId, message: assistantMessage })
     messages = withAssistant.messages
 
@@ -162,7 +163,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
       let toolResultContent
       try {
         const result = await executeTool(toolName, args, { memberId, isAgent, reason: null })
-        toolResultContent = JSON.stringify(result ?? { success: true })
+        toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
       } catch (err) {
         if (err.name === 'ConfirmationRequiredError') {
           await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })

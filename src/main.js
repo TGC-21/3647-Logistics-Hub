@@ -51,7 +51,7 @@ import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from 
 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'
-import { bindPendingActionsEvents, refreshPendingActions } from './pendingActions.js'
+import { bindAgentPanelEvents } from './agentPanel.js'
 
 // unreserveInventoryUnits import removed — deleteFromDetail's manual
 // unreserve-then-delete loop moved server-side into
@@ -142,7 +142,7 @@ async function boot() {
   try { bindAgendaEvents() } catch (e) {console.error('[boot] bindAgendaEvents failed', e)}
   try { bindManageVendorsEvents()} catch (e) { console.error('[boot] bindManageVendorsEvents failed', e)}
   try { bindHistoryPanelEvents() } catch (e) { console.error('[boot] bindHistoryPanelEvents failed', e )}
-  try { bindPendingActionsEvents(); refreshPendingActions() } catch (e) { console.error('[boot] pendingActions failed', e) }
+  try { bindAgentPanelEvents() } catch (e) { console.error('[boot] agent panel failed', e) }
 }
 
 // ── Helpers ───────────────────────────────────────────────────

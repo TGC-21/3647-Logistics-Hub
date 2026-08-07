@@ -51,7 +51,7 @@ export class AssemblyChildRepository {
 
   async findDirectChildren(parentAssemblyId) {
     const { data, error } = await this.db
-      .from('assembly_children').select('id').eq('parent_assembly_id', parentAssemblyId)
+      .from('assembly_children').select('*').eq('parent_assembly_id', parentAssemblyId)
     if (error) throw new DatabaseError(`assembly_children lookup failed: ${error.message}`, error)
     return (data || []).map(toLocal)
   }

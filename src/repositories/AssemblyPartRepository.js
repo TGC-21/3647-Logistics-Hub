@@ -45,6 +45,20 @@ export class AssemblyPartRepository {
     return toLocal(data)
   }
 
+  async findByIds(ids) {
+    const uniqueIds = [...new Set(ids || [])]
+    if (!uniqueIds.length) return []
+    const { data, error } = await this.db.from('assembly_parts').select('*').in('id', uniqueIds)
+    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
+  async findAll() {
+    const { data, error } = await this.db.from('assembly_parts').select('*')
+    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   /** Every part belonging to one owner — a root assembly (assemblyId)
    *  or a subassembly node (assemblyChildId), exactly one of which the
    *  caller passes, mirroring the DB's own exactly-one-owner

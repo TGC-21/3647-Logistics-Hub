@@ -105,6 +105,10 @@ export class HarnessConversationService {
     return this.conversationRepo.findOpenForMember(memberId)
   }
 
+  async listRecentForMember(memberId, limit) {
+    return this.conversationRepo.findRecentForMember(memberId, limit)
+  }
+
   /** How the resume path (pending-actions.js's `resolve` action)
    *  finds its way back to the right conversation from just a
    *  pendingActionId. */

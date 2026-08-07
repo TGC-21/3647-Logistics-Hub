@@ -40,6 +40,7 @@ export const ACTION_SEVERITY = {
   'AssemblyPartService.getById':              SEVERITY.READ,
   'AssemblyPartService.listForAssembly':      SEVERITY.READ,
   'AssemblyPartService.listForChild':         SEVERITY.READ,
+  'AssemblyPartService.search':               SEVERITY.READ,
   'AssemblyPartService.createPart':           SEVERITY.WRITE,
   'AssemblyPartService.updatePart':           SEVERITY.WRITE,
   'AssemblyPartService.updateQuantityNeeded': SEVERITY.WRITE,
@@ -105,9 +106,12 @@ export const ACTION_SEVERITY = {
   'InventoryInstanceService.listForComponents':SEVERITY.READ,
   // Assemblies (read)
   'AssemblyService.listAssemblies':           SEVERITY.READ,
+  'AssemblyService.listChildren':             SEVERITY.READ,
+  'AssemblyService.listWholeTree':            SEVERITY.READ,
 
   // Fabrication Jobs (read)
   'FabricationJobService.listJobs':           SEVERITY.READ,
+  'FabricationJobService.findJobs':           SEVERITY.READ,
 
   // Cart / Part Orders (read)
   'CartService.listCarts':                    SEVERITY.READ,

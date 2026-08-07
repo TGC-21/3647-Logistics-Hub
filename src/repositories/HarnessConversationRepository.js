@@ -51,6 +51,20 @@ export class HarnessConversationRepository {
     return (data ?? []).map(toLocal)
   }
 
+  /** Recent conversations are presentation data for the agent panel.  They
+   * are deliberately separate from findOpenForMember(): opening the panel
+   * must start a fresh chat rather than silently continuing an old one. */
+  async findRecentForMember(memberId, limit = 12) {
+    const { data, error } = await this.db
+      .from('harness_conversations')
+      .select('*')
+      .eq('member_id', memberId)
+      .order('updated_at', { ascending: false })
+      .limit(limit)
+    if (error) throw new DatabaseError(`harness_conversations recent lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   /** Looks up whichever conversation is blocked on a given
    *  pending_actions row — how the resume path finds its way back once
    *  a member approves/denies. */

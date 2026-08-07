@@ -20,8 +20,25 @@
 import { Hono } from 'hono'
 import { runTurn } from '../harness/conversationLoop.js'
 import { statusForError } from '../../src/repositories/errors.js'
+import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 
 const agentChat = new Hono()
+
+// Conversation history is only used for the panel's "Previous topics"
+// list. A client must explicitly choose an item; page reload never resumes
+// a prior conversation automatically.
+agentChat.get('/', async (c) => {
+  const memberId = c.req.query('memberId')
+  if (!memberId) return c.json({ error: 'memberId is required' }, 400)
+  try {
+    const service = new HarnessConversationService()
+    const conversations = await service.listRecentForMember(memberId)
+    return c.json({ success: true, conversations })
+  } catch (err) {
+    console.error('[agent-chat] recent conversations', err)
+    return c.json({ error: err.message ?? 'Internal server error' }, statusForError(err))
+  }
+})
 
 agentChat.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({}))

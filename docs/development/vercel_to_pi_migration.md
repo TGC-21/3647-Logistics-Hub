@@ -2,7 +2,7 @@ PLEASE NOTE: The information below is irrelevant. At one point, the database was
 
 
 
-# Partshelf Vercel → Raspberry Pi Migration Summary
+# Partshelf Vercel → Oracle VM Migration Summary
 ## Current Architecture
 
 Partshelf currently uses Vercel's hosting model:
@@ -36,7 +36,7 @@ POST /api/assembly-parts
 
 ## Why Move Away From Vercel Serverless Functions?
 
-A Raspberry Pi is already an always-running server. Recreating a serverless platform on the Pi adds unnecessary complexity.
+An Oracle VM instance is already an always-running server. Recreating a serverless platform on the VM adds unnecessary complexity.
 
 Instead of:
 
@@ -50,7 +50,7 @@ Instead of:
 >   ↓
 > Function removed
 
-the Pi will run:
+the VM will run:
 
 > Request
 >   ↓
@@ -104,14 +104,7 @@ Oracle Cloud VM
 WireGuard Tunnel
       |
       |
-Raspberry Pi
-      |
-      ├── Vite Frontend
-      |
-      └── Node API Backend
-              |
-              |
-          Supabase PostgreSQL
+Home PC (LLM Inferencing)
 
 ## New Application Structure
 
@@ -191,11 +184,11 @@ The repositories stay:
 
 Keep Supabase.
 
-Do not move PostgreSQL to the Pi yet.
+Do not move PostgreSQL to the Oracle VM yet.
 
 Final:
 
-Raspberry Pi
+Oracle VM
     |
     |
 Node Backend
@@ -238,84 +231,6 @@ Reverse Proxy	        Caddy
 Secure Tunnel	        WireGuard
 Deployment	            Docker Compose
 
-## Migration Steps
-### Phase 1 — Extract Backend Locally
-
-On your development machine:
-
-1. Create:
-> backend/
-
-2. Move one API route:
-> api/assembly-parts.js
-to:
-> backend/routes/assembly-parts.js
-
-3. Create:
-> backend/server.js
-
-4. Run:
-
-Frontend:
-
-> localhost:5173
-
-Backend:
-
-> localhost:3000
-
-Verify Partshelf works without Vercel.
-
-### Phase 2 — Migrate Remaining API Routes
-
-Convert:
-
-> api/*.js
-
-into:
-
-> backend/routes/*.js
-
-Keep:
-
-services/
-repositories/
-
-unchanged.
-
-### Phase 3 — Containerize
-
-Create Docker services:
-
-> docker-compose.yml
-> 
-> services:
-> 
->   frontend:
->       Vite build served by Caddy
-> 
->   backend:
->       Node API server
-
-No database container is needed.
-
-### Phase 4 — Deploy to Raspberry Pi
-
-The Pi runs:
-
-> Docker Compose
-> 
-> ├── Partshelf frontend
-> └── Partshelf backend
-
-The Oracle VM handles:
-
-> HTTPS
-> Domain routing
-> Public exposure
-
-The Pi remains private behind WireGuard.
-
 ## Final Result
 
 The final system is:
@@ -329,7 +244,7 @@ The final system is:
 > Encrypted WireGuard tunnel
 >    |
 >    |
-> Raspberry Pi
+> Home PC
 > 
 > Caddy
 >  |

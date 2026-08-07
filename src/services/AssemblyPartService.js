@@ -67,8 +67,26 @@ export class AssemblyPartService {
     return this.partRepo.findForOwner({ assemblyId })
   }
 
-  async listForChild(assemblyChildId) {
+  async listForChild({ assemblyChildId }) {
     return this.partRepo.findForOwner({ assemblyChildId })
+  }
+
+  /** Focused read surface for the harness. Searches names, part numbers, and
+   * notes server-side so the model does not have to enumerate part records. */
+  async search({ query, assemblyId = null }) {
+    const needle = String(query || '').trim().toLowerCase()
+    if (!needle) throw new ValidationError('query is required')
+    const parts = assemblyId
+      ? await this.partRepo.findTreeForAssembly(assemblyId)
+      : await this.partRepo.findAll()
+    return parts.filter(part => [part.partName, part.partNumber, part.notes]
+      .some(value => String(value || '').toLowerCase().includes(needle)))
+      .map(part => ({
+        id: part.id, assemblyId: part.assemblyId, assemblyChildId: part.assemblyChildId,
+        partName: part.partName, partNumber: part.partNumber,
+        quantityNeeded: part.quantityNeeded, quantityCollected: part.quantityCollected,
+        status: part.status, fabricationKind: part.fabricationMetadata?.kind ?? null,
+      }))
   }
 
   /** Re-reads the current row and writes back whatever `status`

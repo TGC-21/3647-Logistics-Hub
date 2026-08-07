@@ -11,7 +11,7 @@
 // envelope and drop `severity` (an internal Partshelf concept the LLM
 // has no use for and shouldn't see).
 
-import { listTools } from '../../backend/_lib/harnessToolRegistry.js'
+import { HARNESS_TOOLS } from '../../backend/_lib/harnessTools.js'
 
 /** Converts one harnessToolRegistry tool descriptor into one OpenAI
  *  `tools` array entry. Exported standalone so a caller with an
@@ -31,8 +31,9 @@ export function toOpenAiTool({ name, description, parameters }) {
 /** The full tool array for a chat-completions request — everything the
  *  harness is allowed to call, translated wholesale. This is what
  *  conversationLoop.js passes as `tools` to llmClient.chatCompletion(). */
-export function buildToolSchema() {
-  return listTools().map(toOpenAiTool)
+export function buildToolSchema({ actionNames = null } = {}) {
+  const allowed = actionNames ? new Set(actionNames) : null
+  return HARNESS_TOOLS.filter(tool => !allowed || allowed.has(tool.actionName)).map(toOpenAiTool)
 }
 
 /** Parses an OpenAI tool_calls entry back into { toolName, args } for

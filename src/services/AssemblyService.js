@@ -51,6 +51,22 @@ export class AssemblyService {
     return this.assemblyRepo.findAll()
   }
 
+  /** Lists only the immediate subassemblies of a root assembly. The
+   * harness can use this for a shallow view, or listWholeTree() when it
+   * needs every nested node before asking AssemblyPartService for parts. */
+  async listChildren({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
+    return this.assemblyChildRepo.findDirectChildren(assemblyId)
+  }
+
+  /** Lists every descendant subassembly at any depth. This deliberately
+   * exposes the existing repository traversal as a read-only service method
+   * so it is eligible for the harness tool registry. */
+  async listWholeTree({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
+    return this.assemblyChildRepo.findWholeTree(assemblyId)
+  }
+
   /** Plain "New assembly" creation — no Onshape link. A user links one
    *  later via the separate Onshape import flow, same as today. */
   async createAssembly({ name, description = '', onshapeUrl = '', status = 'draft', actorId = null }) {

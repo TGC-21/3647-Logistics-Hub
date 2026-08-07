@@ -237,14 +237,46 @@ with a **mocked LLM response** — no need to wait on the home PC.
 
 ## Interim testing
 
-No chat UI yet. Once `agent-chat.js` exists, test via curl:
+Chat UI exists. Once `agent-chat.js` exists, test via curl:
 
 curl -X POST http://<vm>/api/agent-chat
 -H 'Content-Type: application/json'
 -d '{"memberId":"1234567","message":"..."}'
 
 The inference server should be curl-tested independently first (step 2
-above) before the loop depends on it.
+above) before the loop depends on it. It has been tested and works well.
+
+## Bug squashing
+
+### Gap 1: search precision (24T matching pulleys)
+
+This is expected given ComponentService.search's naive substring-over-everything approach — "24T" matched anything containing that substring across name/description/every attribute value, with no category-awareness or relevance ranking. Not a bug, but worth improving:
+
+Cheapest fix: let the LLM pass an optional categoryName or categoryId filter alongside query, so it can narrow ("search for 24T within Gears") once it's discovered categories via CategoryService.list. This pushes the precision problem onto the LLM's own reasoning (which is actually appropriate — it has access to CategoryService.list already) rather than trying to guess relevance server-side.
+I'd add this as a small follow-up to ComponentService.search rather than a new phase.
+
+### Gap 2: subassembly parts invisible to the harness — this is the real one
+
+Looking at the registry: AssemblyPartService.listForChild(assemblyChildId) exists and is registered, but there's no way to discover a assemblyChildId in the first place. AssemblyChildRepository has findDirectChildren/findChildrenOfChild/findWholeTree, but none of that is exposed through AssemblyPartService or any registered tool — the LLM has no listSubassemblies or listWholeTree tool at all. It can list root assemblies, and it can list parts given a subassembly id, but nothing bridges "here's a root assembly" → "here are its subassemblies" → "here are their ids." So when you asked it to find subassembly parts, it had no path there — same shape as the original assembly/gear gaps, just one layer deeper into the tree.
+
+Fix: needs a small service addition — there's no AssemblyChildService yet at all; AssemblyChildRepository is only ever called from within AssemblyService/OnshapeImportService/OnshapeReimportService, never exposed as its own read surface. Two options:
+
+(a) Add AssemblyService.listChildren({ assemblyId }) (direct children only) and AssemblyService.listWholeTree({ assemblyId }) (everything nested, matching findWholeTree's existing shape) — keeps it inside AssemblyService since that's already the registered/injected service.
+(b) A separate AssemblyChildService — cleaner domain separation but adds a new service to the registry for one read method, probably not worth it at this scale.
+
+I'd do (a). Then register AssemblyService.listChildren/listWholeTree the same way as every other Phase B/C addition, and the "find subassembly parts" prompt becomes: listAssemblies → listChildren(assemblyId) → AssemblyPartService.listForChild(childId) — the LLM can now walk the tree itself.
+
+Broader pattern worth naming
+
+Every gap so far (assemblies, gears, subassemblies) has the same shape: a read method existed somewhere in the data layer but was never lifted into a service method, so it was never eligible to become a tool (1:1 with service methods is the constraint). This suggests one more pass is worth doing proactively rather than reactively: audit every repository for read methods with no corresponding registered service method, across all domains (not just the ones you've happened to test), and close them in one batch — cheaper than discovering them one prompt at a time.
+
+Recommended next steps, in order
+Fix Gap 2 now (subassembly tree traversal) — clear, scoped, you already hit it.
+Small precision improvement to ComponentService.search (optional category filter).
+A deliberate audit pass across remaining domains (Categories done, Components done, Inventory done, Assemblies partial, Fabrication Jobs/Batches, Cart, Agenda) for any other "read method exists but isn't a tool" gaps — likely candidates: FabricationBatchRepository (no service/tool at all for batches specifically, only jobs), PartNumberRepository/vendor listings (no read tools for Part Orders' vendor/listing side).
+After that, this is probably a good point to stop chasing read-gaps ad hoc and actually write the deferred tests (harnessToolRegistry.test.js's drift guard would have caught "tool exists but points at nothing," though it wouldn't catch "tool should exist but doesn't" — that's inherently a manual audit).
+
+
 
 ## Future direction (not started, no schema/code yet)
 
@@ -263,3 +295,73 @@ above) before the loop depends on it.
   granularity decision; revisit only if a real workflow proves too
   clunky as sequential single-tool calls.
 
+### Agent sidebar UI
+#### Questions: 
+
+Scope & integration
+1. Should this replace/absorb the existing pendingActions.js confirm/deny modal (per the "Future direction" note in the execution doc), or should that stay separate for now and just live alongside the new sidebar?
+   - Answer: Yes, this should incorporate pendingActions.js
+2. "Regardless of mode" — should it be a persistent right-hand panel (like a docked chat), or a toggleable overlay that slides in/out over the existing sidebar/content? Does it need to survive across mode switches (i.e., conversation state persists while the user clicks between Designer/Fabricate/etc.), or is it fine to reset per toggle?
+   - Answer: It should be a toggleable panel, but upon opening the panel, my thought was to have the rest of the website shrink/squish to the left or squish to the right. Conversations should persist across mode switches, its almost as if the agent chat is a different website or webpage.
+3. On mobile, where does the toggle live — a new icon in the topbar (.topbar-actions), or folded into the bottom tab bar? Given the tab bar is already full (Agenda/Components/Designer/Fabricate/Orders), I'd lean topbar icon + slide-over panel, but want to confirm.
+   - Answer: To be honest, for mobile, real estate is very limited. In this case, mobile users can have a "AI" tab that sits next to fabricate, designer, inventory.
+
+Conversation lifecycle
+
+4. agent-chat.js accepts an optional conversationId. Should the sidebar auto-resume the member's most recent open conversation on load (via HarnessConversationService.listOpenForMember, which has no route yet), or always start fresh each session/toggle?
+   - Answer: The sidebar should start a new conversation if the member reloads the site/visits the site for the first time. If the member is in the same session (the member opens the site, chats with LLM, closes chat), toggling the side view should open a preserved conversation.
+5. Do we need a way to view/switch between past conversations, or is "one active thread at a time" fine for v1?
+   - Answer: I want the user to be able to access previous conversations and resume them. But at this point in time, there's no need to add "branching" conversations. What I mean is, users editing a response, and users being able to choose between two or more responses once the prompt is edited.
+
+Confirmation flow
+
+6. When runTurn/resumeTurn returns status: 'awaiting_confirmation', should the sidebar itself render the pending action inline (approve/deny buttons in the chat stream) rather than routing to the separate pending-actions modal? That seems like the right UX per the doc's stated direction, but it's more work than just linking out to the existing modal.
+   - Answer: Yes, the sidebar should render the pending action modal.
+7. Should approving/denying from inside the sidebar auto-continue the conversation (it already does server-side via resumeTurn) and stream the follow-up reply into the same thread — I'm assuming yes, confirming.
+   - Answer: Yes.
+
+Backend gaps
+
+8. agent-chat.js exists but I don't see a client-side src/services/agentChatApi.js wrapper yet — I'll need to create one. Confirm that's expected.
+   - Answer: All the agent harness stuff has been implemented in the backend. The only frontend work is the pending actions box, which is very minimal and should be obsolete once the sidebar is implemented.
+9. HarnessConversationService.listOpenForMember has no route exposed yet (only used internally). If you want conversation resume/history, I'll need to add an action to agent-chat.js or a new route — okay to add?
+   - Answer: Yes, please add.
+
+UX details
+
+10. Any preference on polling vs. just waiting on the synchronous runTurn response (which can block up to ~2min per DEFAULT_TIMEOUT_MS)? Should the UI show a "thinking…" state and just await, or do you want this to feel more async?
+   - Answer: I'm not too sure what you mean, but I want the UI to show a thinking... state. Bonus points if the UI shows the LLM's thinking process, because the model I'm using, Qwen 3.5-9B actually does do that. But that seems like a more advanced feature we can put off. I'd say synchronous, unless a synchronous response hinders the user from doing anything else in partshelf.
+11. Should the sidebar show severity/trust-level info (e.g. "this needs confirmation because it's a destructive action") or keep that minimal?
+   - Answer: If you can weave information about the severity into it, that would be prefered.
+
+#### Roadmap: 
+
+##### Phase 0 — Groundwork (doing now)
+
+   Backend: expose conversation history listing (HarnessConversationRepository.findAllForMember → HarnessConversationService.listAllForMember → agent-chat.js history action)
+   Client: src/services/agentChatApi.js wrapper (sendMessage, fetchHistory)
+   DOM/CSS scaffold: toggle button in topbar, sidebar panel markup, "squish" layout (.app gets a class that shrinks .main when panel is open), mobile AI tab slot
+   src/agentSidebar.js: open/close state, layout squish, no chat logic yet
+
+##### Phase 1 — Core chat loop
+
+   Message list rendering, input box, "thinking…" state while runTurn/sendMessage is in flight
+   Wire to agent-chat.js's invoke/turn action, append messages to in-memory thread state
+
+##### Phase 2 — Confirmation flow
+
+   Detect status: 'awaiting_confirmation' in a turn response, render an inline pending-action card (severity badge, action name, approve/deny) in the message stream instead of a separate modal
+   Wire approve/deny to pending-actions.js's resolve action, append the resumed turn's reply into the same thread
+   Retire src/pendingActions.js + its modal/topbar badge once this is working
+
+##### Phase 3 — History
+
+   "Past conversations" list view inside the panel (from Phase 0's history endpoint), click to resume (loads that conversation's messages into the thread state)
+
+##### Phase 4 — Mobile
+
+   New "AI" tab in the bottom tab bar, panel becomes fullscreen overlay instead of a squish on narrow viewports
+
+##### Phase 5 — Polish
+
+   Severity/trust copy ("this needs your OK because it's destructive"), scroll/loading polish, error states for LLM timeout/unreachable

@@ -325,9 +325,25 @@ const HAND_WRITTEN = {
     description: 'Lists every assembly (root-level project/subsystem), with name, status (draft/active/complete), and Onshape link info if linked. Use this to discover what assemblies exist before looking up parts within one.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+  'AssemblyPartService.search': {
+    description: 'Searches assembly and subassembly parts by name, part number, or notes. Use this instead of listing a whole assembly tree when looking for a specific part.',
+    parameters: { type: 'object', properties: { query: { type: 'string' }, assemblyId: { type: 'string' } }, required: ['query'] },
+  },
+  'AssemblyService.listChildren': {
+    description: 'Lists the direct subassemblies of one root assembly. Each returned subassembly has its own id, which can be passed to AssemblyPartService.listForChild.',
+    parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
+  },
+  'AssemblyService.listWholeTree': {
+    description: 'Lists every nested subassembly below one root assembly, at every depth. Use this to discover subassembly ids before listing their parts with AssemblyPartService.listForChild.',
+    parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
+  },
   'FabricationJobService.listJobs': {
     description: 'Lists every fabrication job across every status (queued/committed/in_progress/complete/archived) and batch. Use to answer "what\'s being machined" or find a specific job before recording progress or deleting it.',
     parameters: { type: 'object', properties: {}, required: [] },
+  },
+  'FabricationJobService.findJobs': {
+    description: 'Finds fabrication jobs by part name, part number, or fabrication kind and returns compact job progress with the matched part identity already included. Use this for requests such as "fabrication jobs involving spacers" instead of listing every job.',
+    parameters: { type: 'object', properties: { query: { type: 'string' }, status: { type: 'string', enum: ['queued', 'committed', 'in_progress', 'complete', 'archived'] } }, required: [] },
   },
   'CartService.listCarts': {
     description: 'Lists every vendor cart (one cart per vendor being ordered from).',
@@ -374,6 +390,10 @@ const DESCRIPTIONS = {
   'AssemblyPartService.getById': 'Fetches one assembly part by id.',
   'AssemblyPartService.listForAssembly': "Lists a root assembly's direct parts.",
   'AssemblyPartService.listForChild': "Lists a subassembly node's direct parts.",
+  'AssemblyPartService.search': 'Searches assembly and subassembly parts by name, part number, or notes.',
+  'AssemblyService.listChildren': "Lists a root assembly's direct subassemblies.",
+  'AssemblyService.listWholeTree': "Lists every nested subassembly beneath a root assembly.",
+  'FabricationJobService.findJobs': 'Finds fabrication jobs by matching part identity, with job progress included.',
   'AssemblyPartService.updateQuantityNeeded': "Changes an assembly part's required quantity.",
   'AssemblyPartService.linkComponent': 'Links an assembly part to an already-resolved catalog component.',
   'AssemblyPartService.deletePart': 'Deletes an assembly part, releasing any reserved inventory first.',

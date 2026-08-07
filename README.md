@@ -60,7 +60,7 @@ This system displays all the fabrication jobs created in the designer system. Ea
 Part Orders:
 When BOM COTS parts are sent to be ordered, they are grouped by vendor. Each vendor has a "cart" that contains all its orders (ie. a McMaster-carr cart contains all McMaster Parts)
 
-##Repo Structure
+## Repo Structure
 src/ 
 Frontend application, contains designer, fabrication, inventory, part orders, and UI
 ----------------------------------------------------------------------------------------------

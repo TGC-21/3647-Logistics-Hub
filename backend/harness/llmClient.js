@@ -12,6 +12,9 @@
 // server exists — see AGENTIC_HARNESS_PHASE3_EXECUTION.md's "Next
 // step" section.
 
+import { compactAssistantMessage } from './toolResultCompactor.js'
+import { estimateRequestContext } from './contextWindow.js'
+
 const DEFAULT_TIMEOUT_MS = 120_000   // local 14B inference can be slow — generous default, not Onshape's snappier timeout assumptions
 
 function getConfig() {
@@ -53,6 +56,14 @@ export async function chatCompletion({ messages, tools = [], temperature = 0.3, 
     ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
   }
 
+  const context = estimateRequestContext({ messages, tools })
+  console.info('[harness] LLM context estimate', {
+    messageCount: messages.length,
+    toolCount: tools.length,
+    requestBytes: context.requestBytes,
+    estimatedTokens: context.estimatedTokens,
+  })
+
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -84,7 +95,9 @@ export async function chatCompletion({ messages, tools = [], temperature = 0.3, 
     throw new Error('LLM response missing choices[0].message — unexpected response shape from inference server')
   }
 
-  return message
+  // Do not let provider-specific fields such as Qwen's reasoning_content
+  // enter durable history and get sent back on every subsequent round.
+  return compactAssistantMessage(message)
 }
 
 /** Cheap reachability check — for the "curl-test the inference server
