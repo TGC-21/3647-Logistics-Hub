@@ -9,7 +9,7 @@
 // hallucinating one wrong id in a list of otherwise-valid ones shouldn't
 // cost the other nine.
 
-import { ValidationError } from '../src/repositories/errors.js'
+import { ValidationError } from '../../src/repositories/errors.js'
 
 export const MAX_BULK_ITEMS = 50   // hard ceiling — protects against a hallucinated or misparsed massive batch
 

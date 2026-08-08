@@ -63,6 +63,7 @@ pendingActions.post('/', async (c) => {
             conversationId: convo.id,
             memberId: updated.memberId,
             isAgent: updated.isAgent,
+            resolvedPendingAction: updated,
           })
           return c.json({ success: true, pendingAction: updated, turn: turnResult })
         } catch (err) {

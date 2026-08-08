@@ -74,7 +74,7 @@ export async function runTurn({ memberId, message, conversationId = null, isAgen
  * without a matching 'tool' response, re-executes it with
  * confirmed: true, appends the result, then continues the normal loop.
  */
-export async function resumeTurn({ conversationId, memberId, isAgent = true }) {
+export async function resumeTurn({ conversationId, memberId, isAgent = true, resolvedPendingAction = null }) {
   const conversationService = new HarnessConversationService()
   const pendingActionRepo = new PendingActionRepository()
 
@@ -89,22 +89,31 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true }) {
   }
   const { toolCallId, toolName, args } = blockedCall
 
-  // Re-derive the approved pending_actions row for its stored args as
-  // the source of truth (rather than trusting the message history's
-  // args blindly) — belt-and-suspenders since the two should always
-  // match given HarnessGateway wrote both from the same call.
-  const pendingActions = await pendingActionRepo.findAwaitingForMember(memberId).catch(() => [])
   const toolActionName = getTool(toolName)?.actionName
 
-  // Match on BOTH actionName and args — actionName alone isn't unique if
-  // the member has more than one pending confirmation of the same kind at
-  // once (e.g. two separate deletePart approvals queued together). Args
-  // are compared as normalized JSON since key order isn't guaranteed to
-  // match between what the LLM emitted and what's stored on the pending row.
+
   const normalize = obj => JSON.stringify(obj, Object.keys(obj || {}).sort())
-  const matchingPending = pendingActions.find(p =>
-    p.actionName === toolActionName && normalize(p.actionArgs) === normalize(args)
-  )
+
+  // pending-actions.js already resolved this exact row via
+  // HarnessGateway.resolvePendingAction before calling resumeTurn — by
+  // now its status is 'approved'/'denied', not 'awaiting_confirmation',
+  // so searching for it via findAwaitingForMember() always comes back
+  // empty (this was the bug: resume failed for every action, not just
+  // this one, because the row we need is never "awaiting" anymore by
+  // the time we look). Use the already-resolved row the caller hands
+  // us directly instead of re-deriving it via a query that can no
+  // longer see it.
+  let matchingPending = null
+  if (resolvedPendingAction) {
+    if (resolvedPendingAction.actionName === toolActionName && normalize(resolvedPendingAction.actionArgs) === normalize(args)) {
+      matchingPending = resolvedPendingAction
+    }
+  } else {
+    const pendingActions = await pendingActionRepo.findAwaitingForMember(memberId).catch(() => [])
+    matchingPending = pendingActions.find(p =>
+      p.actionName === toolActionName && normalize(p.actionArgs) === normalize(args)
+    )
+  }
 
   if (!matchingPending) {
     throw new Error(
