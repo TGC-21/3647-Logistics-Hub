@@ -41,6 +41,7 @@ export const ACTION_SEVERITY = {
   'AssemblyPartService.listForAssembly':      SEVERITY.READ,
   'AssemblyPartService.listForChild':         SEVERITY.READ,
   'AssemblyPartService.search':               SEVERITY.READ,
+  'AssemblyPartService.computeOwnerStatus':   SEVERITY.READ,
   'AssemblyPartService.createPart':           SEVERITY.WRITE,
   'AssemblyPartService.updatePart':           SEVERITY.WRITE,
   'AssemblyPartService.updateQuantityNeeded': SEVERITY.WRITE,
@@ -62,7 +63,10 @@ export const ACTION_SEVERITY = {
   // Inventory reservation
   'InventoryReservationService.reserve':      SEVERITY.WRITE,
   'InventoryReservationService.unreserve':    SEVERITY.WRITE,
-
+  'InventoryReservationService.reserve':      SEVERITY.WRITE,
+  'InventoryReservationService.unreserve':    SEVERITY.WRITE,
+  'InventoryReservationService.quickCollect': SEVERITY.WRITE,
+  
   // Fabrication jobs
   'FabricationJobService.createJob':          SEVERITY.WRITE,
   'FabricationJobService.recordMachinedUnits':SEVERITY.WRITE,
@@ -76,9 +80,11 @@ export const ACTION_SEVERITY = {
   // Cart / Part Orders
   'CartService.createCartItem':               SEVERITY.WRITE,
   'CartService.advanceItemStatus':            SEVERITY.WRITE,
+  'CartService.findOrCreateCartForVendor':    SEVERITY.WRITE,
   'CartService.deleteItem':                   SEVERITY.DESTRUCTIVE,
 
   // Categories
+  'CategoryService.getById':                  SEVERITY.READ,
   'CategoryService.create':                   SEVERITY.WRITE,
   'CategoryService.update':                   SEVERITY.WRITE,
   'CategoryService.delete':                   SEVERITY.DESTRUCTIVE,
@@ -108,6 +114,11 @@ export const ACTION_SEVERITY = {
   'InventoryInstanceService.listAll':         SEVERITY.READ,
   'InventoryInstanceService.listForComponent':SEVERITY.READ,
   'InventoryInstanceService.listForComponents':SEVERITY.READ,
+  'InventoryInstanceService.getById':          SEVERITY.READ,
+  'InventoryInstanceService.createInstance':   SEVERITY.WRITE,
+  'InventoryInstanceService.updateInstance':   SEVERITY.WRITE,
+  'InventoryInstanceService.deleteInstance':   SEVERITY.DESTRUCTIVE,
+  
   // Assemblies (read)
   'AssemblyService.listAssemblies':           SEVERITY.READ,
   'AssemblyService.listChildren':             SEVERITY.READ,

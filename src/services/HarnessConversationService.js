@@ -88,7 +88,7 @@ export class HarnessConversationService {
       throw new ConflictError(`Conversation is "${convo.status}" — nothing to abandon.`)
     }
     return this.conversationRepo.update(conversationId, {
-      status: 'abandoned',
+      status: 'active',
       pendingActionId: null,
     })
   }

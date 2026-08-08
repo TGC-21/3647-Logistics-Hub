@@ -168,7 +168,8 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
       return { conversationId, status: 'completed', reply: assistantMessage.content || '' }
     }
 
-    for (const rawCall of toolCalls) {
+    for (let callIndex = 0; callIndex < toolCalls.length; callIndex++) {
+      const rawCall = toolCalls[callIndex]
       const { toolName, args, toolCallId } = parseToolCall(rawCall)
       let toolResultContent
       try {
@@ -176,7 +177,30 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
         toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
       } catch (err) {
         if (err.name === 'ConfirmationRequiredError') {
+          // The assistant message carrying this whole tool_calls batch is
+          // already in history. If this isn't the LAST call in the batch,
+          // every call AFTER this one still has no matching 'tool' reply —
+          // and never will, since we're about to pause and return. Left
+          // unanswered, the next chatCompletion() call would send a
+          // protocol-invalid history (an assistant tool_calls entry with no
+          // reply), which strict chat templates reject — same failure class
+          // as the earlier system-message bug. Stub each remaining call out
+          // with a deferred marker so history always stays valid;
+          // resumeTurn()'s findUnansweredToolCall() then finds exactly the
+          // one real unanswered call (this one), not one of these stubs.
           await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
+
+          for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
+            const deferred = parseToolCall(toolCalls[deferredIndex])
+            await conversationService.appendMessage({
+              conversationId,
+              message: {
+                role: 'tool', tool_call_id: deferred.toolCallId,
+                content: JSON.stringify({ error: 'Deferred — waiting on confirmation for an earlier action in this batch. This action was not executed.' }),
+              },
+            })
+          }
+
           return {
             conversationId, status: 'awaiting_confirmation',
             pendingActionId: err.reason,

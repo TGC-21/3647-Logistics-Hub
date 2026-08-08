@@ -4,11 +4,14 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "npx vitest"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@supabase/supabase-js": "^2.45.0",
-    "hono": "^4.6.0"
+    "dotenv": "^17.4.2",
+    "hono": "^4.6.0",
+    "vitest": "^4.1.10"
   }
 }

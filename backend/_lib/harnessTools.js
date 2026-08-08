@@ -50,6 +50,8 @@ const HAND_WRITTEN = {
     description: "Edits an existing part's name/number/quantity/notes. Does not touch inventory links or fabrication metadata.",
     parameters: auto(['partId', 'partName', 'partNumber', 'notes'], { optional: ['partNumber', 'notes'], types: {} }),
   },
+
+
   'AssemblyService.createAssembly': {
     description: 'Creates a brand-new assembly with no Onshape link.',
     parameters: {
@@ -135,6 +137,17 @@ const HAND_WRITTEN = {
         unlinkedQuantity: { type: 'integer', minimum: 1 },
       },
       required: ['assemblyPartId', 'instanceId'],
+    },
+  },
+   'InventoryReservationService.quickCollect': {
+    description: 'Quick-collects units for an assembly part from the untracked bulk-stock pile, without picking a specific inventory instance or location. Capped at the part\'s remaining need. Does not resolve or change the part\'s componentId.',
+    parameters: {
+      type: 'object',
+      properties: {
+        assemblyPartId: { type: 'string' },
+        quantity: { type: 'integer', minimum: 1 },
+      },
+      required: ['assemblyPartId'],
     },
   },
   'FabricationJobService.createJob': {
@@ -223,6 +236,10 @@ const HAND_WRITTEN = {
       },
       required: ['name'],
     },
+  },
+  'CategoryService.getById': {
+    description: 'Fetches one category by id, including its full requiredKeysConfig (the typed attributes any component in this category must provide). Use before creating a component or inventory instance so attrs matches the category\'s expected fields.',
+    parameters: { type: 'object', properties: { categoryId: { type: 'string' } }, required: ['categoryId'] },
   },
   'CategoryService.update': {
     description: 'Renames a category and/or replaces its required characteristics list.',
@@ -338,7 +355,51 @@ const HAND_WRITTEN = {
       required: ['componentIds'],
     },
   },
-
+  'InventoryInstanceService.getById': {
+    description: 'Fetches one physical inventory instance by id.',
+    parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  'InventoryInstanceService.createInstance': {
+    description: 'Adds new physical stock to inventory — resolves (or creates) the component it belongs to from categoryId + attrs, then creates the instance at a location with a quantity. Use for "we received/have N more of X" requests.',
+    parameters: {
+      type: 'object',
+      properties: {
+        categoryId: { type: 'string', description: 'Omit to fall back to the "Uncategorized" category.' },
+        attrs: { type: 'object', description: 'Flat { key: value } map matching the category\'s requiredKeysConfig — see CategoryService.getById.' },
+        fallback: { type: 'object', description: 'Optional { name, description, image } used only if this creates a brand-new component.' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        location: { type: 'string' },
+        quantity: { type: 'integer', minimum: 0 },
+        tags: { type: 'array', items: { type: 'string' } },
+        notes: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+    'InventoryInstanceService.updateInstance': {
+    description: 'Edits an existing inventory instance\'s own fields, and re-resolves its component from the (possibly changed) categoryId/attrs — may re-parent it onto a different component.',
+    parameters: {
+      type: 'object',
+      properties: {
+        instanceId: { type: 'string' },
+        categoryId: { type: 'string' },
+        attrs: { type: 'object' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        location: { type: 'string' },
+        quantity: { type: 'integer', minimum: 0 },
+        tags: { type: 'array', items: { type: 'string' } },
+        notes: { type: 'string' },
+      },
+      required: ['instanceId', 'name'],
+    },
+  },
+  'InventoryInstanceService.deleteInstance': {
+    description: 'Deletes an inventory instance outright — first unreserving it from every assembly part currently linking it, then removing the row.',
+    parameters: { type: 'object', properties: { instanceId: { type: 'string' } }, required: ['instanceId'] },
+  },
+  
   'AssemblyService.listAssemblies': {
     description: 'Lists every assembly (root-level project/subsystem), with name, status (draft/active/complete), and Onshape link info if linked. Use this to discover what assemblies exist before looking up parts within one.',
     parameters: { type: 'object', properties: {}, required: [] },
@@ -346,6 +407,10 @@ const HAND_WRITTEN = {
   'AssemblyPartService.search': {
     description: 'Searches assembly and subassembly parts by name, part number, or notes. Use this instead of listing a whole assembly tree when looking for a specific part.',
     parameters: { type: 'object', properties: { query: { type: 'string' }, assemblyId: { type: 'string' } }, required: ['query'] },
+  },
+  'AssemblyPartService.computeOwnerStatus': {
+    description: 'Computes what an assembly\'s overall status (draft/active/complete) SHOULD be right now, derived from its current parts\' collected-vs-needed quantities. Distinct from the stored status field on the assembly record, which is only refreshed on certain writes.',
+    parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
   },
   'AssemblyService.listChildren': {
     description: 'Lists the direct subassemblies of one root assembly. Each returned subassembly has its own id, which can be passed to AssemblyPartService.listForChild.',
@@ -370,6 +435,14 @@ const HAND_WRITTEN = {
   'CartService.listItemsForCart': {
     description: 'Lists every item in one specific cart, any status. Use CartService.listCarts first to find the cart id.',
     parameters: { type: 'object', properties: { cartId: { type: 'string' } }, required: ['cartId'] },
+  },
+  'CartService.findOrCreateCartForVendor': {
+    description: 'Finds the currently-open cart for a vendor, or creates one if none is open. A cart item cannot be added until a cart exists.',
+    parameters: {
+      type: 'object',
+      properties: { vendorId: { type: 'string' }, vendorName: { type: 'string', description: 'Used to name a newly-created cart, e.g. "McMaster order" — ignored if a cart already exists.' } },
+      required: ['vendorId'],
+    },
   },
   'AgendaService.listTasks': {
     description: 'Lists every agenda task across every status. Use to answer "what\'s on the agenda" before editing/completing/linking a specific task.',
@@ -407,9 +480,9 @@ function autoFromSpec(fieldSpecs) {
 // ── Assemble the registry ─────────────────────────────────────────────
 const DESCRIPTIONS = {
   'AssemblyPartService.getById': 'Fetches one assembly part by id.',
-  'AssemblyPartService.listForAssembly': "Lists a root assembly's direct parts.",
+  'AssemblyPartService.listForAssembly': "Lists a root assembly's direct parts. Use this if you need to view all the parts that belong to an assembly.",
   'AssemblyPartService.listForChild': "Lists a subassembly node's direct parts.",
-  'AssemblyPartService.search': 'Searches assembly and subassembly parts by name, part number, or notes.',
+  'AssemblyPartService.search': 'Searches assembly and subassembly parts by name, part number, or notes. Make sure not to search any parts by the assembly name, which usually comes up with an empty list.',
   'AssemblyService.listChildren': "Lists a root assembly's direct subassemblies.",
   'AssemblyService.listWholeTree': "Lists every nested subassembly beneath a root assembly.",
   'FabricationJobService.findJobs': 'Finds fabrication jobs by matching part identity, with job progress included.',
