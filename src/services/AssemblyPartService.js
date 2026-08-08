@@ -63,7 +63,7 @@ export class AssemblyPartService {
     return this.partRepo.findById(partId)
   }
 
-  async listForAssembly(assemblyId) {
+  async listForAssembly({ assemblyId }) {
     return this.partRepo.findForOwner({ assemblyId })
   }
 

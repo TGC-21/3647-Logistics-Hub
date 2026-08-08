@@ -26,7 +26,7 @@ import { compactToolResult } from './toolResultCompactor.js'
 import { buildContextWindow } from './contextWindow.js'
 import { selectToolActions } from './toolSelection.js'
 
-const MAX_TOOL_ITERATIONS = 8   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
+const MAX_TOOL_ITERATIONS = 16   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
 
 /**
  * Runs one turn of a conversation for a member's message. Returns:
