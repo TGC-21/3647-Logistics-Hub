@@ -163,7 +163,7 @@ function topicFor(conversation) {
 async function refreshHistory() {
   const memberId = getCurrentMemberId()
   const list = document.getElementById('agent-history-list')
-  if (!memberId) { list.innerHTML = ''; return }
+  if (!memberId) { list.innerHTML = ''; return [] }
   try {
     const { conversations } = await request(`/api/agent-chat?memberId=${encodeURIComponent(memberId)}`)
     list.innerHTML = conversations.length ? conversations.map(conversation => `
@@ -174,22 +174,27 @@ async function refreshHistory() {
       const conversation = conversations.find(item => item.id === button.dataset.agentHistory)
       showHistory(conversation)
     }))
+    return conversations
   } catch (error) {
     console.error('[agent-panel] history', error)
     list.innerHTML = '<div class="agent-history-empty">Could not load previous topics</div>'
+    return []
   }
 }
 
 function showHistory(conversation) {
   if (!conversation) return
+  // Viewing a saved conversation is a deliberate resume action. Cancel any
+  // in-flight UI request first so its late response cannot overwrite this
+  // selected thread, then retain the selected id for the next POST.
+  conversationEpoch++
+  conversationId = conversation.id
   const thread = document.getElementById('agent-thread')
-  thread.innerHTML = '<div class="agent-history-notice">Viewing a saved conversation. Start a new message below to begin a new topic.</div>'
+  thread.innerHTML = '<div class="agent-history-notice">Continuing this saved conversation. Choose New chat to start a separate topic.</div>'
   for (const message of conversation.messages || []) {
     if ((message.role === 'user' || message.role === 'assistant') && message.content) appendMessage(message.role, message.content)
   }
-  // A saved topic is read-only. Do not reuse its id: the next submitted
-  // message starts a new conversation, as requested for reload behavior.
-  conversationId = null
+  setBusy(false)
 }
 
 async function sendMessage(event) {
@@ -224,9 +229,22 @@ async function decide(pendingActionId, decision) {
     const result = await resolvePendingAction({ pendingActionId, decision, resolvedBy: getCurrentMemberId() })
     pendingActions = pendingActions.filter(item => item.id !== pendingActionId)
     updateBadge(); renderConfirmations()
-    if (result.turn?.reply) appendMessage('assistant', result.turn.reply)
+    const conversations = await refreshHistory()
+    if (result.turn?.conversationId) {
+      const resumedConversation = conversations.find(conversation => conversation.id === result.turn.conversationId)
+      if (resumedConversation) {
+        // An approval resumes the conversation that created the pending
+        // action, even after a reload/new chat. Switch to that persisted
+        // thread rather than appending its reply onto an unrelated one.
+        showHistory(resumedConversation)
+      } else {
+        // Keep the relationship correct even if the history list is stale
+        // or has reached its display limit.
+        conversationId = result.turn.conversationId
+        if (result.turn.reply) appendMessage('assistant', result.turn.reply)
+      }
+    }
     if (result.turnError) appendMessage('assistant', `The decision was saved, but I couldn’t continue: ${result.turnError}`)
-    await refreshHistory()
   } catch (error) { appendMessage('assistant', `I couldn’t save that decision: ${error.message}`) }
 }
 
