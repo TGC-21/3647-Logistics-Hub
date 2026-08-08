@@ -37,6 +37,7 @@ import { ComponentService } from './ComponentService.js'
 import { InventoryReservationService } from './InventoryReservationService.js'
 import { ChangeLogService } from './ChangeLogService.js'
 import { ValidationError } from '../repositories/errors.js'
+import { runBulk } from '../../backend/_lib/bulkOps.js'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 // Fixed name for the fallback category a component resolves to when the
@@ -193,5 +194,14 @@ export class InventoryInstanceService {
     })
 
     return { deletedInstanceId: instanceId, unreservedPartCount: linkingParts.length, componentDeleted }
+  }
+
+  async getByIds({ instanceIds }) {
+    if (!Array.isArray(instanceIds) || !instanceIds.length) throw new ValidationError('instanceIds is required')
+    return this.instanceRepo.findByIds(instanceIds)
+  }
+
+  async bulkDeleteInstances({ instanceIds, actorId = null }) {
+    return runBulk(instanceIds.map(instanceId => ({ instanceId })), (u) => this.deleteInstance({ ...u, actorId }), { keyOf: u => u.instanceId })
   }
 }

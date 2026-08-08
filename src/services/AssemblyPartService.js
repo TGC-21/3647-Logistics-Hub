@@ -20,6 +20,10 @@ import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.j
 import { InventoryInstanceRepository } from '../repositories/InventoryInstanceRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError } from '../repositories/errors.js'
+import { ComponentRepository } from '../repositories/ComponentRepository.js'
+import { PartNumberRepository } from '../repositories/PartNumberRepository.js'
+import { runBulk } from '../../backend/_lib/bulkOps.js'
+
 
 // Missing from this file — every sibling service (AgendaService,
 // CartService, CategoryService, ComponentService, etc.) defines its own
@@ -53,22 +57,36 @@ export class AssemblyPartService {
     partRepo      = new AssemblyPartRepository(),
     instanceRepo  = new InventoryInstanceRepository(),
     changeLogRepo = new ChangeLogRepository(),
+    componentRepo  = new ComponentRepository(),     // NEW
+    partNumberRepo = new PartNumberRepository(),
   } = {}) {
     this.partRepo      = partRepo
     this.instanceRepo  = instanceRepo
     this.changeLogRepo = changeLogRepo
+    this.componentRepo  = componentRepo
+    this.partNumberRepo = partNumberRepo
   }
 
   async getById(partId) {
     return this.partRepo.findById(partId)
   }
 
-  async listForAssembly(assemblyId) {
+  async listForAssembly({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
     return this.partRepo.findForOwner({ assemblyId })
   }
 
   async listForChild({ assemblyChildId }) {
     return this.partRepo.findForOwner({ assemblyChildId })
+  }
+
+  /** Returns every part in a root assembly, including all nested
+   * subassemblies. This is the read surface for questions such as "what
+   * parts are in Intake?"; callers should not have to infer completeness
+   * from a sequence of root/direct-child reads. */
+  async listTreeForAssembly({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
+    return this.partRepo.findTreeForAssembly(assemblyId)
   }
 
   /** Focused read surface for the harness. Searches names, part numbers, and
@@ -255,4 +273,153 @@ export class AssemblyPartService {
 
     return after
   }
+    /**
+   * Cross-references every part in an assembly's whole tree (root +
+   * every nested subassembly) against current inventory, in one pass,
+   * server-side — replaces the multi-step "search per part, then check
+   * stock per match" workflow the harness previously had to improvise
+   * across several separate tool calls (and reliably lost track of
+   * partway through on anything but a trivially small assembly).
+   *
+   * Matching, per part, in priority order:
+   *   1. componentId already linked  -> authoritative, confidence 'linked'
+   *   2. partNumber resolves via part_numbers.component_id -> confidence 'part_number'
+   *   3. free-text name match via ComponentRepository.search -> confidence 'guessed'
+   *      (only the single best/first hit is used — this is a hint for a
+   *      human to confirm, never auto-linked)
+   *   4. nothing found -> matchedComponentId: null, confidence: 'unmatched'
+   *
+   * A part whose remaining need is already <= 0 (fully collected or
+   * already fully promised via fabrication/cart — NOTE: this does NOT
+   * factor in active fabrication_jobs/cart_items, only quantityCollected,
+   * since those live in different repositories this service doesn't
+   * depend on; see the `note` field on each row) is still included with
+   * remaining: 0 so a caller gets the full tree, not a filtered subset.
+   *
+   * Returns a flat, compact shape — deliberately not deeply nested —
+   * cheap on the model's context window and easy to narrate directly.
+   */
+  async checkAvailability({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
+
+    const parts = await this.partRepo.findTreeForAssembly(assemblyId)
+    if (!parts.length) {
+      return { assemblyId, partCount: 0, rows: [], toPurchase: [], summary: 'This assembly has no parts.' }
+    }
+
+    // ── Bulk-resolve stock for every ALREADY-linked component in one query ──
+    const linkedComponentIds = [...new Set(parts.filter(p => p.componentId).map(p => p.componentId))]
+    const stockByComponentId = linkedComponentIds.length
+      ? await this.instanceRepo.countsByComponentIds(linkedComponentIds)
+      : {}
+
+    // ── For unlinked parts, resolve a candidate component ──
+    // partNumber lookups and name searches are cheap enough to do serially
+    // here since a single assembly tree is at most a few hundred rows at
+    // Partshelf's stated scale (README.md) — not worth a bulk-search API
+    // that doesn't exist yet on ComponentRepository.
+    const rows = []
+    for (const part of parts) {
+      const remaining = Math.max(0, (part.quantityNeeded || 0) - (part.quantityCollected || 0))
+      const base = {
+        partId: part.id,
+        partName: part.partName,
+        partNumber: part.partNumber || null,
+        needed: part.quantityNeeded,
+        collected: part.quantityCollected || 0,
+        remaining,
+      }
+
+      if (remaining === 0) {
+        rows.push({ ...base, matchedComponentId: part.componentId || null, matchConfidence: 'n/a', available: null, gap: 0, note: 'Already fully collected.' })
+        continue
+      }
+
+      // Tier 1: already linked
+      if (part.componentId) {
+        const stock = stockByComponentId[part.componentId] || { total: 0, available: 0 }
+        rows.push({
+          ...base,
+          matchedComponentId: part.componentId,
+          matchConfidence: 'linked',
+          available: stock.available,
+          gap: Math.max(0, remaining - stock.available),
+        })
+        continue
+      }
+
+      // Tier 2: part number resolves to a known component
+      let resolved = null
+      if (part.partNumber) {
+        const pn = await this.partNumberRepo.findByValue(part.partNumber).catch(() => null)
+        if (pn?.componentId) resolved = { componentId: pn.componentId, confidence: 'part_number' }
+      }
+
+      // Tier 3: fuzzy name search, best-effort, never auto-trusted
+      if (!resolved && part.partName) {
+        const matches = await this.componentRepo.search(part.partName).catch(() => [])
+        if (matches.length) resolved = { componentId: matches[0].id, confidence: 'guessed' }
+      }
+
+      if (!resolved) {
+        rows.push({ ...base, matchedComponentId: null, matchConfidence: 'unmatched', available: 0, gap: remaining, note: 'No linked component and no catalog match — likely needs sourcing or manual linking.' })
+        continue
+      }
+
+      const stock = (await this.instanceRepo.countsByComponentIds([resolved.componentId]))[resolved.componentId] || { available: 0 }
+      rows.push({
+        ...base,
+        matchedComponentId: resolved.componentId,
+        matchConfidence: resolved.confidence,
+        available: stock.available,
+        gap: Math.max(0, remaining - stock.available),
+        note: resolved.confidence === 'guessed' ? 'Matched by name only — confirm before relying on this.' : undefined,
+      })
+    }
+
+    const toPurchase = rows
+      .filter(r => r.gap > 0)
+      .map(r => ({ partId: r.partId, partName: r.partName, gap: r.gap, matchConfidence: r.matchConfidence }))
+
+    return {
+      assemblyId,
+      partCount: parts.length,
+      rows,
+      toPurchase,
+      summary: `${parts.length} part(s) checked — ${toPurchase.length} need purchasing/fabrication (gap > 0 after available inventory).`,
+    }
+  }
+
+  /** Bulk fetch by id — lets the harness resolve several known part ids
+   *  (e.g. from checkAvailability's toPurchase list) in one call instead
+   *  of one getById per part. */
+  async getByIds({ partIds }) {
+    if (!Array.isArray(partIds) || !partIds.length) throw new ValidationError('partIds is required')
+    return this.partRepo.findByIds(partIds)
+  }
+
+  /** Bulk "Edit part" — same field set/validation as updatePart, applied
+   *  to several parts under one shared commitId. `updates` is
+   *  [{ partId, partName, partNumber?, quantityNeeded, notes? }]. */
+  async bulkUpdateParts({ updates, actorId = null }) {
+    const commitId = this.changeLogRepo.newCommitId()
+    return runBulk(updates, (update) => this.updatePart({ ...update, actorId, _commitId: commitId }), { keyOf: u => u.partId })
+  }
+
+  /** Bulk quantity-needed edit — [{ partId, quantityNeeded }]. */
+  async bulkUpdateQuantityNeeded({ updates, actorId = null }) {
+    return runBulk(updates, (u) => this.updateQuantityNeeded({ ...u, actorId }), { keyOf: u => u.partId })
+  }
+
+  /** Bulk link — [{ partId, componentId }]. */
+  async bulkLinkComponent({ updates, actorId = null }) {
+    return runBulk(updates, (u) => this.linkComponent({ ...u, actorId }), { keyOf: u => u.partId })
+  }
+
+  /** Bulk delete — releases inventory + deletes each part. partIds is a
+   *  flat array (no per-item fields needed, unlike the update variants). */
+  async bulkDeleteParts({ partIds, actorId = null }) {
+    return runBulk(partIds.map(partId => ({ partId })), (u) => this.deletePart({ ...u, actorId }), { keyOf: u => u.partId })
+  }
 }
+

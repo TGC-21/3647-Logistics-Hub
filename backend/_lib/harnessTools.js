@@ -412,6 +412,10 @@ const HAND_WRITTEN = {
     description: 'Computes what an assembly\'s overall status (draft/active/complete) SHOULD be right now, derived from its current parts\' collected-vs-needed quantities. Distinct from the stored status field on the assembly record, which is only refreshed on certain writes.',
     parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
   },
+  'AssemblyPartService.checkAvailability': {
+    description: 'Cross-references every part in an assembly (including nested subassemblies) against current inventory in ONE call — returns needed/collected/available/gap per part, plus a toPurchase list. Use this instead of listing parts and inventory separately and comparing them yourself; this tool does the matching for you, including guessing a likely component for parts with no linked inventory.',
+    parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
+  },
   'AssemblyService.listChildren': {
     description: 'Lists the direct subassemblies of one root assembly. Each returned subassembly has its own id, which can be passed to AssemblyPartService.listForChild.',
     parameters: { type: 'object', properties: { assemblyId: { type: 'string' } }, required: ['assemblyId'] },
@@ -448,7 +452,75 @@ const HAND_WRITTEN = {
     description: 'Lists every agenda task across every status. Use to answer "what\'s on the agenda" before editing/completing/linking a specific task.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+  'AssemblyPartService.getByIds': {
+    description: 'Fetches multiple assembly parts by id in one call — use instead of calling getById repeatedly.',
+    parameters: { type: 'object', properties: { partIds: { type: 'array', items: { type: 'string' } } }, required: ['partIds'] },
+  },
+  'AssemblyPartService.bulkUpdateParts': {
+    description: 'Edits name/number/quantity/notes on multiple parts at once. Use this instead of calling updatePart repeatedly. Returns per-part success/failure — check the failed array, a partial failure does not undo the successes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        updates: {
+          type: 'array',
+          items: { type: 'object', properties: { partId: { type: 'string' }, partName: { type: 'string' }, partNumber: { type: 'string' }, quantityNeeded: { type: 'integer' }, notes: { type: 'string' } }, required: ['partId'] },
+        },
+      },
+      required: ['updates'],
+    },
+  },
+  'AssemblyPartService.bulkUpdateQuantityNeeded': {
+    description: 'Changes required quantity on multiple parts at once.',
+    parameters: { type: 'object', properties: { updates: { type: 'array', items: { type: 'object', properties: { partId: { type: 'string' }, quantityNeeded: { type: 'integer' } }, required: ['partId', 'quantityNeeded'] } } }, required: ['updates'] },
+  },
+  'AssemblyPartService.bulkLinkComponent': {
+    description: 'Links multiple parts to already-resolved catalog components in one call.',
+    parameters: { type: 'object', properties: { updates: { type: 'array', items: { type: 'object', properties: { partId: { type: 'string' }, componentId: { type: 'string' } }, required: ['partId', 'componentId'] } } }, required: ['updates'] },
+  },
+  'AssemblyPartService.bulkDeleteParts': {
+    description: 'Deletes multiple assembly parts at once, releasing any reserved inventory first. Cannot be undone.',
+    parameters: { type: 'object', properties: { partIds: { type: 'array', items: { type: 'string' } } }, required: ['partIds'] },
+  },
 
+  'FabricationJobService.getByIds': {
+    description: 'Fetches multiple fabrication jobs by id in one call.',
+    parameters: { type: 'object', properties: { jobIds: { type: 'array', items: { type: 'string' } } }, required: ['jobIds'] },
+  },
+  'FabricationJobService.bulkRecordMachinedUnits': {
+    description: 'Records machined progress on multiple jobs at once, e.g. after a batch finishes together.',
+    parameters: { type: 'object', properties: { updates: { type: 'array', items: { type: 'object', properties: { jobId: { type: 'string' }, quantity: { type: 'integer', minimum: 1 } }, required: ['jobId', 'quantity'] } } }, required: ['updates'] },
+  },
+  'FabricationJobService.bulkDeleteQueuedJobs': {
+    description: 'Deletes multiple unclaimed jobs at once. Cannot be undone.',
+    parameters: { type: 'object', properties: { jobIds: { type: 'array', items: { type: 'string' } } }, required: ['jobIds'] },
+  },
+
+  'CartService.bulkAdvanceItemStatus': {
+    description: 'Advances multiple cart items forward one status step each (pending->ordered, ordered->received) at once.',
+    parameters: { type: 'object', properties: { itemIds: { type: 'array', items: { type: 'string' } } }, required: ['itemIds'] },
+  },
+  'CartService.bulkDeleteItems': {
+    description: 'Deletes multiple cart items at once. Refuses individual items that have already been received (reported in the failed list, not a total block).',
+    parameters: { type: 'object', properties: { itemIds: { type: 'array', items: { type: 'string' } } }, required: ['itemIds'] },
+  },
+
+  'InventoryInstanceService.getByIds': {
+    description: 'Fetches multiple inventory instances by id in one call.',
+    parameters: { type: 'object', properties: { instanceIds: { type: 'array', items: { type: 'string' } } }, required: ['instanceIds'] },
+  },
+  'InventoryInstanceService.bulkDeleteInstances': {
+    description: 'Deletes multiple inventory instances at once, unreserving each from any assembly part first. Cannot be undone.',
+    parameters: { type: 'object', properties: { instanceIds: { type: 'array', items: { type: 'string' } } }, required: ['instanceIds'] },
+  },
+
+  'AgendaService.bulkSetTaskStatus': {
+    description: 'Changes status on multiple tasks at once (completedAt derived per task automatically).',
+    parameters: { type: 'object', properties: { updates: { type: 'array', items: { type: 'object', properties: { taskId: { type: 'string' }, status: { type: 'string', enum: ['not_started', 'in_progress', 'complete', 'archived'] } }, required: ['taskId', 'status'] } } }, required: ['updates'] },
+  },
+  'AgendaService.bulkDeleteTasks': {
+    description: 'Deletes multiple tasks and their links at once. Cannot be undone.',
+    parameters: { type: 'object', properties: { taskIds: { type: 'array', items: { type: 'string' } } }, required: ['taskIds'] },
+  },
 }
 
 // ── Simple auto-generated actions (id-shaped, no real structure) ─────
@@ -456,6 +528,7 @@ const AUTO_SPEC = {
   'AssemblyPartService.getById': ['partId'],
   'AssemblyPartService.listForAssembly': ['assemblyId'],
   'AssemblyPartService.listForChild': ['assemblyChildId'],
+  'AssemblyPartService.listTreeForAssembly': ['assemblyId'],
   'AssemblyPartService.updateQuantityNeeded': ['partId', { field: 'quantityNeeded', type: 'integer' }],
   'AssemblyPartService.linkComponent': ['partId', 'componentId'],
   'AssemblyPartService.deletePart': ['partId'],
@@ -480,8 +553,9 @@ function autoFromSpec(fieldSpecs) {
 // ── Assemble the registry ─────────────────────────────────────────────
 const DESCRIPTIONS = {
   'AssemblyPartService.getById': 'Fetches one assembly part by id.',
-  'AssemblyPartService.listForAssembly': "Lists a root assembly's direct parts. Use this if you need to view all the parts that belong to an assembly.",
+  'AssemblyPartService.listForAssembly': "Lists only the direct parts of a root assembly. Use listTreeForAssembly for the complete BOM, including nested subassemblies.",
   'AssemblyPartService.listForChild': "Lists a subassembly node's direct parts.",
+  'AssemblyPartService.listTreeForAssembly': "Lists every part in a root assembly, including parts in nested subassemblies. Use this for a complete Partshelf BOM view.",
   'AssemblyPartService.search': 'Searches assembly and subassembly parts by name, part number, or notes. Make sure not to search any parts by the assembly name, which usually comes up with an empty list.',
   'AssemblyService.listChildren': "Lists a root assembly's direct subassemblies.",
   'AssemblyService.listWholeTree': "Lists every nested subassembly beneath a root assembly.",

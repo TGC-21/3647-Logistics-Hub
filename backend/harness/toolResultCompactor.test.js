@@ -30,3 +30,25 @@ describe('compactAssistantMessage', () => {
       .toEqual({ role: 'assistant', content: '', tool_calls: [{ id: 'call1' }] })
   })
 })
+// backend/harness/toolResultCompactor.test.js — add this block
+
+describe('compactToolResult — join-key preservation', () => {
+  it('never strips fields a caller needs to cross-reference results across tool calls', () => {
+    const part = {
+      id: 'part1', componentId: 'comp1', partNumber: 'PN-123', partName: 'Bearing',
+      fabricationMetadata: { kind: 'spacer', status: 'queued' },
+      onshapeReference: { fullConfiguration: 'huge blob' },   // fine to drop
+      linkedInstanceIds: ['inst1'],                            // fine to drop
+    }
+    const result = compactToolResult(part)
+
+    // These are exactly the fields matching/cross-referencing logic (and
+    // AssemblyPartService.checkAvailability's own matching tiers) depend
+    // on — if any of these ever get added to OMITTED_KEYS, joins silently
+    // break with no visible error, which is worse than a loud one.
+    expect(result.id).toBe('part1')
+    expect(result.componentId).toBe('comp1')
+    expect(result.partNumber).toBe('PN-123')
+    expect(result.partName).toBe('Bearing')
+  })
+})

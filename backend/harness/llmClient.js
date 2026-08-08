@@ -15,7 +15,8 @@
 import { compactAssistantMessage } from './toolResultCompactor.js'
 import { estimateRequestContext } from './contextWindow.js'
 
-const DEFAULT_TIMEOUT_MS = 120_000   // local 14B inference can be slow — generous default, not Onshape's snappier timeout assumptions
+const DEFAULT_TIMEOUT_MS = 240_000   // local 14B inference can be slow — generous default, not Onshape's snappier timeout assumptions
+
 
 function getConfig() {
   const baseUrl = process.env.LLM_BASE_URL
@@ -42,62 +43,77 @@ function getConfig() {
  * shape a caller can act on — never returns a malformed/partial result
  * silently.
  */
-export async function chatCompletion({ messages, tools = [], temperature = 0.3, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+export async function chatCompletion({ messages, tools = [], temperature = 0.3, timeoutMs = DEFAULT_TIMEOUT_MS, retries = 2 } = {}) {
   if (!Array.isArray(messages) || !messages.length) {
     throw new Error('chatCompletion requires a non-empty messages array')
   }
 
   const { baseUrl, model } = getConfig()
-
   const body = {
-    model,
-    messages,
-    temperature,
+    model, messages, temperature,
     ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
   }
 
   const context = estimateRequestContext({ messages, tools })
   console.info('[harness] LLM context estimate', {
-    messageCount: messages.length,
-    toolCount: tools.length,
-    requestBytes: context.requestBytes,
-    estimatedTokens: context.estimatedTokens,
+    messageCount: messages.length, toolCount: tools.length,
+    requestBytes: context.requestBytes, estimatedTokens: context.estimatedTokens,
   })
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-  let res
-  try {
-    res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-  } catch (e) {
-    if (e.name === 'AbortError') {
-      throw new Error(`LLM request timed out after ${timeoutMs}ms — the inference server may be overloaded or unreachable (check the WireGuard tunnel).`)
+    let res
+    try {
+      res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } catch (e) {
+      clearTimeout(timer)
+      // Network-level failure (connection refused, DNS, abort) — retryable
+      // if we haven't exhausted attempts, since a locally-hosted inference
+      // server is far more prone to transient hiccups (model still loading
+      // a prior request, brief GPU contention) than a hosted API.
+      const isTimeout = e.name === 'AbortError'
+      if (attempt < retries) {
+        const backoffMs = 500 * 2 ** attempt
+        console.warn(`[harness] LLM request ${isTimeout ? 'timed out' : 'failed'} (attempt ${attempt + 1}/${retries + 1}) — retrying in ${backoffMs}ms: ${e.message}`)
+        await sleep(backoffMs)
+        continue
+      }
+      throw isTimeout
+        ? new Error(`LLM request timed out after ${timeoutMs}ms (${retries + 1} attempts) — the inference server may be overloaded or unreachable.`)
+        : new Error(`LLM request failed after ${retries + 1} attempts: ${e.message} — is the inference server running and reachable at ${baseUrl}?`)
     }
-    throw new Error(`LLM request failed: ${e.message} — is the inference server running and reachable at ${baseUrl}?`)
-  } finally {
     clearTimeout(timer)
-  }
 
-  if (!res.ok) {
+    if (res.ok) {
+      const data = await res.json()
+      const message = data?.choices?.[0]?.message
+      if (!message) throw new Error('LLM response missing choices[0].message — unexpected response shape from inference server')
+      return compactAssistantMessage(message)
+    }
+
+    // 5xx from the inference server is often transient (OOM recovery,
+    // model swap) — retry those; 4xx (bad request shape) never will
+    // succeed on retry, so fail immediately.
+    if (res.status >= 500 && attempt < retries) {
+      const backoffMs = 500 * 2 ** attempt
+      console.warn(`[harness] LLM server returned ${res.status} (attempt ${attempt + 1}/${retries + 1}) — retrying in ${backoffMs}ms`)
+      await sleep(backoffMs)
+      continue
+    }
+
     const text = await res.text().catch(() => '')
     throw new Error(`LLM server returned ${res.status}: ${text.slice(0, 400)}`)
   }
-
-  const data = await res.json()
-  const message = data?.choices?.[0]?.message
-  if (!message) {
-    throw new Error('LLM response missing choices[0].message — unexpected response shape from inference server')
-  }
-
-  // Do not let provider-specific fields such as Qwen's reasoning_content
-  // enter durable history and get sent back on every subsequent round.
-  return compactAssistantMessage(message)
 }
 
 /** Cheap reachability check — for the "curl-test the inference server

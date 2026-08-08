@@ -127,7 +127,10 @@
     <aside class="agent-panel" id="agent-panel" aria-label="Partshelf agent" aria-hidden="true">
       <div class="agent-panel-header">
         <div><div class="agent-panel-title"><i class="ti ti-sparkles" aria-hidden="true"></i> Clinker </div><div class="agent-panel-subtitle">Partshelf actions</div></div>
-        <button class="btn-icon" id="btn-close-agent-panel" aria-label="Close agent"><i class="ti ti-x" aria-hidden="true"></i></button>
+        <div class="agent-panel-header-actions">
+          <button class="btn btn-sm" id="btn-new-agent-chat" type="button"><i class="ti ti-plus" aria-hidden="true"></i><span>New chat</span></button>
+          <button class="btn-icon" id="btn-close-agent-panel" aria-label="Close agent"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>
       </div>
       <div class="agent-thread" id="agent-thread" aria-live="polite">
         <div class="agent-welcome"><i class="ti ti-sparkles" aria-hidden="true"></i><div><strong>What can I help with?</strong><p>Ask Clinker to find, organize, or update your Partshelf workspace.</p></div></div>
