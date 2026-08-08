@@ -456,6 +456,7 @@ const AUTO_SPEC = {
   'AssemblyPartService.getById': ['partId'],
   'AssemblyPartService.listForAssembly': ['assemblyId'],
   'AssemblyPartService.listForChild': ['assemblyChildId'],
+  'AssemblyPartService.listTreeForAssembly': ['assemblyId'],
   'AssemblyPartService.updateQuantityNeeded': ['partId', { field: 'quantityNeeded', type: 'integer' }],
   'AssemblyPartService.linkComponent': ['partId', 'componentId'],
   'AssemblyPartService.deletePart': ['partId'],
@@ -480,8 +481,9 @@ function autoFromSpec(fieldSpecs) {
 // ── Assemble the registry ─────────────────────────────────────────────
 const DESCRIPTIONS = {
   'AssemblyPartService.getById': 'Fetches one assembly part by id.',
-  'AssemblyPartService.listForAssembly': "Lists a root assembly's direct parts. Use this if you need to view all the parts that belong to an assembly.",
+  'AssemblyPartService.listForAssembly': "Lists only the direct parts of a root assembly. Use listTreeForAssembly for the complete BOM, including nested subassemblies.",
   'AssemblyPartService.listForChild': "Lists a subassembly node's direct parts.",
+  'AssemblyPartService.listTreeForAssembly': "Lists every part in a root assembly, including parts in nested subassemblies. Use this for a complete Partshelf BOM view.",
   'AssemblyPartService.search': 'Searches assembly and subassembly parts by name, part number, or notes. Make sure not to search any parts by the assembly name, which usually comes up with an empty list.',
   'AssemblyService.listChildren': "Lists a root assembly's direct subassemblies.",
   'AssemblyService.listWholeTree': "Lists every nested subassembly beneath a root assembly.",

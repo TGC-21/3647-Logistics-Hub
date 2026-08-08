@@ -40,6 +40,7 @@ export const ACTION_SEVERITY = {
   'AssemblyPartService.getById':              SEVERITY.READ,
   'AssemblyPartService.listForAssembly':      SEVERITY.READ,
   'AssemblyPartService.listForChild':         SEVERITY.READ,
+  'AssemblyPartService.listTreeForAssembly':  SEVERITY.READ,
   'AssemblyPartService.search':               SEVERITY.READ,
   'AssemblyPartService.computeOwnerStatus':   SEVERITY.READ,
   'AssemblyPartService.createPart':           SEVERITY.WRITE,

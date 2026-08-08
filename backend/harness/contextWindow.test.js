@@ -24,4 +24,10 @@ describe('buildContextWindow', () => {
     expect(result.trimmed).toBe(false)
     expect(result.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'tool'])
   })
+
+  it('always includes the assembly retrieval guardrail in the system prompt', () => {
+    const result = buildContextWindow([{ role: 'user', content: 'Check the Intake parts' }])
+    expect(result.messages[0].content).toContain('AssemblyPartService.listTreeForAssembly')
+    expect(result.messages[0].content).toContain('OnshapeLookupService.previewAssembly')
+  })
 })

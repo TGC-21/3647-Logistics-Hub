@@ -71,6 +71,15 @@ export class AssemblyPartService {
     return this.partRepo.findForOwner({ assemblyChildId })
   }
 
+  /** Returns every part in a root assembly, including all nested
+   * subassemblies. This is the read surface for questions such as "what
+   * parts are in Intake?"; callers should not have to infer completeness
+   * from a sequence of root/direct-child reads. */
+  async listTreeForAssembly({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
+    return this.partRepo.findTreeForAssembly(assemblyId)
+  }
+
   /** Focused read surface for the harness. Searches names, part numbers, and
    * notes server-side so the model does not have to enumerate part records. */
   async search({ query, assemblyId = null }) {
