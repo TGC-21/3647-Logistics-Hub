@@ -64,6 +64,7 @@ export class AssemblyPartService {
   }
 
   async listForAssembly({ assemblyId }) {
+    if (!assemblyId) throw new ValidationError('assemblyId is required')
     return this.partRepo.findForOwner({ assemblyId })
   }
 

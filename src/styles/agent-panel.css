@@ -1,7 +1,7 @@
 /* ── Clinker: action-oriented agent panel ─────────────────── */
 .agent-panel { width:0; min-width:0; overflow:hidden; background:var(--color-background-primary); border-left:0 solid var(--color-border-secondary); display:flex; flex-direction:column; transition:width .2s ease, border-width .2s ease; }
 .agent-panel.open { width:360px; min-width:360px; border-left-width:.5px; }
-.agent-panel-header { height:60px; padding:0 12px 0 16px; border-bottom:.5px solid var(--color-border-secondary); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+.agent-panel-header { height:60px; padding:0 12px 0 16px; border-bottom:.5px solid var(--color-border-secondary); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }.agent-panel-header-actions { display:flex; align-items:center; gap:4px; }.agent-panel-header-actions .btn { white-space:nowrap; }
 .agent-panel-title { display:flex; align-items:center; gap:7px; font-weight:600; font-size:14px; }.agent-panel-title i { color:var(--color-accent); font-size:17px; }.agent-panel-subtitle { font-size:11px; color:var(--color-text-tertiary); margin-top:2px; }
 .agent-thread { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; min-height:160px; }
 .agent-welcome { display:flex; gap:10px; padding:10px 2px; color:var(--color-text-secondary); font-size:12px; line-height:1.45; }.agent-welcome > i { color:var(--color-accent); font-size:19px; }.agent-welcome strong { color:var(--color-text-primary); font-size:13px; }.agent-welcome p { margin:3px 0 0; }

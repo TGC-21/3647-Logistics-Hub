@@ -7,6 +7,7 @@ import { fetchPendingActions, resolvePendingAction } from './services/harnessApi
 
 let conversationId = null
 let pendingActions = []
+let conversationEpoch = 0
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char])
@@ -118,6 +119,27 @@ function appendMessage(role, content) {
   thread.scrollTop = thread.scrollHeight
 }
 
+function renderWelcome() {
+  const thread = document.getElementById('agent-thread')
+  thread.innerHTML = '<div class="agent-welcome"><i class="ti ti-sparkles" aria-hidden="true"></i><div><strong>What can I help with?</strong><p>Ask Clinker to find, organize, or update your Partshelf workspace.</p></div></div>'
+}
+
+/**
+ * Starts a client-side chat from a known blank state. A conversation is not
+ * created on the server until the member sends its first message. Incrementing
+ * the epoch means a late response from an abandoned/in-flight chat cannot
+ * attach its conversation id or reply to the newly-created chat.
+ */
+function startNewChat({ focus = false } = {}) {
+  conversationEpoch++
+  conversationId = null
+  renderWelcome()
+  const input = document.getElementById('agent-message')
+  input.value = ''
+  setBusy(false)
+  if (focus) input.focus()
+}
+
 function setBusy(busy) {
   const input = document.getElementById('agent-message')
   const send = document.getElementById('btn-send-agent-message')
@@ -179,14 +201,22 @@ async function sendMessage(event) {
   appendMessage('user', message)
   input.value = ''
   setBusy(true)
+  const requestEpoch = conversationEpoch
   try {
     const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId }) })
+    // The member selected New chat (or the page initialized a fresh chat)
+    // while this request was still running. Let the server finish and retain
+    // its audit history, but never revive that prior conversation in this UI.
+    if (requestEpoch !== conversationEpoch) return
     conversationId = result.conversationId
     appendMessage('assistant', result.reply || result.message || 'I’ve paused here until you decide on the requested action.')
     await Promise.all([refreshPendingActions(), refreshHistory()])
   } catch (error) {
+    if (requestEpoch !== conversationEpoch) return
     appendMessage('assistant', `I couldn’t complete that: ${error.message}`)
-  } finally { setBusy(false) }
+  } finally {
+    if (requestEpoch === conversationEpoch) setBusy(false)
+  }
 }
 
 async function decide(pendingActionId, decision) {
@@ -206,6 +236,10 @@ export function bindAgentPanelEvents() {
   const close = () => { panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); document.getElementById('btn-open-agent-panel').setAttribute('aria-expanded', 'false') }
   document.getElementById('btn-open-agent-panel').addEventListener('click', () => panel.classList.contains('open') ? close() : open())
   document.getElementById('btn-close-agent-panel').addEventListener('click', close)
+  document.getElementById('btn-new-agent-chat').addEventListener('click', () => startNewChat({ focus: true }))
   document.getElementById('agent-composer').addEventListener('submit', sendMessage)
+  // Reloading never resumes a server conversation. Use the exact same path
+  // as the visible New chat button so the lifecycle stays explicit.
+  startNewChat()
   refreshPendingActions().catch(error => console.error('[agent-panel] pending actions', error))
 }
