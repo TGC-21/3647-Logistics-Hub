@@ -35,6 +35,8 @@
 import { TaskRepository } from '../repositories/TaskRepository.js'
 import { TaskLinkRepository } from '../repositories/TaskLinkRepository.js'
 import { ValidationError } from '../repositories/errors.js'
+import { runBulk } from '../../backend/_lib/bulkOps.js'
+
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -175,5 +177,13 @@ export class AgendaService {
     const deleted = await this.taskLinkRepo.delete(linkId)
     if (!deleted) throw new ValidationError(`Task link ${linkId} not found`)
     return { deletedLinkId: linkId }
+  }
+
+    async bulkSetTaskStatus({ updates, actorId = null }) {
+    return runBulk(updates, (u) => this.setTaskStatus(u), { keyOf: u => u.taskId })
+  }
+
+  async bulkDeleteTasks({ taskIds }) {
+    return runBulk(taskIds.map(taskId => ({ taskId })), (u) => this.deleteTask(u), { keyOf: u => u.taskId })
   }
 }

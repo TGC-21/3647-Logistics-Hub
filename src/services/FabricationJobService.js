@@ -30,6 +30,8 @@ import { FabricationJobRepository } from '../repositories/FabricationJobReposito
 import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError, ConflictError } from '../repositories/errors.js'
+import { runBulk } from '../../backend/_lib/bulkOps.js'
+
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -188,5 +190,25 @@ export class FabricationJobService {
     })
 
     return { deletedJobId: jobId, reopenedPart }
+  }
+
+    /** Bulk fetch — resolve several known job ids in one call. */
+  async getByIds({ jobIds }) {
+    if (!Array.isArray(jobIds) || !jobIds.length) throw new ValidationError('jobIds is required')
+    const all = await this.jobRepo.findAll()
+    const byId = new Map(all.map(j => [j.id, j]))
+    return jobIds.map(id => byId.get(id)).filter(Boolean)
+  }
+
+  /** Bulk progress logging — [{ jobId, quantity }]. Useful for "mark all
+   *  these jobs as fully machined" or logging a batch's worth of jobs
+   *  finishing together. */
+  async bulkRecordMachinedUnits({ updates, actorId = null }) {
+    return runBulk(updates, (u) => this.recordMachinedUnits({ ...u, actorId }), { keyOf: u => u.jobId })
+  }
+
+  /** Bulk delete of unclaimed jobs — jobIds is a flat array. */
+  async bulkDeleteQueuedJobs({ jobIds, actorId = null }) {
+    return runBulk(jobIds.map(jobId => ({ jobId })), (u) => this.deleteQueuedJob({ ...u, actorId }), { keyOf: u => u.jobId })
   }
 }

@@ -27,6 +27,7 @@ import { buildContextWindow } from './contextWindow.js'
 import { selectToolActions } from './toolSelection.js'
 
 const MAX_TOOL_ITERATIONS = 16   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
+const MAX_IDENTICAL_FAILURES = 2
 
 /**
  * Runs one turn of a conversation for a member's message. Returns:
@@ -94,7 +95,23 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true }) {
   // match given HarnessGateway wrote both from the same call.
   const pendingActions = await pendingActionRepo.findAwaitingForMember(memberId).catch(() => [])
   const toolActionName = getTool(toolName)?.actionName
-  const matchingPending = pendingActions.find(p => p.actionName === toolActionName)
+
+  // Match on BOTH actionName and args — actionName alone isn't unique if
+  // the member has more than one pending confirmation of the same kind at
+  // once (e.g. two separate deletePart approvals queued together). Args
+  // are compared as normalized JSON since key order isn't guaranteed to
+  // match between what the LLM emitted and what's stored on the pending row.
+  const normalize = obj => JSON.stringify(obj, Object.keys(obj || {}).sort())
+  const matchingPending = pendingActions.find(p =>
+    p.actionName === toolActionName && normalize(p.actionArgs) === normalize(args)
+  )
+
+  if (!matchingPending) {
+    throw new Error(
+      `No pending confirmation found matching the blocked tool call "${toolName}" with these exact arguments — ` +
+      `it may have already been resolved, or belongs to a different conversation.`
+    )
+  }
   const resolvedArgs = matchingPending ? matchingPending.actionArgs : args
 
   let toolResultContent
@@ -139,14 +156,24 @@ function findUnansweredToolCall(messages) {
   return null
 }
 
+
+function callKey(toolName, args) {
+  return `${toolName}::${JSON.stringify(args, Object.keys(args || {}).sort())}`
+}
+
 /** Shared tail of runTurn()'s loop, factored out so resumeTurn() can
  *  rejoin the same iteration logic after appending its one replayed
  *  tool result, instead of duplicating the LLM round-trip/tool-call
  *  handling a second time. */
 async function continueLoop({ conversationId, memberId, isAgent, messages }) {
   const conversationService = new HarnessConversationService()
+  const seenCallsThisTurn = new Map()   // callKey -> already-compacted result string
+  const failureCounts = new Map()   // callKey -> consecutive failure count
+
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const context = buildContextWindow(messages)
+    
     const tools = buildToolSchema({ actionNames: selectToolActions(context.messages) })
     const assistantMessage = await chatCompletion({ messages: context.messages, tools })
     const withAssistant = await conversationService.appendMessage({ conversationId, message: assistantMessage })
@@ -154,61 +181,74 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
 
     const toolCalls = assistantMessage.tool_calls || []
     if (!toolCalls.length) {
-      // Conversations are chat-style and infinitely continuable now — a
-      // plain-text reply just means this TURN is done, not that the
-      // conversation itself is over. We deliberately do NOT flip the DB
-      // status to 'completed' here anymore: doing so used to make
-      // runTurn() refuse a same-conversationId follow-up message ("import
-      // this assembly" -> reply -> "now run detection" would throw,
-      // because a completed conversation can only be read, never
-      // continued). The conversation stays 'active' indefinitely; nothing
-      // in this codebase currently marks it 'completed' except the old
-      // call removed here. If an explicit "end conversation" action is
-      // ever added, call conversationService.complete() there instead.
       return { conversationId, status: 'completed', reply: assistantMessage.content || '' }
     }
 
     for (let callIndex = 0; callIndex < toolCalls.length; callIndex++) {
       const rawCall = toolCalls[callIndex]
       const { toolName, args, toolCallId } = parseToolCall(rawCall)
+      const key = callKey(toolName, args)
+
       let toolResultContent
-      try {
-        const result = await executeTool(toolName, args, { memberId, isAgent, reason: null })
-        toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
-      } catch (err) {
-        if (err.name === 'ConfirmationRequiredError') {
-          // The assistant message carrying this whole tool_calls batch is
-          // already in history. If this isn't the LAST call in the batch,
-          // every call AFTER this one still has no matching 'tool' reply —
-          // and never will, since we're about to pause and return. Left
-          // unanswered, the next chatCompletion() call would send a
-          // protocol-invalid history (an assistant tool_calls entry with no
-          // reply), which strict chat templates reject — same failure class
-          // as the earlier system-message bug. Stub each remaining call out
-          // with a deferred marker so history always stays valid;
-          // resumeTurn()'s findUnansweredToolCall() then finds exactly the
-          // one real unanswered call (this one), not one of these stubs.
-          await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
+      if (seenCallsThisTurn.has(key)){
+        // Same tool, same args, already answered this turn — hand back
+        // the cached result with a note, rather than re-hitting the DB
+        // (or, worse, letting a second identical call silently return a
+        // DIFFERENT answer mid-turn and confuse the model further).
+        toolResultContent = JSON.stringify({
+          ...JSON.parse(seenCallsThisTurn.get(key)),
+          _note: 'Identical call already made earlier this turn — reusing that result. If you need fresh data, that likely means something else is wrong with your approach, not this tool.',
+        })
+      } else {
+        try {
+          const result = await executeTool(toolName, args, { memberId, isAgent, reason: null })
+          toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
+          seenCallsThisTurn.set(key, toolResultContent)
+          failureCounts.delete(key)
+        } catch (err) {
+          if (err.name === 'ConfirmationRequiredError') {
+            // The assistant message carrying this whole tool_calls batch is
+            // already in history. If this isn't the LAST call in the batch,
+            // every call AFTER this one still has no matching 'tool' reply —
+            // and never will, since we're about to pause and return. Left
+            // unanswered, the next chatCompletion() call would send a
+            // protocol-invalid history (an assistant tool_calls entry with no
+            // reply), which strict chat templates reject — same failure class
+            // as the earlier system-message bug. Stub each remaining call out
+            // with a deferred marker so history always stays valid;
+            // resumeTurn()'s findUnansweredToolCall() then finds exactly the
+            // one real unanswered call (this one), not one of these stubs.
+            await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
 
-          for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
-            const deferred = parseToolCall(toolCalls[deferredIndex])
-            await conversationService.appendMessage({
-              conversationId,
-              message: {
-                role: 'tool', tool_call_id: deferred.toolCallId,
-                content: JSON.stringify({ error: 'Deferred — waiting on confirmation for an earlier action in this batch. This action was not executed.' }),
-              },
-            })
-          }
+            for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
+              const deferred = parseToolCall(toolCalls[deferredIndex])
+              await conversationService.appendMessage({
+                conversationId,
+                message: {
+                  role: 'tool', tool_call_id: deferred.toolCallId,
+                  content: JSON.stringify({ error: 'Deferred — waiting on confirmation for an earlier action in this batch. This action was not executed.' }),
+                },
+              })
+            }
 
-          return {
-            conversationId, status: 'awaiting_confirmation',
-            pendingActionId: err.reason,
-            message: `Waiting on your confirmation for "${toolName}" before continuing.`,
+              return {
+                conversationId, status: 'awaiting_confirmation',
+                pendingActionId: err.reason,
+                message: `Waiting on your confirmation for "${toolName}" before continuing.`,
+            }
           }
+          const failures = (failureCounts.get(key) || 0) + 1
+          failureCounts.set(key, failures)
+
+          toolResultContent = failures >= MAX_IDENTICAL_FAILURES
+            ? JSON.stringify({
+                error: err.message || 'Tool execution failed',
+                _note: `This exact call has now failed ${failures} times in a row with the same arguments. Retrying it again with the same arguments will not work — either the arguments are wrong, the referenced item does not exist, or a different tool/approach is needed. Do not repeat this exact call.`,
+              })
+            : JSON.stringify({ error: err.message || 'Tool execution failed' })
         }
-        toolResultContent = JSON.stringify({ error: err.message || 'Tool execution failed' })
       }
+      
       const withToolResult = await conversationService.appendMessage({
         conversationId, message: { role: 'tool', tool_call_id: toolCallId, content: toolResultContent },
       })
@@ -216,5 +256,21 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
     }
   }
 
-  throw new Error(`Conversation ${conversationId} exceeded ${MAX_TOOL_ITERATIONS} tool-call iterations without resolving — aborting to avoid a runaway loop.`)
+  const context = buildContextWindow(messages)
+  const fallbackMessages = [
+    ...context.messages,
+    {
+      role: 'user',
+      content: 'You have used all available tool-call steps for this turn. Summarize what you found so far, including anything still uncertain or unfinished, without calling any more tools.',
+    },
+  ]
+  const fallbackReply = await chatCompletion({ messages: fallbackMessages, tools: [] })
+  const withFallback = await conversationService.appendMessage({ conversationId, message: fallbackReply })
+
+  return {
+    conversationId,
+    status: 'completed',
+    reply: fallbackReply.content || 'I ran out of steps before finishing — try narrowing the request.',
+    truncated: true,
+  }
 }

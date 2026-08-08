@@ -37,29 +37,35 @@ const MIN_TRUST_FOR_SEVERITY = {
 // stop, regardless of trust level (fail closed, not fail open).
 export const ACTION_SEVERITY = {
   // Assembly Parts
-  'AssemblyPartService.getById':              SEVERITY.READ,
-  'AssemblyPartService.listForAssembly':      SEVERITY.READ,
-  'AssemblyPartService.listForChild':         SEVERITY.READ,
-  'AssemblyPartService.listTreeForAssembly':  SEVERITY.READ,
-  'AssemblyPartService.search':               SEVERITY.READ,
-  'AssemblyPartService.computeOwnerStatus':   SEVERITY.READ,
-  'AssemblyPartService.createPart':           SEVERITY.WRITE,
-  'AssemblyPartService.updatePart':           SEVERITY.WRITE,
-  'AssemblyPartService.updateQuantityNeeded': SEVERITY.WRITE,
-  'AssemblyPartService.linkComponent':        SEVERITY.WRITE,
-  'AssemblyPartService.deletePart':           SEVERITY.DESTRUCTIVE,
+  'AssemblyPartService.getById':                  SEVERITY.READ,
+  'AssemblyPartService.listForAssembly':          SEVERITY.READ,
+  'AssemblyPartService.listForChild':             SEVERITY.READ,
+  'AssemblyPartService.listTreeForAssembly':      SEVERITY.READ,
+  'AssemblyPartService.search':                   SEVERITY.READ,
+  'AssemblyPartService.computeOwnerStatus':       SEVERITY.READ,
+  'AssemblyPartService.checkAvailability':        SEVERITY.READ,
+  'AssemblyPartService.getByIds':                 SEVERITY.READ,
+  'AssemblyPartService.createPart':               SEVERITY.WRITE,
+  'AssemblyPartService.updatePart':               SEVERITY.WRITE,
+  'AssemblyPartService.updateQuantityNeeded':     SEVERITY.WRITE,
+  'AssemblyPartService.linkComponent':            SEVERITY.WRITE,
+  'AssemblyPartService.bulkUpdateParts':          SEVERITY.WRITE,
+  'AssemblyPartService.bulkUpdateQuantityNeeded': SEVERITY.WRITE,
+  'AssemblyPartService.bulkLinkComponent':        SEVERITY.WRITE,
+  'AssemblyPartService.deletePart':               SEVERITY.DESTRUCTIVE,
+  'AssemblyPartService.bulkDeleteParts':          SEVERITY.DESTRUCTIVE,
 
   // Assemblies
-  'AssemblyService.createAssembly':           SEVERITY.WRITE,
-  'AssemblyService.updateAssembly':           SEVERITY.WRITE,
+  'AssemblyService.createAssembly':            SEVERITY.WRITE,
+  'AssemblyService.updateAssembly':            SEVERITY.WRITE,
   'AssemblyService.deleteAssemblyWithCascade': SEVERITY.DESTRUCTIVE,
 
   // Onshape import/reimport
-  'OnshapeImportService.importAssembly':      SEVERITY.WRITE,
-  'OnshapeReimportService.reimportAssembly':  SEVERITY.DESTRUCTIVE,   // can silently drop jobs/links — per product decision
-  'OnshapeLookupService.searchDocuments':     SEVERITY.READ,
+  'OnshapeImportService.importAssembly':       SEVERITY.WRITE,
+  'OnshapeReimportService.reimportAssembly':   SEVERITY.DESTRUCTIVE,   // can silently drop jobs/links — per product decision
+  'OnshapeLookupService.searchDocuments':      SEVERITY.READ,
   'OnshapeLookupService.listAssemblyElements': SEVERITY.READ,
-  'OnshapeLookupService.previewAssembly':     SEVERITY.READ,
+  'OnshapeLookupService.previewAssembly':      SEVERITY.READ,
 
   // Inventory reservation
   'InventoryReservationService.reserve':      SEVERITY.WRITE,
@@ -69,9 +75,12 @@ export const ACTION_SEVERITY = {
   'InventoryReservationService.quickCollect': SEVERITY.WRITE,
   
   // Fabrication jobs
-  'FabricationJobService.createJob':          SEVERITY.WRITE,
-  'FabricationJobService.recordMachinedUnits':SEVERITY.WRITE,
-  'FabricationJobService.deleteQueuedJob':    SEVERITY.DESTRUCTIVE,
+  'FabricationJobService.getByIds':                SEVERITY.READ,
+  'FabricationJobService.bulkRecordMachinedUnits': SEVERITY.WRITE,
+  'FabricationJobService.createJob':               SEVERITY.WRITE,
+  'FabricationJobService.recordMachinedUnits':     SEVERITY.WRITE,
+  'FabricationJobService.deleteQueuedJob':         SEVERITY.DESTRUCTIVE,
+  'FabricationJobService.bulkDeleteQueuedJobs':    SEVERITY.DESTRUCTIVE,
 
   // Fabrication detection confirm
   'FabricationDetectionService.confirmDetection': SEVERITY.WRITE,
@@ -81,8 +90,10 @@ export const ACTION_SEVERITY = {
   // Cart / Part Orders
   'CartService.createCartItem':               SEVERITY.WRITE,
   'CartService.advanceItemStatus':            SEVERITY.WRITE,
+  'CartService.bulkAdvanceItemStatus':        SEVERITY.WRITE,
   'CartService.findOrCreateCartForVendor':    SEVERITY.WRITE,
   'CartService.deleteItem':                   SEVERITY.DESTRUCTIVE,
+  'CartService.bulkDeleteItems':              SEVERITY.DESTRUCTIVE,
 
   // Categories
   'CategoryService.getById':                  SEVERITY.READ,
@@ -98,11 +109,13 @@ export const ACTION_SEVERITY = {
   // Agenda
   'AgendaService.createTask':                 SEVERITY.WRITE,
   'AgendaService.updateTask':                 SEVERITY.WRITE,
-  'AgendaService.setTaskStatus':               SEVERITY.WRITE,
-  'AgendaService.duplicateTask':               SEVERITY.WRITE,
-  'AgendaService.addTaskLink':                 SEVERITY.WRITE,
-  'AgendaService.deleteTask':                  SEVERITY.DESTRUCTIVE,
-  'AgendaService.removeTaskLink':              SEVERITY.WRITE,
+  'AgendaService.setTaskStatus':              SEVERITY.WRITE,
+  'AgendaService.bulkSetTaskStatus':          SEVERITY.WRITE,
+  'AgendaService.duplicateTask':              SEVERITY.WRITE,
+  'AgendaService.addTaskLink':                SEVERITY.WRITE,
+  'AgendaService.removeTaskLink':             SEVERITY.WRITE,
+  'AgendaService.deleteTask':                 SEVERITY.DESTRUCTIVE,
+  'AgendaService.bulkDeleteTasks':            SEVERITY.DESTRUCTIVE,
 
 
   // Categories (read)
@@ -112,14 +125,16 @@ export const ACTION_SEVERITY = {
   'ComponentService.listAll':                 SEVERITY.READ,
   'ComponentService.search':                  SEVERITY.READ,
   // Inventory Instances (read)
-  'InventoryInstanceService.listAll':         SEVERITY.READ,
-  'InventoryInstanceService.listForComponent':SEVERITY.READ,
-  'InventoryInstanceService.listForComponents':SEVERITY.READ,
-  'InventoryInstanceService.getById':          SEVERITY.READ,
-  'InventoryInstanceService.createInstance':   SEVERITY.WRITE,
-  'InventoryInstanceService.updateInstance':   SEVERITY.WRITE,
-  'InventoryInstanceService.deleteInstance':   SEVERITY.DESTRUCTIVE,
-  
+  'InventoryInstanceService.listAll':               SEVERITY.READ,
+  'InventoryInstanceService.listForComponent':      SEVERITY.READ,
+  'InventoryInstanceService.listForComponents':     SEVERITY.READ,
+  'InventoryInstanceService.getById':               SEVERITY.READ,
+  'InventoryInstanceService.getByIds':              SEVERITY.READ,
+  'InventoryInstanceService.createInstance':        SEVERITY.WRITE,
+  'InventoryInstanceService.updateInstance':        SEVERITY.WRITE,
+  'InventoryInstanceService.deleteInstance':        SEVERITY.DESTRUCTIVE,
+    'InventoryInstanceService.bulkDeleteInstances': SEVERITY.DESTRUCTIVE,
+
   // Assemblies (read)
   'AssemblyService.listAssemblies':           SEVERITY.READ,
   'AssemblyService.listChildren':             SEVERITY.READ,

@@ -31,6 +31,8 @@ import { CartRepository } from '../repositories/CartRepository.js'
 import { PartNumberRepository } from '../repositories/PartNumberRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError, ConflictError } from '../repositories/errors.js'
+import { runBulk } from '../../backend/_lib/bulkOps.js'
+
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 
@@ -172,5 +174,12 @@ export class CartService {
     if (existing) return existing
 
     return this.partNumberRepo.insert({ id: genId(), value: trimmed })
+  }
+    async bulkAdvanceItemStatus({ itemIds, actorId = null }) {
+    return runBulk(itemIds.map(itemId => ({ itemId })), (u) => this.advanceItemStatus({ ...u, actorId }), { keyOf: u => u.itemId })
+  }
+
+  async bulkDeleteItems({ itemIds, actorId = null }) {
+    return runBulk(itemIds.map(itemId => ({ itemId })), (u) => this.deleteItem({ ...u, actorId }), { keyOf: u => u.itemId })
   }
 }
