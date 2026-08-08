@@ -86,6 +86,22 @@ describe('AssemblyPartService.recomputeStatus', () => {
   })
 })
 
+describe('AssemblyPartService assembly reads', () => {
+  it('passes the assembly id from the harness-shaped argument object to the repository', async () => {
+    const repos = makeFakeRepos()
+    const service = new AssemblyPartService(repos)
+
+    await service.listForAssembly({ assemblyId: 'assembly-0200-c' })
+
+    expect(repos.partRepo.findForOwner).toHaveBeenCalledWith({ assemblyId: 'assembly-0200-c' })
+  })
+
+  it('rejects a missing assembly id instead of querying with an object or undefined', async () => {
+    const service = new AssemblyPartService(makeFakeRepos())
+    await expect(service.listForAssembly({})).rejects.toBeInstanceOf(ValidationError)
+  })
+})
+
 describe('AssemblyPartService.updateQuantityNeeded', () => {
   it('rejects a non-positive quantity', async () => {
     const service = new AssemblyPartService(makeFakeRepos())
