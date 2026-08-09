@@ -31,6 +31,8 @@ import { CartRepository } from '../repositories/CartRepository.js'
 import { PartNumberRepository } from '../repositories/PartNumberRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError, ConflictError } from '../repositories/errors.js'
+import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
+import { AssemblyChildRepository } from '../repositories/AssemblyChildRepository.js'
 import { runBulk } from '../../backend/_lib/bulkOps.js'
 
 
@@ -44,11 +46,15 @@ export class CartService {
     cartRepo       = new CartRepository(),
     partNumberRepo = new PartNumberRepository(),
     changeLogRepo  = new ChangeLogRepository(),
+    partRepo        = new AssemblyPartRepository(),     
+    assemblyChildRepo = new AssemblyChildRepository(),   
   } = {}) {
     this.cartItemRepo   = cartItemRepo
     this.cartRepo       = cartRepo
     this.partNumberRepo = partNumberRepo
     this.changeLogRepo  = changeLogRepo
+    this.partRepo        = partRepo
+    this.assemblyChildRepo = assemblyChildRepo
   }
 
   /**
@@ -62,6 +68,13 @@ export class CartService {
    * saveItemModal already allows.
    */
 
+
+  async getByIds({ itemIds }) {
+    if (!Array.isArray(itemIds) || !itemIds.length) throw new ValidationError('itemIds is required')
+    const all = await this.cartItemRepo.findAll()
+    const byId = new Map(all.map(j => [j.id, j]))
+    return jobIds.map(id => byId.get(id)).filter(Boolean)
+  }
   async listCarts() {
     return this.cartRepo.findAll()
   }
@@ -182,4 +195,39 @@ export class CartService {
   async bulkDeleteItems({ itemIds, actorId = null }) {
     return runBulk(itemIds.map(itemId => ({ itemId })), (u) => this.deleteItem({ ...u, actorId }), { keyOf: u => u.itemId })
   }
+  
+   /** Given cart item ids, resolves each item's root assembly id via its
+   *  earmarked assembly_part (null if the item isn't earmarked to a
+   *  part, or the part's owner chain can't be resolved). Mirrors
+   *  FabricationJobService.resolveAssemblyForJobs exactly — same
+   *  part -> assemblyId | assemblyChildId -> root walk, just entered
+   *  from a cart item instead of a job. */
+  async resolveAssemblyForItems({ itemIds }) {
+    if (!Array.isArray(itemIds) || !itemIds.length) throw new ValidationError('itemIds is required')
+
+    const items = await Promise.all(itemIds.map(id => this.cartItemRepo.findById(id)))
+    const partIds = [...new Set(items.filter(i => i?.assemblyPartId).map(i => i.assemblyPartId))]
+    const parts = partIds.length ? await this.partRepo.findByIds(partIds) : []
+    const partById = new Map(parts.map(p => [p.id, p]))
+
+    const childRootCache = new Map()
+    const results = []
+    for (const item of items) {
+      if (!item) continue
+      const part = item.assemblyPartId ? partById.get(item.assemblyPartId) : null
+      let assemblyId = part?.assemblyId ?? null
+      if (!assemblyId && part?.assemblyChildId) {
+        if (!childRootCache.has(part.assemblyChildId)) {
+          childRootCache.set(
+            part.assemblyChildId,
+            await this.assemblyChildRepo.findRootAssemblyId(part.assemblyChildId).catch(() => null)
+          )
+        }
+        assemblyId = childRootCache.get(part.assemblyChildId)
+      }
+      results.push({ itemId: item.id, assemblyId })
+    }
+    return results
+  }
+
 }

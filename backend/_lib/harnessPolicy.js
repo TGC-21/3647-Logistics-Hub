@@ -76,6 +76,7 @@ export const ACTION_SEVERITY = {
   
   // Fabrication jobs
   'FabricationJobService.getByIds':                SEVERITY.READ,
+  'FabricationJobService.resolveAssemblyForJobs':  SEVERITY.READ,
   'FabricationJobService.bulkRecordMachinedUnits': SEVERITY.WRITE,
   'FabricationJobService.createJob':               SEVERITY.WRITE,
   'FabricationJobService.recordMachinedUnits':     SEVERITY.WRITE,
@@ -88,6 +89,7 @@ export const ACTION_SEVERITY = {
   'DetectionService.detectFabricationCandidates': SEVERITY.WRITE,
 
   // Cart / Part Orders
+  'CartService.resolveAssemblyForItems':      SEVERITY.READ,
   'CartService.createCartItem':               SEVERITY.WRITE,
   'CartService.advanceItemStatus':            SEVERITY.WRITE,
   'CartService.bulkAdvanceItemStatus':        SEVERITY.WRITE,
@@ -133,7 +135,7 @@ export const ACTION_SEVERITY = {
   'InventoryInstanceService.createInstance':        SEVERITY.WRITE,
   'InventoryInstanceService.updateInstance':        SEVERITY.WRITE,
   'InventoryInstanceService.deleteInstance':        SEVERITY.DESTRUCTIVE,
-    'InventoryInstanceService.bulkDeleteInstances': SEVERITY.DESTRUCTIVE,
+  'InventoryInstanceService.bulkDeleteInstances': SEVERITY.DESTRUCTIVE,
 
   // Assemblies (read)
   'AssemblyService.listAssemblies':           SEVERITY.READ,

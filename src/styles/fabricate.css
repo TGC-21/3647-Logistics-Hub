@@ -119,3 +119,11 @@
   margin: 2px 0;
 }
 .fab-spec-line i { font-size: 11px; color: var(--color-text-tertiary); }
+/* ── "Claimed by you" section heading — same shape as .section-heading
+   but tinted, so it reads as a personal shortcut, not just another
+   assembly/subassembly group. ─────────────────────────────────── */
+.fab-claimed-heading {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent-mid);
+}
+.fab-claimed-heading i { color: var(--color-accent); }

@@ -486,6 +486,10 @@ const HAND_WRITTEN = {
     description: 'Fetches multiple fabrication jobs by id in one call.',
     parameters: { type: 'object', properties: { jobIds: { type: 'array', items: { type: 'string' } } }, required: ['jobIds'] },
   },
+  'FabricationJobService.resolveAssemblyForJobs': {
+  description: 'Given fabrication job ids, resolves each job\'s root assembly id (walking up through subassemblies if needed). Use before checkAvailability/listTreeForAssembly-style calls when you only have a job id.',
+  parameters: { type: 'object', properties: { jobIds: { type: 'array', items: { type: 'string' } } }, required: ['jobIds'] },
+  },
   'FabricationJobService.bulkRecordMachinedUnits': {
     description: 'Records machined progress on multiple jobs at once, e.g. after a batch finishes together.',
     parameters: { type: 'object', properties: { updates: { type: 'array', items: { type: 'object', properties: { jobId: { type: 'string' }, quantity: { type: 'integer', minimum: 1 } }, required: ['jobId', 'quantity'] } } }, required: ['updates'] },
@@ -495,6 +499,10 @@ const HAND_WRITTEN = {
     parameters: { type: 'object', properties: { jobIds: { type: 'array', items: { type: 'string' } } }, required: ['jobIds'] },
   },
 
+  'CartService.resolveAssemblyForItems': {
+  description: 'Given cart item ids, resolves each item\'s root assembly id via its earmarked assembly part (walking up through subassemblies if needed). Null if the item isn\'t earmarked to a part. Use before checkAvailability/listTreeForAssembly-style calls when you only have a cart item id.',
+  parameters: { type: 'object', properties: { itemIds: { type: 'array', items: { type: 'string' } } }, required: ['itemIds'] },
+  },
   'CartService.bulkAdvanceItemStatus': {
     description: 'Advances multiple cart items forward one status step each (pending->ordered, ordered->received) at once.',
     parameters: { type: 'object', properties: { itemIds: { type: 'array', items: { type: 'string' } } }, required: ['itemIds'] },
@@ -521,6 +529,8 @@ const HAND_WRITTEN = {
     description: 'Deletes multiple tasks and their links at once. Cannot be undone.',
     parameters: { type: 'object', properties: { taskIds: { type: 'array', items: { type: 'string' } } }, required: ['taskIds'] },
   },
+
+
 }
 
 // ── Simple auto-generated actions (id-shaped, no real structure) ─────

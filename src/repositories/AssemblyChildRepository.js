@@ -89,6 +89,36 @@ export class AssemblyChildRepository {
 
     return allChildren.map(toLocal)
   }
+  /** Walks a subassembly node up through parent_child_id until it finds
+   *  the node whose parent_assembly_id is set — that's the root
+   *  assembly. Mirrors src/db.js's fetchRootAssemblyIdForChild, now
+   *  available server-side (FabricationJobService/CartService use this
+   *  to resolve "which assembly is this job/item ultimately under"
+   *  without walking the chain themselves). Returns null if the chain
+   *  is broken (an orphaned/deleted intermediate node) rather than
+   *  throwing — callers treat null as "couldn't resolve," same as the
+   *  client version's implicit behavior when a lookup comes back empty. */
+  async findRootAssemblyId(childId) {
+    let currentId = childId
+    // Bounded to avoid an infinite loop if data somehow contains a cycle
+    // (shouldn't happen given the FK shape, but a repository shouldn't
+    // trust that blindly forever).
+    for (let hops = 0; hops < 50; hops++) {
+      const { data, error } = await this.db
+        .from('assembly_children')
+        .select('parent_assembly_id, parent_child_id')
+        .eq('id', currentId)
+        .maybeSingle()
+      if (error) throw new DatabaseError(`assembly_children lookup failed: ${error.message}`, error)
+      if (!data) return null   // broken chain — the node itself is gone
+
+      if (data.parent_assembly_id) return data.parent_assembly_id
+      if (!data.parent_child_id) return null   // shouldn't happen (schema's exactly-one-parent constraint), but fail safe
+
+      currentId = data.parent_child_id
+    }
+    return null   // chain too deep / cyclic — bail rather than hang
+  }
 
   /** Deletes only the ROOT's direct children rows — each row's own
    *  nested children and assembly_parts cascade via FK
@@ -100,4 +130,5 @@ export class AssemblyChildRepository {
       .from('assembly_children').delete().eq('parent_assembly_id', parentAssemblyId)
     if (error) throw new DatabaseError(`assembly_children delete failed: ${error.message}`, error)
   }
+
 }

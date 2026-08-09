@@ -542,7 +542,10 @@ async function renderChildDetailFromState() {
 
   const partsSectionHTML = showSubTab ? '' : `
       ${selectionToolbarHTML(true)}
-      ${tabsHTML ? '' : `<div class="asm-parts-toolbar"><div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div>${partSearchToolbarHTML(getPartSearchQuery(), getPartNumberOnly())}</div>`}
+      <div class="asm-parts-toolbar">
+        ${tabsHTML ? '' : `<div class="asm-parts-title">Parts <span class="section-count">${currentChildParts.length}</span></div>`}
+        ${partSearchToolbarHTML(getPartSearchQuery(), getPartNumberOnly())}
+      </div>
       ${currentChildParts.length
         ? `<div class="parts-grid" id="child-parts-grid">
   ${currentChildParts.filter(partRowVisible).map(p =>
@@ -839,31 +842,32 @@ export function bindAssemblyDetailEvents() {
 // the search input itself, so focus/cursor position is never disturbed
 // and setSelectionRange hacks become unnecessary.
 function refreshChildPartsTbody() {
-  const tbody = document.getElementById('child-parts-tbody')
-  if (!tbody) return   // showing the subassemblies tab, or no parts at all — nothing to refresh
+  const grid = document.getElementById('child-parts-grid')
+  if (!grid) return
   const currentChildParts    = getCurrentChildParts()
   const currentChildPartJobs = getCurrentChildPartJobs()
   const currentChildPartOrders = getCurrentChildPartOrders()
-  tbody.innerHTML = currentChildParts
+  grid.innerHTML = currentChildParts
     .filter(partRowVisible)
-    .map(p => childPartRowHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || []))
+    .map(p => partCardHTML(p, currentChildPartJobs[p.id] || null, currentChildPartOrders[p.id] || []))
     .join('')
-
+  bindChildPartCardEvents()
+  
   const countEl = document.querySelector('.asm-parts-title .section-count')
   if (countEl) countEl.textContent = String(currentChildParts.filter(partRowVisible).length)
 }
 
 function refreshPartsTbody() {
-  const tbody = document.getElementById('parts-tbody')
-  if (!tbody) return   // showing the subassemblies tab, or no parts at all — nothing to refresh
+  const grid = document.getElementById('parts-grid')
+  if (!grid) return
   const currentParts    = getCurrentParts()
   const currentPartJobs = getCurrentPartJobs()
   const currentPartOrders = getCurrentPartOrders()
-  tbody.innerHTML = currentParts
+  grid.innerHTML = currentParts
     .filter(partRowVisible)
-    .map(p => partRowHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || []))
+    .map(p => partCardHTML(p, currentPartJobs[p.id] || null, currentPartOrders[p.id] || []))
     .join('')
-
+  bindPartCardEvents()
   const countEl = document.querySelector('.asm-parts-title .section-count')
   if (countEl) countEl.textContent = String(currentParts.filter(partRowVisible).length)
 }

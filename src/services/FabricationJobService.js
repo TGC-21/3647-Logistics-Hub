@@ -211,4 +211,27 @@ export class FabricationJobService {
   async bulkDeleteQueuedJobs({ jobIds, actorId = null }) {
     return runBulk(jobIds.map(jobId => ({ jobId })), (u) => this.deleteQueuedJob({ ...u, actorId }), { keyOf: u => u.jobId })
   }
+
+    // FabricationJobService.js
+  async resolveAssemblyForJobs({ jobIds }) {
+    if (!Array.isArray(jobIds) || !jobIds.length) throw new ValidationError('jobIds is required')
+    const jobs = await this.getByIds({ jobIds })
+    const parts = await this.partRepo.findByIds(jobs.map(j => j.assemblyPartId))
+    const partById = new Map(parts.map(p => [p.id, p]))
+
+    const childRootCache = new Map()
+    const results = []
+    for (const job of jobs) {
+      const part = partById.get(job.assemblyPartId)
+      let assemblyId = part?.assemblyId ?? null
+      if (!assemblyId && part?.assemblyChildId) {
+        if (!childRootCache.has(part.assemblyChildId)) {
+          childRootCache.set(part.assemblyChildId, await this.assemblyChildRepo.findRootAssemblyId(part.assemblyChildId).catch(() => null))
+        }
+        assemblyId = childRootCache.get(part.assemblyChildId)
+      }
+      results.push({ jobId: job.id, assemblyId })
+    }
+    return results
+  }
 }

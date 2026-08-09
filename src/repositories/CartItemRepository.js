@@ -44,6 +44,15 @@ export class CartItemRepository {
     return data ? toLocal(data) : null
   }
 
+  // src/repositories/CartItemRepository.js
+  async findByIds(ids) {
+    const uniqueIds = [...new Set(ids || [])]
+    if (!uniqueIds.length) return []
+    const { data, error } = await this.db.from('cart_items').select('*').in('id', uniqueIds)
+    if (error) throw new DatabaseError(`cart_items lookup failed: ${error.message}`, error)
+    return (data ?? []).map(toLocal)
+  }
+
   /** Every cart item (any status) earmarked to any part in a given set —
    *  used to snapshot the old tree's earmarks before reimport wipes the
    *  parts they point to (the FK is ON DELETE SET NULL, so the rows
@@ -110,4 +119,5 @@ export class CartItemRepository {
     if (error) throw new DatabaseError(`cart_items delete failed: ${error.message}`, error)
     return data.length > 0
   }
+
 }

@@ -12,7 +12,7 @@
 import {
   fetchFabricationBatches, upsertFabricationBatch, deleteFabricationBatch,
   fetchAllFabricationJobs, fetchAssemblyPartsByIds, fetchAssemblyChildById,
-  fetchRootAssemblyIdForChild,  moveJobToBatch, updateQueuedJobQuantity,
+  fetchRootAssemblyIdForChild,
   claimFabricationJob, releaseFabricationJobClaim,
   archiveFabricationJob,
   fetchComponentsForFabricatePicker,
@@ -31,31 +31,35 @@ import { renderSegmentPreview } from './segmentEditor.js'
 import { renderSegmentPreview3D, disposeSegmentPreview3D } from './segmentPreview3D.js'
 
 // ── State ─────────────────────────────────────────────────────
-let batches         = []
 let jobs            = []          // ALL jobs, every status — filtered per-view
 let partsCache      = {}          // assembly_part id → part row
 let componentsCache = {}
 let childNameCache  = new Map()   // assembly_children id → name (lazy-resolved)
 let selectedAssemblyId = null     // null = overview ("All jobs"), else an assembly id — primary nav now
-let batchFilterId   = '__all__'   // secondary filter within an assembly's job list: '__all__' | '__unbatched__' | a batch id
 let jobAssemblyIdCache = new Map()   // job id -> resolved root assembly id (or null), memoized across renders
 let showHistory     = false       // "Show archived" topbar checkbox
-let editingBatchId  = null
 let selectedJobId   = null        // job shown in the job detail overlay, or null
-let mergingJobIds   = null        // [jobIdA, jobIdB] when the batch modal was open by
-                                  // dropping one job card onto another - on save, both
-                                  // jobs are moved into the newly-created batch.
-let dragJobId       = null        // job id currently being dragged, for card drag/drop
 let activeShaftPreviewEl = null   // tracks the live 3D container so it can be disposed before the next re-render replaces it
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
+
+// Rounds a number to 4 decimal places and strips trailing zeros —
+// every dimension shown on a job card/detail comes from floating-point
+// geometry reconstruction (see axial-shaft.js's classifyGeometry) and
+// is never meant to be read past thousandths, so this is purely a
+// DISPLAY concern — never applied to a value before it's saved/compared.
+function round4(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return n
+  return Math.round(n * 10000) / 10000
+}
+
 
 let toastFn = msg => console.warn('[toast]', msg)
 export function setFabricateToast(fn) { toastFn = fn }
 
 // ── Boot ──────────────────────────────────────────────────────
 export async function fabricateBoot() {
-  ;[batches, jobs] = await Promise.all([fetchFabricationBatches(), fetchAllFabricationJobs()])
+  jobs = await fetchAllFabricationJobs()
   partsCache = await fetchAssemblyPartsByIds([...new Set(jobs.map(j => j.assemblyPartId))])
   await refreshComponentsCache()
   jobAssemblyIdCache = new Map()
@@ -135,8 +139,6 @@ function jobAssemblyIdSync(job) {
 
 
 // ── Derived helpers ──────────────────────────────────────────
-function jobsForBatch(batchId) { return jobs.filter(j => j.batchId === batchId) }
-function unbatchedJobs()       { return jobs.filter(j => !j.batchId) }
 function activeJobs(list)      { return list.filter(j => j.status !== 'archived') }
 
 /** Every job (any batch status) whose resolved root assembly matches —
@@ -153,36 +155,65 @@ function unassignedJobs() {
   return jobs.filter(j => jobAssemblyIdSync(j) === null && !partsCache[j.assemblyPartId]?.assemblyId && !partsCache[j.assemblyPartId]?.assemblyChildId)
 }
 
-/** Applies the secondary batch filter on top of an assembly's job list. */
-function applyBatchFilter(list) {
-  if (batchFilterId === '__all__') return list
-  if (batchFilterId === '__unbatched__') return list.filter(j => !j.batchId)
-  return list.filter(j => j.batchId === batchFilterId)
+// ── Display ordering ─────────────────────────────────────────
+// "Active/unclaimed first, completed/archived last" — queued (needs a
+// claim) and committed/in_progress (someone's actively on it) both
+// read as "live work," so they rank ahead of anything done. Ties
+// within a rank fall back to part name so the same list doesn't
+// visibly reshuffle between renders.
+const JOB_STATUS_RANK = { queued: 0, committed: 1, in_progress: 1, complete: 2, archived: 3 }
+
+function sortJobsForDisplay(list) {
+  return [...list].sort((a, b) => {
+    const rankDiff = (JOB_STATUS_RANK[a.status] ?? 1) - (JOB_STATUS_RANK[b.status] ?? 1)
+    if (rankDiff !== 0) return rankDiff
+    const nameA = partsCache[a.assemblyPartId]?.partName || ''
+    const nameB = partsCache[b.assemblyPartId]?.partName || ''
+    return nameA.localeCompare(nameB)
+  })
 }
 
-function derivedBatchStatus(batchId) {
-  const list   = jobsForBatch(batchId)
-  const active = activeJobs(list)
-  if (!list.length) return 'empty'
-  if (!active.length) return 'archived'
-  if (active.every(j => j.status === 'complete')) return 'complete'
-  if (active.some(j => j.quantityMachined > 0 || j.status !== 'queued')) return 'in_progress'
-  return 'queued'
+/** Jobs the signed-in member currently has claimed (committed or
+ *  in_progress, claimedBy matching their name) — surfaced in its own
+ *  section at the top of every job list so "my work" never requires
+ *  hunting through an assembly tree. */
+function claimedByMeJobs(list) {
+  const me = getCurrentMemberName()
+  if (!me) return []
+  return list.filter(j => (j.status === 'committed' || j.status === 'in_progress') && j.claimedBy === me)
 }
 
-// Reuses the asm-badge--{draft,active,complete} classes already defined
-// in designer.css for assembly status, rather than inventing new ones.
-function batchStatusBadgeHTML(status) {
-  const map = {
-    empty:       ['draft',    'ti-circle-dashed', 'No jobs'],
-    queued:      ['draft',    'ti-clock',         'Queued'],
-    in_progress: ['active',   'ti-loader-2',      'In progress'],
-    complete:    ['complete', 'ti-check',         'Complete'],
-    archived:    ['draft',    'ti-archive',       'Archived'],
+/** Groups a job list by the subassembly its part belongs to — mirrors
+ *  Designer's root-parts-vs-subassembly split. Returns an ordered
+ *  array of { key, label, jobs } — direct (root-owned) parts first
+ *  under a null key, then one group per subassembly, alphabetical by
+ *  name. Uses childNameCache, so callers must have already awaited
+ *  primeJobCaches/primeJobAssemblyIds for this job list. */
+function groupJobsBySubassembly(list) {
+  const direct = []
+  const byChildId = new Map()   // assemblyChildId -> jobs[]
+
+  for (const job of list) {
+    const part = partsCache[job.assemblyPartId]
+    if (part?.assemblyChildId) {
+      if (!byChildId.has(part.assemblyChildId)) byChildId.set(part.assemblyChildId, [])
+      byChildId.get(part.assemblyChildId).push(job)
+    } else {
+      direct.push(job)
+    }
   }
-  const [cls, icon, label] = map[status] || map.queued
-  return `<span class="asm-badge asm-badge--${cls}"><i class="ti ${icon}" aria-hidden="true"></i> ${label}</span>`
+
+  const groups = []
+  if (direct.length) groups.push({ key: null, label: 'Direct parts', jobs: direct })
+
+  const childGroups = [...byChildId.entries()]
+    .map(([childId, groupJobs]) => ({ key: childId, label: childNameCache.get(childId) || 'Subassembly', jobs: groupJobs }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  groups.push(...childGroups)
+
+  return groups
 }
+
 
 // Job status badge, standalone (was inline in jobCardHTML/jobRowHTML —
 // factored out so the new assembly-view card can share it too).
@@ -234,36 +265,38 @@ function fabDataHTML(part) {
   const attrs = Object.fromEntries((comp.attributes || []).map(a => [a.key, a.value]))
   const catName = comp.categoryName || ''
 
+  const r = round4   // local alias, keeps the lines below from wrapping awkwardly
+
+
   if (catName === 'Spacer') {
     const type = attrs['Spacer Type'] || '?'
     const isHex = type.startsWith('HEX')
-    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${type} · OD ${attrs['OD'] ?? '?'}" · ${isHex ? 'AF' : 'ID'} ${attrs['ID or Across Flats'] ?? '?'}" · L ${attrs['Length'] ?? '?'}"</div>`
+    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${type} · OD ${r(parseFloat(attrs['OD'])) ?? '?'}" · ${isHex ? 'AF' : 'ID'} ${r(parseFloat(attrs['ID or Across Flats'])) ?? '?'}" · L ${r(parseFloat(attrs['Length'])) ?? '?'}"</div>`
   }
 
   if (catName === 'Axial Shaft') {
     const profile = attrs['Profile']
     if (!profile || !Array.isArray(profile.segments) || !profile.segments.length) return ''
     const summary = profile.segments.map(s => {
-      if (s.type === 'round')  return `⌀${s.diameter}"×${s.length}"`
-      if (s.type === 'hex')    return `Hex ${s.acrossFlats}"×${s.length}"`
-      if (s.type === 'square' || s.type === 'prism') return `${s.width}"×${s.length}"`
-      return `${s.type}×${s.length}"`
+      if (s.type === 'round')  return `⌀${r(s.diameter)}"×${r(s.length)}"`
+      if (s.type === 'hex')    return `Hex ${r(s.acrossFlats)}"×${r(s.length)}"`
+      if (s.type === 'square' || s.type === 'prism') return `${r(s.width)}"×${r(s.length)}"`
+      return `${s.type}×${r(s.length)}"`
     }).join(' → ')
     return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${summary}</div>`
   }
 
   if (catName === 'Plate') {
-    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${attrs['Material'] || '?'} · ${attrs['Thickness'] ?? '?'}" thick</div>`
+    return `<div class="fab-spec-line"><i class="ti ti-ruler-2" aria-hidden="true"></i> ${attrs['Material'] || '?'} · ${r(parseFloat(attrs['Thickness'])) ?? '?'}" thick</div>`
   }
 
   return ''
 }
 
 // ── Sidebar ───────────────────────────────────────────────────
-// Primary nav is now "which assembly" (mirrors Designer's sidebar) —
-// batches are demoted to a secondary filter inside an assembly's view,
-// since batching is orthogonal to which assembly a job's part belongs
-// to (a single batch can, and often does, span multiple assemblies).
+// Primary nav is "which assembly" (mirrors Designer's sidebar).
+// Batches have been removed entirely — rarely used, and complicated
+// both the nav hierarchy and card actions for little payoff.
 export function renderFabricateSidebar() {
   const navAll = document.getElementById('nav-all')
   const visibleJobCount = (showHistory ? jobs : jobs.filter(j => j.status !== 'archived')).length
@@ -309,12 +342,11 @@ export function renderFabricateSidebar() {
 /** id is an assembly id, '__unassigned__', or null/falsy for "All jobs". */
 export function selectAssembly(id) {
   selectedAssemblyId = id || null
-  batchFilterId = '__all__'
   renderFabricateSidebar()
   renderFabricateContent()
 }
 
-// Kept as an alias — designer.js/fabricateFlow.js call selectBatch(null)
+// Kept as an alias — main.js calls selectBatch(null) on mode switch
 // today to mean "go to the Fabricate overview"; that meaning still holds.
 export function selectBatch(id) { selectAssembly(id) }
 
@@ -349,22 +381,28 @@ export async function renderFabricateContent() {
 
 /** Shared renderer for "one assembly's worth of jobs" and the
  *  "Unassigned" bucket (assembly === null in that case) — a job-card
- *  grid (mirrors Designer's parts-grid) plus a batch filter dropdown,
- *  since batching cuts across assemblies rather than nesting under one. */
+ *  grid (mirrors Designer's parts-grid), grouped by subassembly, with
+ *  a "Claimed by you" section pinned above everything else. */
 async function renderAssemblyJobsView(area, jobList, assembly) {
   await primeJobCaches(jobList)
 
-  const visible = applyBatchFilter(jobList.filter(j => showHistory || j.status !== 'archived'))
-  const relevantBatchIds = [...new Set(jobList.map(j => j.batchId).filter(Boolean))]
-  const relevantBatches = batches.filter(b => relevantBatchIds.includes(b.id))
+  const visible = jobList.filter(j => showHistory || j.status !== 'archived')
+  const mine    = claimedByMeJobs(visible)
+  const groups  = groupJobsBySubassembly(visible).map(g => ({ ...g, jobs: sortJobsForDisplay(g.jobs) }))
 
-  const batchFilterHTML = relevantBatches.length
-    ? `<select id="fab-batch-filter-select" style="font-size:12px;padding:4px 8px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary)">
-        <option value="__all__"${batchFilterId === '__all__' ? ' selected' : ''}>All batches</option>
-        <option value="__unbatched__"${batchFilterId === '__unbatched__' ? ' selected' : ''}>Unbatched</option>
-        ${relevantBatches.map(b => `<option value="${b.id}"${batchFilterId === b.id ? ' selected' : ''}>${b.name}</option>`).join('')}
-      </select>`
-    : ''
+  const claimedSectionHTML = mine.length ? `
+    <div class="section-heading fab-claimed-heading">
+      <i class="ti ti-user-check" aria-hidden="true"></i> Claimed by you
+      <span class="section-count">${mine.length}</span>
+    </div>
+    <div class="parts-grid">${sortJobsForDisplay(mine).map(j => fabJobCardHTML(j)).join('')}</div>` : ''
+
+  const groupsHTML = groups.map(g => `
+    <div class="section-heading">
+      <i class="ti ${g.key ? 'ti-git-branch' : 'ti-box'}" aria-hidden="true"></i> ${g.label}
+      <span class="section-count">${g.jobs.length}</span>
+    </div>
+    <div class="parts-grid">${g.jobs.map(j => fabJobCardHTML(j)).join('')}</div>`).join('')
 
   area.innerHTML = `<div class="asm-detail">
     <div class="asm-detail-toolbar">
@@ -375,58 +413,56 @@ async function renderAssemblyJobsView(area, jobList, assembly) {
     <div class="asm-parts-toolbar">
       <div class="asm-parts-title">Jobs <span class="section-count">${visible.length}</span></div>
       <div style="flex:1"></div>
-      ${batchFilterHTML}
       <label class="fab-history-toggle"><input type="checkbox" id="chk-fab-history-inline" ${showHistory ? 'checked' : ''}> <span>Show archived</span></label>
     </div>
     ${visible.length
-      ? `<div class="parts-grid" id="fab-jobs-grid">${visible.map(j => fabJobCardHTML(j)).join('')}</div>`
+      ? claimedSectionHTML + groupsHTML
       : `<div class="empty" style="padding:40px 0">
           <i class="ti ti-list-check" aria-hidden="true"></i>
           <div class="empty-title">No jobs here</div>
-          <div class="empty-sub">${batchFilterId !== '__all__' ? 'Try clearing the batch filter.' : ''}</div>
         </div>`}
   </div>`
 
   document.getElementById('btn-back-fab-overview').addEventListener('click', () => selectAssembly(null))
-  document.getElementById('fab-batch-filter-select')?.addEventListener('change', e => {
-    batchFilterId = e.target.value
-    renderFabricateContent()
-  })
   document.getElementById('chk-fab-history-inline')?.addEventListener('change', e => {
     showHistory = e.target.checked
     renderFabricateSidebar(); renderFabricateContent()
   })
 
-  area.querySelectorAll('[data-open-job]').forEach(el =>
-    el.addEventListener('click', () => openJobDetailModal(el.dataset.openJob))
-  )
+  bindJobCardEvents(area)
 }
 
 
 async function renderOverview(area) {
-  // "All jobs" — every job across every assembly, grouped visually by
-  // assembly (same idea as Designer's "All assemblies" grid, just one
-  // level deeper since jobs are the leaf, not assemblies themselves).
+  // "All jobs" — a "Claimed by you" section first, regardless of which
+  // assembly a claimed job belongs to, then every assembly grouped
+  // visually (same idea as Designer's "All assemblies" grid).
   const visibleJobs = jobs.filter(j => showHistory || j.status !== 'archived')
 
   if (!visibleJobs.length) {
     area.innerHTML = `<div class="empty">
       <i class="ti ti-settings-automation" aria-hidden="true"></i>
       <div class="empty-title">No fabrication jobs yet</div>
-      <div class="empty-sub">Jobs are created from an assembly's parts table via "Send to Fabricate." Batching them onto a machine run is optional.</div>
-      <button class="btn btn-primary" id="empty-new-batch-btn"><i class="ti ti-plus"></i> New batch</button>
+      <div class="empty-sub">Jobs are created from an assembly's parts table via "Send to Fabricate."</div>
     </div>`
-    document.getElementById('empty-new-batch-btn').addEventListener('click', () => openBatchModal())
     return
   }
 
   await primeJobCaches(visibleJobs)
 
+  const mine = claimedByMeJobs(visibleJobs)
+  const claimedSectionHTML = mine.length ? `
+    <div class="section-heading fab-claimed-heading">
+      <i class="ti ti-user-check" aria-hidden="true"></i> Claimed by you
+      <span class="section-count">${mine.length}</span>
+    </div>
+    <div class="parts-grid">${sortJobsForDisplay(mine).map(j => fabJobCardHTML(j)).join('')}</div>` : ''
+
   const assemblies = getAssemblies().filter(a => jobsForAssembly(a.id).some(j => showHistory || j.status !== 'archived'))
   const unassigned = unassignedJobs().filter(j => showHistory || j.status !== 'archived')
 
   const sectionsHTML = assemblies.map(a => {
-    const list = jobsForAssembly(a.id).filter(j => showHistory || j.status !== 'archived')
+    const list = sortJobsForDisplay(jobsForAssembly(a.id).filter(j => showHistory || j.status !== 'archived'))
     return `<div class="section-heading" data-asm-section="${a.id}" style="cursor:pointer">
         <i class="ti ti-box" aria-hidden="true"></i> ${a.name}
         <span class="section-count">${list.length}</span>
@@ -440,13 +476,10 @@ async function renderOverview(area) {
       <i class="ti ti-alert-triangle" aria-hidden="true"></i> Unassigned
       <span class="section-count">${unassigned.length}</span>
     </div>
-    <div class="parts-grid">${unassigned.slice(0, 6).map(j => fabJobCardHTML(j)).join('')}</div>` : ''
+    <div class="parts-grid">${sortJobsForDisplay(unassigned).slice(0, 6).map(j => fabJobCardHTML(j)).join('')}</div>` : ''
 
-  area.innerHTML = `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-      <button class="btn btn-sm" id="btn-new-batch-overview"><i class="ti ti-plus" aria-hidden="true"></i> New batch</button>
-    </div>` + sectionsHTML + unassignedSectionHTML
-  bindOverviewEvents(area)
-  document.getElementById('btn-new-batch-overview')?.addEventListener('click', () => openBatchModal())
+  area.innerHTML = claimedSectionHTML + sectionsHTML + unassignedSectionHTML
+  bindJobCardEvents(area)
   area.querySelectorAll('[data-asm-section], [data-asm-section-more]').forEach(el => {
     const id = el.dataset.asmSection || el.dataset.asmSectionMore
     el.addEventListener('click', () => selectAssembly(id))
@@ -472,246 +505,107 @@ async function primeJobCaches(jobList) {
   }
   await primeJobAssemblyIds(jobList)
 }
-/** Job card in the new "part-card"-shaped layout — mirrors
+/** Job card, "part-card"-shaped layout — mirrors
  *  partsTable.js's partCardHTML visually (same .part-card/.card-*
- *  classes) so Fabricate's grid reads consistently with Designer's. */
-function fabJobCardHTML(job) {
+ *  classes) so Fabricate's grid reads consistently with Designer's.
+ *  Primary actions live directly on the card, same principle as
+ *  Designer's part cards (resolvePartIntent) — no click-through-to-
+ *  modal detour just to claim a job. */function fabJobCardHTML(job) {
   const part      = partsCache[job.assemblyPartId]
   const partName  = part?.partName || '(deleted part)'
-  const batch     = job.batchId ? batches.find(b => b.id === job.batchId) : null
+  const remaining = Math.max(0, job.quantityRequested - job.quantityMachined)
+  const actionsHTML = fabJobActionsHTML(job, remaining)
 
-  return `<div class="part-card fab-job-part-card" data-open-job="${job.id}" style="cursor:pointer">
+  return `<div class="part-card fab-job-part-card" data-job-id="${job.id}">
     <div class="card-top">
-      <div class="card-name-block">
+      <div class="card-name-block" data-open-job="${job.id}" style="cursor:pointer">
         <div class="card-part-name">${partName}</div>
         <div class="card-part-number">${contextLabel(part)}</div>
       </div>
       <div class="card-qty">${job.quantityMachined} / ${job.quantityRequested}</div>
     </div>
-    <div class="card-badges">
+    <div class="card-badges" data-open-job="${job.id}" style="cursor:pointer">
       ${jobStatusBadgeHTML(job)}
-      ${batch ? `<span class="badge badge--muted"><i class="ti ti-tool" aria-hidden="true"></i> ${batch.name}</span>` : ''}
     </div>    
     ${fabDataHTML(part)}
+    <div class="card-actions">${actionsHTML}</div>
+
   </div>`
 }
 
-// ── Overview interactions ────────────────────────────────────
-// Drag-and-drop batch assignment (dragging a job card onto a batch
-// card) doesn't apply now that the overview groups by assembly rather
-// than surfacing batch cards directly — batch (re)assignment happens
-// from the job detail modal's own <select>, unchanged below.
-function bindOverviewEvents(area) {
+/** Contextual action row for one job card, mirroring the shape of
+ *  Designer's part-card actions (1–2 primary buttons + a small
+ *  progress input where relevant). */
+function fabJobActionsHTML(job, remaining) {
+  if (job.status === 'queued') {
+    return `
+      <button class="btn btn-sm btn-primary" data-job-action="claim" data-id="${job.id}">
+        <i class="ti ti-hand-stop" aria-hidden="true"></i> Claim
+      </button>
+      <button class="btn btn-sm btn-icon-only" data-job-action="delete" data-id="${job.id}" aria-label="Delete">
+        <i class="ti ti-trash" aria-hidden="true"></i>
+      </button>`
+  }
+  if (job.status === 'committed' || job.status === 'in_progress') {
+    return `
+      <div class="job-progress-input" style="flex:1">
+        <input type="number" min="1" max="${remaining}" value="${Math.min(1, remaining)}" data-progress-input="${job.id}" style="width:44px">
+        <button class="btn btn-sm" data-job-action="log" data-id="${job.id}"><i class="ti ti-plus" aria-hidden="true"></i> Log</button>
+      </div>
+      <button class="btn btn-sm btn-icon-only" data-job-action="release" data-id="${job.id}" aria-label="Release claim" title="Release claim">
+        <i class="ti ti-hand-off" aria-hidden="true"></i>
+      </button>`
+  }
+  if (job.status === 'complete') {
+    return `<button class="btn btn-sm" data-job-action="archive" data-id="${job.id}"><i class="ti ti-archive" aria-hidden="true"></i> Archive</button>`
+  }
+  return `<span class="card-actions-empty">Archived</span>`
+}
 
+/** Delegated click/change binder for job cards — same delegation
+ *  pattern partsTable.js's bindPartCardEvents uses. Rebinding on every
+ *  render is safe since `area`'s innerHTML is fully replaced each time
+ *  (no stacked listeners on a persistent container). Delegates on the
+ *  whole `area` now rather than one #fab-jobs-grid — a view can render
+ *  several grids (claimed section + one per subassembly group), and
+ *  none of them have a stable shared id anymore. */
+function bindJobCardEvents(area) {
   area.querySelectorAll('[data-open-job]').forEach(el =>
     el.addEventListener('click', () => openJobDetailModal(el.dataset.openJob))
   )
 
-  // // Job card → drag source
-  // area.querySelectorAll('[data-job-drag]').forEach(el => {
-  //   el.addEventListener('dragstart', e => {
-  //     dragJobId = el.dataset.jobDrag
-  //     e.dataTransfer.effectAllowed = 'move'
-  //     e.dataTransfer.setData('text/plain', dragJobId)
-  //     el.classList.add('fab-card-dragging')
-  //   })
-  //   el.addEventListener('dragend', () => {
-  //     dragJobId = null
-  //     el.classList.remove('fab-card-dragging')
-  //   })
-  // })
+  area.addEventListener('click', async e => {
+    const actionBtn = e.target.closest('[data-job-action]')
+    if (!actionBtn) return
+    e.stopPropagation()   // never also trigger the card's data-open-job click
 
-  // // Batch card → drop target: assign the dragged job into this batch (confirm first)
-  // area.querySelectorAll('[data-batch-drop]').forEach(el => {
-  //   el.addEventListener('dragover', e => {
-  //     if (!dragJobId) return
-  //     e.preventDefault()
-  //     e.dataTransfer.dropEffect = 'move'
-  //     el.classList.add('fab-card-drop-target')
-  //   })
-  //   el.addEventListener('dragleave', () => el.classList.remove('fab-card-drop-target'))
-  //   el.addEventListener('drop', e => {
-  //     e.preventDefault()
-  //     el.classList.remove('fab-card-drop-target')
-  //     const jobId   = dragJobId || e.dataTransfer.getData('text/plain')
-  //     const batchId = el.dataset.batchDrop
-  //     if (jobId) handleDropJobOnBatch(jobId, batchId)
-  //   })
-  // })
+    const jobId = actionBtn.dataset.id
+    const action = actionBtn.dataset.jobAction
 
-  // // Job card → also a drop target: dropping one job onto another opens the
-  // // "create batch" dialog pre-seeded to batch both jobs together.
-  // area.querySelectorAll('[data-job-drag]').forEach(el => {
-  //   el.addEventListener('dragover', e => {
-  //     if (!dragJobId || dragJobId === el.dataset.jobDrag) return
-  //     e.preventDefault()
-  //     e.dataTransfer.dropEffect = 'move'
-  //     el.classList.add('fab-card-drop-target')
-  //   })
-  //   el.addEventListener('dragleave', () => el.classList.remove('fab-card-drop-target'))
-  //   el.addEventListener('drop', e => {
-  //     e.preventDefault()
-  //     el.classList.remove('fab-card-drop-target')
-  //     const droppedJobId = dragJobId || e.dataTransfer.getData('text/plain')
-  //     const targetJobId   = el.dataset.jobDrag
-  //     if (droppedJobId && droppedJobId !== targetJobId) {
-  //       openBatchModal(null, [droppedJobId, targetJobId])
-  //     }
-  //   })
-  // })
-}
-
-// async function handleDropJobOnBatch(jobId, batchId) {
-//   const job   = jobs.find(j => j.id === jobId)
-//   const batch = batches.find(b => b.id === batchId)
-//   const part  = job ? partsCache[job.assemblyPartId] : null
-//   if (!job || !batch) return
-//   if (job.batchId === batchId) return
-
-//   const confirmed = confirm(`Place ${part ? `"${part.partName}"` : 'this job'} into batch "${batch.name}"?`)
-//   if (!confirmed) return
-
-//   await handleMoveBatch(jobId, batchId)
-// }
-
-// ── Job table (shared by overview's "unbatched" drill-in and batch detail) ──
-// Retained as-is for now — no current call site after the rewrite above,
-// but kept for reference until the batch modal's own list view (if any
-// gets added later) needs it. Safe to delete in a follow-up cleanup pass.
-async function jobsTableHTML(list, showBatchAssign) {
-  if (!list.length) {
-    return `<div class="empty" style="padding:40px 0">
-      <i class="ti ti-list-check" aria-hidden="true"></i>
-      <div class="empty-title">No jobs here</div>
-    </div>`
-  }
-
-  // partsCache is seeded at boot, but a job created mid-session elsewhere
-  // (e.g. Designer's "Send to Fabricate") only arrives via registerNewJob,
-  // not with its part pre-fetched — so top up any that are missing.
-  const missingPartIds = [...new Set(list.map(j => j.assemblyPartId).filter(id => !partsCache[id]))]
-  if (missingPartIds.length) {
-    const fetched = await fetchAssemblyPartsByIds(missingPartIds)
-    partsCache = { ...partsCache, ...fetched }
-  }
-
-  const childIds = [...new Set(
-    list.map(j => partsCache[j.assemblyPartId]?.assemblyChildId).filter(Boolean)
-  )].filter(id => !childNameCache.has(id))
-  if (childIds.length) {
-    const resolved = await Promise.all(childIds.map(id => fetchAssemblyChildById(id).catch(() => null)))
-    resolved.forEach((c, i) => { if (c) childNameCache.set(childIds[i], c.name) })
-  }
-
-  const visible = list.filter(j => showHistory || j.status !== 'archived')
-  const rows = visible.map(j => jobRowHTML(j, showBatchAssign)).join('')
-
-  return `<div class="parts-table-wrap">
-    <table class="parts-table">
-      <thead><tr>
-        <th>Part</th><th>Context</th>
-        <th style="text-align:center">Requested</th>
-        <th style="text-align:center">Machined</th>
-        <th>Status</th>
-        ${showBatchAssign ? '<th>Batch</th>' : ''}
-        <th></th>
-      </tr></thead>
-      <tbody id="fab-jobs-tbody">${rows}</tbody>
-    </table>
-  </div>`
-}
-
-function batchSelectHTML(job) {
-  const opts = [`<option value=""${!job.batchId ? ' selected' : ''}>Unbatched</option>`]
-    .concat(batches.map(b => `<option value="${b.id}"${job.batchId === b.id ? ' selected' : ''}>${b.name}</option>`))
-  return `<select data-job-batch="${job.id}">${opts.join('')}</select>`
-}
-
-function jobRowHTML(job, showBatchAssign) {
-  const part      = partsCache[job.assemblyPartId]
-  const partName  = part?.partName || '(deleted part)'
-  const remaining = Math.max(0, job.quantityRequested - job.quantityMachined)
-
-  const statusBadge = {
-    queued:      '<span class="part-badge part-badge--pending">Queued</span>',
-    committed:   `<span class="part-badge part-badge--partial">Claimed${job.claimedBy ? ' — ' + job.claimedBy : ''}</span>`,
-    in_progress: '<span class="part-badge part-badge--partial">In progress</span>',
-    complete:    '<span class="part-badge part-badge--complete">Complete</span>',
-    archived:    '<span class="part-badge part-badge--pending">Archived</span>',
-  }[job.status] || job.status
-
-  const actions = []
-  if (job.status === 'queued') {
-    actions.push(`<button class="btn-icon" data-job-claim="${job.id}" aria-label="Claim"><i class="ti ti-hand-stop" style="font-size:13px"></i></button>`)
-    actions.push(`<button class="btn-icon" data-job-delete="${job.id}" aria-label="Delete"><i class="ti ti-trash" style="font-size:13px"></i></button>`)
-  }
-  if (job.status === 'committed' || job.status === 'in_progress') {
-    actions.push(`<button class="btn-icon" data-job-release="${job.id}" aria-label="Release claim" title="Release claim back to the queue"><i class="ti ti-hand-off" style="font-size:13px"></i></button>`)
-  }
-  if (job.status === 'complete') {
-    actions.push(`<button class="btn-icon" data-job-archive="${job.id}" aria-label="Archive"><i class="ti ti-archive" style="font-size:13px"></i></button>`)
-  }
-
-  // const requestedCell = job.status === 'queued'
-  //   ? `<input type="number" min="1" value="${job.quantityRequested}" data-job-qty="${job.id}" style="width:52px;text-align:center">`
-  //   : `${job.quantityRequested}`
-
-  const progressCell = (job.status === 'committed' || job.status === 'in_progress')
-    ? `<div class="job-progress-input">
-        <input type="number" min="1" max="${remaining}" value="${Math.min(1, remaining)}" data-progress-input="${job.id}">
-        <button class="btn btn-sm" data-job-progress="${job.id}" title="Log machined units"><i class="ti ti-plus" aria-hidden="true"></i></button>
-      </div>`
-    : ''
-
-  return `<tr data-job-id="${job.id}">
-     <td><div class="part-name">${partName}</div>${fabDataHTML(part)}</td>
-    <td><span class="part-number">${contextLabel(part)}</span></td>
-    <td style="text-align:center">${job.quantityRequested}</td>
-    <td style="text-align:center">${job.quantityMachined} / ${job.quantityRequested}${progressCell}</td>
-    <td>${statusBadge}</td>
-    ${showBatchAssign ? `<td>${batchSelectHTML(job)}</td>` : ''}
-    <td style="text-align:right">${actions.join('')}</td>
-  </tr>`
-}
-
-// tbody is recreated fresh by innerHTML on every render (same as
-// designer.js's parts-tbody), so binding here each time is safe — no
-// duplicate listeners stack up on the persistent #main-area container.
-function bindJobRowEvents() {
-  const tbody = document.getElementById('fab-jobs-tbody')
-  if (!tbody) return
-
-  tbody.addEventListener('click', async e => {
-    const claimBtn = e.target.closest('[data-job-claim]')
-    if (claimBtn) { await handleClaimJob(claimBtn.dataset.jobClaim); return }
-
-    const releaseBtn = e.target.closest('[data-job-release]')
-    if (releaseBtn) { await handleReleaseClaim(releaseBtn.dataset.jobRelease); return }
-
-    const deleteBtn = e.target.closest('[data-job-delete]')
-    if (deleteBtn) { await handleDeleteJob(deleteBtn.dataset.jobDelete); return }
-
-    const archiveBtn = e.target.closest('[data-job-archive]')
-    if (archiveBtn) { await handleArchiveJob(archiveBtn.dataset.jobArchive); return }
-
-    const progressBtn = e.target.closest('[data-job-progress]')
-    if (progressBtn) {
-      const jobId = progressBtn.dataset.jobProgress
-      const input = tbody.querySelector(`[data-progress-input="${jobId}"]`)
+    if (action === 'claim')   { await handleClaimJob(jobId); return }
+    if (action === 'release') { await handleReleaseClaim(jobId); return }
+    if (action === 'archive') { await handleArchiveJob(jobId); return }
+    if (action === 'delete')  { await handleDeleteJob(jobId); return }
+    if (action === 'log') {
+      const input = area.querySelector(`[data-progress-input="${jobId}"]`)
       const n = Math.max(1, parseInt(input?.value, 10) || 1)
       await handleRecordProgress(jobId, n)
       return
     }
   })
-
-  tbody.addEventListener('change', async e => {
-    const batchSel = e.target.closest('[data-job-batch]')
-    if (batchSel) { await handleMoveBatch(batchSel.dataset.jobBatch, batchSel.value || null); return }
-
-    const qtyInput = e.target.closest('[data-job-qty]')
-    if (qtyInput) { await handleUpdateQty(qtyInput.dataset.jobQty, parseInt(qtyInput.value, 10) || 1); return }
-  })
 }
+
+
+// ── Job table (shared by overview's "unbatched" drill-in and batch detail) ──
+// DELETED — jobsTableHTML/jobRowHTML/batchSelectHTML/bindJobRowEvents
+// and every batch-modal function (openBatchModal/closeBatchModal/
+// saveBatch/deleteBatch/handleDropJobOnBatch) are removed below along
+// with all batch state. Batches are no longer a Partshelf concept.
+
+// tbody is recreated fresh by innerHTML on every render (same as
+// designer.js's parts-tbody), so binding here each time is safe — no
+// duplicate listeners stack up on the persistent #main-area container.
+
 
 // ── Job actions ──────────────────────────────────────────────
 async function handleReleaseClaim(jobId) {
@@ -749,21 +643,6 @@ async function handleArchiveJob(jobId) {
     renderFabricateSidebar(); renderFabricateContent()
     toastFn('Job archived')
   } catch (e) { console.error(e); toastFn('Error archiving job') }
-}
-
-async function handleMoveBatch(jobId, batchId) {
-  try {
-    replaceJob(await moveJobToBatch(jobId, batchId))
-    renderFabricateSidebar(); renderFabricateContent()
-    toastFn('Job moved')
-  } catch (e) { console.error(e); toastFn('Error moving job') }
-}
-
-async function handleUpdateQty(jobId, qty) {
-  try {
-    replaceJob(await updateQueuedJobQuantity(jobId, Math.max(1, qty)))
-    renderFabricateContent()
-  } catch (e) { console.error(e); toastFn('Error updating quantity') }
 }
 
 async function handleRecordProgress(jobId, n) {
@@ -865,10 +744,6 @@ function renderJobDetailModal() {
     claimActionsHTML.push(`<button class="btn btn-sm" id="btn-job-detail-archive"><i class="ti ti-archive" aria-hidden="true"></i> Archive</button>`)
   }
 
-  const batchOptsHTML = [`<option value=""${!job.batchId ? ' selected' : ''}>Unbatched</option>`]
-    .concat(batches.map(b => `<option value="${b.id}"${job.batchId === b.id ? ' selected' : ''}>${b.name}</option>`))
-    .join('')
-
   body.innerHTML = `
    <div class="asm-progress-row" style="justify-content:space-between">
       <span><i class="ti ti-stack-2" aria-hidden="true"></i> ${contextLabel(part)}</span>
@@ -881,13 +756,6 @@ function renderJobDetailModal() {
       <div class="field"><label>Machined</label><div style="font-size:15px;font-weight:600">${job.quantityMachined}</div></div>
     </div>
     ${progressHTML}
-    <div class="field">
-      <label>Batch</label>
-      <select id="job-detail-batch-select">${batchOptsHTML}</select>
-      <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">
-        Placing this job in a batch removes it from the main Jobs grid — you'll find it inside that batch instead.
-      </p>
-    </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap">${claimActionsHTML.join('')}</div>`
 
   if (shaftSegments) {
@@ -909,123 +777,12 @@ function renderJobDetailModal() {
     await handleRecordProgress(job.id, n)
     renderJobDetailModal()
   })
-  document.getElementById('job-detail-batch-select')?.addEventListener('change', async e => {
-    await handleMoveBatch(job.id, e.target.value || null)
-    // Job likely just left the main grid (or entered it) — the detail
-    // overlay no longer reflects a job the grid still shows, so close it.
-    closeJobDetailModal()
-  })
+
 }
 
-// ── Batch modal ──────────────────────────────────────────────
-// `mergeIds` is set when this modal was opened by dragging one job card
-// onto another — on save, both jobs are moved into the newly-created batch.
-export function openBatchModal(id, mergeIds) {
-  editingBatchId = id || null
-  mergingJobIds  = mergeIds || null
-  const b = id ? batches.find(x => x.id === id) : null
-
-  document.getElementById('batch-modal-merge-subtitle')?.remove()
-  if (mergingJobIds) {
-    const names = mergingJobIds.map(jid => {
-      const job = jobs.find(j => j.id === jid)
-      const part = job ? partsCache[job.assemblyPartId] : null
-      return part?.partName || 'a job'
-    })
-    const p = document.createElement('p')
-    p.id = 'batch-modal-merge-subtitle'
-    p.style.cssText = 'font-size:12px;color:var(--color-text-tertiary)'
-    p.textContent = `Creates a new batch and moves "${names[0]}" and "${names[1]}" into it.`
-    document.getElementById('batch-modal-title').insertAdjacentElement('afterend', p)
-  }
-
-  document.getElementById('batch-modal-title').textContent = mergingJobIds ? 'New batch' : (b ? 'Edit batch' : 'New batch')
-  document.getElementById('batch-field-name').value   = b?.name || ''
-  document.getElementById('batch-field-method').value = b?.fabMethod || ''
-  document.getElementById('batch-field-notes').value  = b?.notes || ''
-  document.getElementById('btn-delete-batch').style.display = (b && !mergingJobIds) ? 'inline-flex' : 'none'
-  document.getElementById('batch-modal-overlay').style.display = 'flex'
-  setTimeout(() => document.getElementById('batch-field-name').focus(), 80)
-}
-
-function closeBatchModal() {
-  document.getElementById('batch-modal-overlay').style.display = 'none'
-  document.getElementById('batch-modal-merge-subtitle')?.remove()
-  editingBatchId = null
-  mergingJobIds = null
-}
-
-async function saveBatch() {
-  const name   = document.getElementById('batch-field-name').value.trim()
-  const method = document.getElementById('batch-field-method').value.trim()
-  if (!name)   { document.getElementById('batch-field-name').focus();   toastFn('Batch name is required'); return }
-  if (!method) { document.getElementById('batch-field-method').focus(); toastFn('Fab method is required'); return }
-
-  const btn = document.getElementById('btn-save-batch')
-  btn.disabled = true; btn.textContent = 'Saving…'
-
-  const payload = {
-    id:        editingBatchId || genId(),
-    name,
-    fabMethod: method,
-    notes:     document.getElementById('batch-field-notes').value.trim(),
-  }
-
-  try {
-    const saved = await upsertFabricationBatch(payload)
-    if (editingBatchId) {
-      const idx = batches.findIndex(b => b.id === editingBatchId)
-      if (idx > -1) batches[idx] = saved
-    } else {
-      batches.unshift(saved)
-    }
-
-    if (mergingJobIds) {
-      const moved = await Promise.all(mergingJobIds.map(jid => moveJobToBatch(jid, saved.id)))
-      moved.forEach(replaceJob)
-    }
-
-    closeBatchModal()
-    renderFabricateSidebar(); renderFabricateContent()
-    toastFn(mergingJobIds ? 'Batch created — 2 jobs moved into it' : (editingBatchId ? 'Batch updated' : 'Batch created'))
-  } catch (e) {
-    console.error(e)
-    toastFn('Error saving batch')
-  } finally {
-    btn.disabled = false
-    btn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Save'
-  }
-}
-
-async function deleteBatch() {
-  if (!editingBatchId) return
-  const b = batches.find(x => x.id === editingBatchId)
-  if (!b || !confirm(`Delete batch "${b.name}"? Its jobs move back to the unbatched queue — they are not deleted.`)) return
-  try {
-    await deleteFabricationBatch(editingBatchId)
-    batches = batches.filter(x => x.id !== editingBatchId)
-    jobs = jobs.map(j => j.batchId === editingBatchId ? { ...j, batchId: null } : j)
-    closeBatchModal()
-    selectBatch(null)
-    toastFn('Batch deleted')
-  } catch (e) { console.error(e); toastFn('Error deleting batch') }
-}
 
 // ── Bind static events ───────────────────────────────────────
 export function bindFabricateEvents() {
-  document.getElementById('btn-new-batch').addEventListener('click', () => openBatchModal())
-  document.getElementById('chk-fab-history').addEventListener('change', e => {
-    showHistory = e.target.checked
-    renderFabricateSidebar(); renderFabricateContent()
-  })
-
-  document.getElementById('btn-close-batch-modal').addEventListener('click', closeBatchModal)
-  document.getElementById('btn-cancel-batch').addEventListener('click', closeBatchModal)
-  document.getElementById('btn-save-batch').addEventListener('click', saveBatch)
-  document.getElementById('btn-delete-batch').addEventListener('click', deleteBatch)
-  document.getElementById('batch-modal-overlay').addEventListener('click', e => {
-    if (e.target === e.currentTarget) closeBatchModal()
-  })
 
   document.getElementById('btn-close-job-detail').addEventListener('click', closeJobDetailModal)
   document.getElementById('job-detail-overlay').addEventListener('click', e => {

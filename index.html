@@ -64,8 +64,6 @@
     </div>
 
     <div class="topbar-actions" id="fabricate-actions" style="display:none">
-      <label class="fab-history-toggle"><input type="checkbox" id="chk-fab-history"> <span>Show archived</span></label>
-      <button class="btn btn-primary" id="btn-new-batch"><i class="ti ti-plus" aria-hidden="true"></i><span> New Batch</span></button>
     </div>
 
     <div class="topbar-actions" id="partorders-actions" style="display:none">
@@ -704,45 +702,6 @@
   <button class="btn-icon" id="btn-carousel-close" aria-label="Close">
     <i class="ti ti-x" aria-hidden="true"></i>
   </button>
-</div>
-
-<div class="overlay" id="batch-modal-overlay" style="display:none">
-  <div class="modal" style="max-width:440px">
-    <div class="modal-header">
-      <div class="modal-title" id="batch-modal-title">New batch</div>
-      <button class="btn-icon" id="btn-close-batch-modal"><i class="ti ti-x" aria-hidden="true"></i></button>
-    </div>
-    <div class="modal-body">
-      <div class="field">
-        <label>Batch name <span class="required-star">*</span></label>
-        <input type="text" id="batch-field-name" placeholder="e.g. Lathe — 7/6 afternoon">
-      </div>
-      <div class="field">
-        <label>Fab method <span class="required-star">*</span></label>
-        <input type="text" id="batch-field-method" list="batch-method-options" placeholder="e.g. Lathe, CNC, Mill">
-        <datalist id="batch-method-options">
-          <option value="Lathe"></option>
-          <option value="CNC"></option>
-          <option value="Mill"></option>
-          <option value="3D Print"></option>
-          <option value="Laser cut"></option>
-          <option value="Waterjet"></option>
-        </datalist>
-      </div>
-      <div class="field">
-        <label>Notes</label>
-        <textarea id="batch-field-notes" placeholder="Setup notes, stock material, etc."></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-danger" id="btn-delete-batch" style="display:none"><i class="ti ti-trash" aria-hidden="true"></i> Delete batch</button>
-      <div style="flex:1"></div>
-      <button class="btn" id="btn-cancel-batch">Cancel</button>
-      <button class="btn btn-primary" id="btn-save-batch">
-        <i class="ti ti-check" aria-hidden="true"></i> Save
-      </button>
-    </div>
-  </div>
 </div>
 
 <!-- ── Job Detail Overlay (Fabricate) ─────────────────────────── -->
