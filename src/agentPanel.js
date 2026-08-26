@@ -266,6 +266,11 @@ export function bindAgentPanelEvents() {
     toggleBtns.forEach(btn => btn.setAttribute('aria-expanded', 'true'))
     document.getElementById('tab-btn-clinker')?.classList.add('active')
     document.getElementById('tab-btn-components')?.classList.remove('active')
+    document.getElementById('tab-btn-categories')?.classList.remove('active')
+    // Mobile-only view swap — see mobile.css's body.mobile-agent-open
+    // rules. Harmless no-op class on desktop (nothing in desktop CSS
+    // reads it), so this doesn't need a viewport check here.
+    document.body.classList.add('mobile-agent-open')
     refreshPendingActions().catch(console.error)
     refreshHistory()
   }
@@ -274,6 +279,8 @@ export function bindAgentPanelEvents() {
     panel.setAttribute('aria-hidden', 'true')
     toggleBtns.forEach(btn => btn.setAttribute('aria-expanded', 'false'))
     document.getElementById('tab-btn-clinker')?.classList.remove('active')
+    document.body.classList.remove('mobile-agent-open')
+    document.getElementById('tab-btn-components')?.classList.add('active')
   }
 
   document.getElementById('btn-open-agent-panel').addEventListener('click', () => panel.classList.contains('open') ? close() : open())

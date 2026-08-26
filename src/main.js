@@ -268,6 +268,15 @@ function cardHTML(it) {
   </div>`
 }
 
+function closeClinkerView() {
+  document.getElementById('agent-panel')?.classList.remove('open')
+  document.getElementById('agent-panel')?.setAttribute('aria-hidden', 'true')
+  document.getElementById('btn-open-agent-panel')?.setAttribute('aria-expanded', 'false')
+  document.getElementById('tab-btn-clinker')?.setAttribute('aria-expanded', 'false')
+  document.getElementById('tab-btn-clinker')?.classList.remove('active')
+  document.body.classList.remove('mobile-agent-open')
+}
+
 // ── Static event bindings ─────────────────────────────────────
 function bindStaticEvents() {
 
@@ -312,13 +321,11 @@ function bindStaticEvents() {
     // affordance — the panel is fullscreen-ish on narrow viewports
     // (agent-panel.css's @media 640px block), so "go to Components"
     // should feel like leaving the agent, not stacking on top of it.
-    document.getElementById('agent-panel')?.classList.remove('open')
-    document.getElementById('btn-open-agent-panel')?.setAttribute('aria-expanded', 'false')
+    closeClinkerView()
     setMode('inventory')
   })
   document.getElementById('tab-btn-categories').addEventListener('click', () => {
-    document.getElementById('agent-panel')?.classList.remove('open')
-    document.getElementById('btn-open-agent-panel')?.setAttribute('aria-expanded', 'false')
+    closeClinkerView()
     openCatModal()
   })
 

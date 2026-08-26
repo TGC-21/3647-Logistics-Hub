@@ -121,6 +121,17 @@
   /* ── Content area ───────────────────────────────────────── */
   .content  { padding: 12px 12px 80px; }   /* bottom padding clears iOS home bar */
   .main     { min-height: 0; }
+   /* Clinker-as-tab: when open, .content (and its independent scroll/
+     inventory list) is fully removed from the mobile view — only one
+     scrollable region exists at a time, matching how Components/
+     Categories already behave as mutually-exclusive views. */
+  body.mobile-agent-open .content { display: none; }
+  body.mobile-agent-open .main {
+    height: calc(100vh - 50px - 58px - env(safe-area-inset-bottom));
+    /* 50px topbar + 58px tab bar, same constants every other
+       mobile-pinned element in this stylesheet already uses. */
+  }
+
 
   /* ── Bigger type scale on mobile ──────────────────────────
      Every text-bearing element below is bumped ~1-2px above its
