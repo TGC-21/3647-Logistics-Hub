@@ -95,6 +95,22 @@ export class InventoryInstanceService {
     return this.instanceRepo.findByComponent(componentId)
   }
 
+  /** Links an already-uploaded image (including a chat attachment) to an
+   * inventory instance without requiring the full component edit payload. */
+  async linkImage({ instanceId, imageUrl, actorId = null }) {
+    if (!instanceId) throw new ValidationError('instanceId is required')
+    if (!imageUrl || typeof imageUrl !== 'string') throw new ValidationError('imageUrl is required')
+    const before = await this.instanceRepo.findById(instanceId)
+    if (!before) throw new ValidationError(`Inventory instance ${instanceId} not found`)
+    const after = await this.instanceRepo.update(instanceId, { image: imageUrl })
+    await this.changeLogService.recordUpdateDiff({
+      entityType: 'inventory_instance', entityId: instanceId,
+      before, after, keys: ['image'], actorId,
+      commitId: this.changeLogRepo.newCommitId(),
+    })
+    return after
+  }
+
   async listForComponents({ componentIds }) {
     return this.instanceRepo.findByComponentIds(componentIds)
   }

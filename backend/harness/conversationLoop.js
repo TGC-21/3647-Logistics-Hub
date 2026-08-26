@@ -40,12 +40,20 @@ const MAX_IDENTICAL_FAILURES = 2
  * function-calling convention, so the model can react to it rather
  * than the whole turn crashing.
  */
-export async function runTurn({ memberId, message, conversationId = null, isAgent = true }) {
+export async function runTurn({ memberId, message, conversationId = null, attachments = [], isAgent = true }) {
   const conversationService = new HarnessConversationService()
 
-  const convo = conversationId
+  let convo = conversationId
     ? await conversationService.getById(conversationId)
-    : await conversationService.start({ memberId, initialMessage: message })
+    : await conversationService.start({ memberId, initialMessage: message, attachments })
+
+  // A saved, completed conversation is intentionally resumable when the
+  // member explicitly selects it from history. Reopen it before appending
+  // the new user message. Awaiting-confirmation conversations still must go
+  // through the pending-action approval flow to preserve tool-call state.
+  if (conversationId && convo.status === 'completed') {
+    convo = await conversationService.reopenForTurn({ conversationId })
+  }
 
   if (conversationId && convo.status !== 'active') {
     throw new Error(`Conversation ${conversationId} is "${convo.status}" — cannot continue a turn on it.`)
@@ -56,7 +64,7 @@ export async function runTurn({ memberId, message, conversationId = null, isAgen
   // this message), append it before looping.
   let messages = convo.messages
   if (conversationId) {
-    const updated = await conversationService.appendMessage({ conversationId, message: { role: 'user', content: message } })
+    const updated = await conversationService.appendMessage({ conversationId, message: { role: 'user', content: message, attachments } })
     messages = updated.messages
   }
 

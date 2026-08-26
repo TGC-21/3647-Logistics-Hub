@@ -51,6 +51,7 @@ export const ACTION_SEVERITY = {
 
   // Components
   'ComponentService.listAll':                 SEVERITY.READ,
+  'ComponentService.listForCategory':         SEVERITY.READ,
   'ComponentService.search':                  SEVERITY.READ,
   'ComponentService.findOrCreate':            SEVERITY.WRITE,
   'ComponentService.updateFallback':          SEVERITY.WRITE,
@@ -60,6 +61,7 @@ export const ACTION_SEVERITY = {
   'InventoryInstanceService.listAll':               SEVERITY.READ,
   'InventoryInstanceService.listForComponent':      SEVERITY.READ,
   'InventoryInstanceService.listForComponents':     SEVERITY.READ,
+  'InventoryInstanceService.linkImage':             SEVERITY.WRITE,
   'InventoryInstanceService.getById':               SEVERITY.READ,
   'InventoryInstanceService.getByIds':              SEVERITY.READ,
   'InventoryInstanceService.createInstance':        SEVERITY.WRITE,

@@ -48,7 +48,7 @@ const DOMAIN_PATTERNS = [
   },
   {
     domain: 'inventory',
-    pattern: /\b(?:inventory|component|stock|bin|location|gear|pulley|buy|purchas|have|available|need)/i,
+    pattern: /\b(?:inventory|component|stock|bin|location|gear|sprocket|bearing|bolt|pulley|tooth|teeth|buy|purchas|have|available|need)/i,
     services: ['ComponentService', 'InventoryInstanceService', 'CategoryService', 'AssemblyPartService', 'InventoryReservationService'],
   },
   {
@@ -68,6 +68,7 @@ const ALWAYS_INCLUDED_ACTIONS = new Set([
   'AssemblyPartService.search',
   'AssemblyPartService.checkAvailability',
   'ComponentService.search',
+  'ComponentService.listForCategory',
   'CategoryService.list',
 ])
 

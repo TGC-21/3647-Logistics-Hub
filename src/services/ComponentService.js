@@ -96,6 +96,16 @@ export class ComponentService {
     }))
   }
 
+  /** Lists component identities owned by one exact category. */
+  async listForCategory({ categoryId }) {
+    if (!categoryId) throw new ValidationError('categoryId is required')
+    const [components, category] = await Promise.all([
+      this.componentRepo.findByCategory(categoryId),
+      this.categoryRepo.findById(categoryId),
+    ])
+    return components.map(component => ({ ...component, categoryName: category.name }))
+  }
+
 
   /** Free-text search across name/description/attribute values — the
    *  "find a 24T gear" case. Joins category name in, same shape as

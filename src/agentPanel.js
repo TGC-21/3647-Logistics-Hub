@@ -3,11 +3,13 @@
 // Hono backend.
 
 import { getCurrentMemberId } from './members.js'
+import { uploadAgentImage } from './db.js'
 import { fetchPendingActions, resolvePendingAction } from './services/harnessApi.js'
 
 let conversationId = null
 let pendingActions = []
 let conversationEpoch = 0
+let attachedImage = null
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char])
@@ -142,8 +144,17 @@ function startNewChat({ focus = false } = {}) {
   renderWelcome()
   const input = document.getElementById('agent-message')
   input.value = ''
+  attachedImage = null
+  updateAttachmentLabel()
   setBusy(false)
   if (focus) input.focus()
+}
+
+function updateAttachmentLabel() {
+  const button = document.getElementById('btn-attach-agent-image')
+  if (!button) return
+  button.title = attachedImage ? `Attached: ${attachedImage.name}` : 'Attach image'
+  button.classList.toggle('active', Boolean(attachedImage))
 }
 
 function setBusy(busy) {
@@ -208,13 +219,21 @@ async function sendMessage(event) {
   const input = document.getElementById('agent-message')
   const message = input.value.trim()
   const memberId = getCurrentMemberId()
-  if (!message || !memberId) return
-  appendMessage('user', message)
+  if ((!message && !attachedImage) || !memberId) return
+  let attachment = attachedImage
+  if (attachment?.file) {
+    setBusy(true)
+    try { attachment = await uploadAgentImage(memberId, attachment.file) }
+    catch (error) { appendMessage('assistant', `I couldn’t upload that image: ${error.message}`); setBusy(false); return }
+  }
+  appendMessage('user', message || 'Attached an image.')
   input.value = ''
+  attachedImage = null
+  updateAttachmentLabel()
   setBusy(true)
   const requestEpoch = conversationEpoch
   try {
-    const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId }) })
+    const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId, attachments: attachment ? [attachment] : [] }) })
     // The member selected New chat (or the page initialized a fresh chat)
     // while this request was still running. Let the server finish and retain
     // its audit history, but never revive that prior conversation in this UI.
@@ -288,6 +307,17 @@ export function bindAgentPanelEvents() {
   document.getElementById('btn-close-agent-panel').addEventListener('click', close)
   document.getElementById('btn-new-agent-chat').addEventListener('click', () => startNewChat({ focus: true }))
   document.getElementById('agent-composer').addEventListener('submit', sendMessage)
+  const imageInput = document.getElementById('agent-image-input')
+  document.getElementById('btn-attach-agent-image').addEventListener('click', () => imageInput.click())
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files?.[0]
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return
+    if (file.size > 10 * 1024 * 1024) return
+    attachedImage = { file, name: file.name }
+    updateAttachmentLabel()
+    imageInput.value = ''
+  })
   // Reloading never resumes a server conversation. Use the exact same path
   // as the visible New chat button so the lifecycle stays explicit.
   startNewChat()

@@ -81,6 +81,8 @@
       </div>
       <div class="agent-confirmations" id="agent-confirmations"></div>
       <form class="agent-composer" id="agent-composer">
+        <input id="agent-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <button class="btn-icon" id="btn-attach-agent-image" type="button" aria-label="Attach image" title="Attach image"><i class="ti ti-paperclip" aria-hidden="true"></i></button>
         <textarea id="agent-message" rows="2" placeholder="Ask Clinker to take an action…" aria-label="Message Clinker"></textarea>
         <button class="btn btn-primary btn-sm" id="btn-send-agent-message" type="submit"><i class="ti ti-arrow-up" aria-hidden="true"></i><span>Send</span></button>
       </form>
@@ -92,10 +94,10 @@
   </div>
 
   <!-- Mobile-only: bottom tab bar, replaces cramped icon-only topbar actions -->
-  <div class="topbar-actions" id="inventory-actions">
+  <!-- <div class="topbar-actions" id="inventory-actions">
       <button class="btn" id="btn-manage-cats"><i class="ti ti-settings" aria-hidden="true"></i><span> Categories</span></button>
       <button class="btn btn-primary" id="btn-add"><i class="ti ti-plus" aria-hidden="true"></i><span> Add component</span></button>
-  </div>
+  </div> -->
 </div>
 
   <!-- Mobile-only: bottom tab bar. Two destinations: the (only) content

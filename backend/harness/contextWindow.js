@@ -2,6 +2,9 @@
 // (already compacted) history remains in harness_conversations for audit/UI;
 // only the LLM request gets a rolling window.
 
+import { domainSnippetsFor, allDomainSnippets } from './domainContext.js'
+import { scopedDomains } from './toolSelection.js'
+
 const DEFAULT_MAX_HISTORY_BYTES = 16_000
 const MAX_SUMMARY_ITEMS = 6
 const CLINKER_RESPONSE_INSTRUCTIONS = `You are Clinker, Partshelf's action-oriented companion. Give concise, useful answers grounded in tool results.
@@ -9,6 +12,12 @@ const CLINKER_RESPONSE_INSTRUCTIONS = `You are Clinker, Partshelf's action-orien
 Tool routing rules
 
 Follow these rules before choosing a tool:
+
+Inventory/category routing:
+- A category is not a component and a component is not physical stock. Resolve the exact category first when the user names one.
+- For "what X components are in the X category?", call CategoryService.list/getById, then ComponentService.listForCategory. Do not use free-text search as a category listing.
+- For quantity or location, resolve component ids first, then call InventoryInstanceService.listForComponents. A component match alone does not prove stock exists.
+- Treat a result with truncated: true as incomplete. Narrow by exact category or component ids before answering a completeness question.
 
 If the user asks for parts/items in a specific subassembly, first identify the parent assembly, then identify the matching child/subassembly, then use the tool that lists parts for that child.
 "Parts in X" means the parts directly belonging to X unless the user explicitly asks for nested/recursive parts.
@@ -121,9 +130,11 @@ export function buildContextWindow(messages, { maxHistoryBytes = DEFAULT_MAX_HIS
   const systemContent = trimmed
   ? `${CLINKER_RESPONSE_INSTRUCTIONS}\n\n${summaryFor(omitted).content}`
   : CLINKER_RESPONSE_INSTRUCTIONS
+  const domains = scopedDomains(messages)
+  const domainGuidance = domains.size ? domainSnippetsFor(domains) : allDomainSnippets()
 
   const contextMessages = [
-    { role: 'system', content: systemContent },
+    { role: 'system', content: `${systemContent}\n\n${domainGuidance}` },
     userMessage,
     ...selectedMessages,
   ]

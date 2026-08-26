@@ -98,6 +98,10 @@ const HAND_WRITTEN = {
     description: 'Lists every component in the catalog — the deduplicated (category + attributes) identities inventory instances reference. Includes category name and attribute values for each, e.g. useful for finding "a 24T gear" by scanning names/attributes. Does not include physical location/quantity — use InventoryInstanceService.listForComponent for that, once you have a component id.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+  'ComponentService.listForCategory': {
+    description: 'Lists every component identity in one exact category, including attributes. Use after CategoryService.list or CategoryService.getById resolves the requested category; this is authoritative for category contents and avoids unrelated free-text matches.',
+    parameters: { type: 'object', properties: { categoryId: { type: 'string' } }, required: ['categoryId'] },
+  },
     'ComponentService.search': {
     description: 'Free-text search over the component catalog by name, description, or attribute values (e.g. searching "24T" finds a gear whose tooth-count attribute is 24, without needing to know the exact category or attribute key). Use this INSTEAD OF ComponentService.listAll when looking for something specific by name/spec — much more direct than scanning the full catalog yourself.',
     parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
@@ -118,6 +122,10 @@ const HAND_WRITTEN = {
       properties: { componentIds: { type: 'array', items: { type: 'string' } } },
       required: ['componentIds'],
     },
+  },
+  'InventoryInstanceService.linkImage': {
+    description: 'Links an attached image URL to an existing inventory instance. Use only when the user explicitly asks to attach, link, or move the current chat image onto that instance; do not invent an image URL.',
+    parameters: { type: 'object', properties: { instanceId: { type: 'string' }, imageUrl: { type: 'string' } }, required: ['instanceId', 'imageUrl'] },
   },
   'InventoryInstanceService.getById': {
     description: 'Fetches one physical inventory instance by id.',

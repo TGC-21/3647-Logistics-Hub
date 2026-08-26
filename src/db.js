@@ -1428,3 +1428,16 @@ export async function fetchAssemblyPartsLinkingInstance(instanceId) {
   if (error) throw error
   return data.map(dbPartToLocal)
 }
+
+/** Uploads a temporary/chat image without colliding with the
+ * inventory-instance `{id}.jpg` naming convention. */
+export async function uploadAgentImage(memberId, file) {
+  const ext = (file.type.split('/')[1] || 'jpeg').replace('jpeg', 'jpg')
+  const path = `chat/${memberId}/${crypto.randomUUID()}.${ext}`
+  const { error } = await supabase.storage.from('component-images').upload(path, file, {
+    upsert: false, contentType: file.type, cacheControl: '3600',
+  })
+  if (error) throw error
+  const { data } = supabase.storage.from('component-images').getPublicUrl(path)
+  return { url: data.publicUrl, mimeType: file.type, name: file.name, path }
+}

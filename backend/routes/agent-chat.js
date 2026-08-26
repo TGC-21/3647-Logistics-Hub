@@ -44,13 +44,16 @@ agentChat.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({}))
 
   if (!body.memberId) return c.json({ error: 'memberId is required' }, 400)
-  if (!body.message || !String(body.message).trim()) return c.json({ error: 'message is required' }, 400)
+  const attachments = Array.isArray(body.attachments) ? body.attachments.slice(0, 3) : []
+  const message = String(body.message || '').trim() || (attachments.length ? 'The user sent a file without a question.' : '')
+  if (!message) return c.json({ error: 'message is required' }, 400)
 
   try {
     const result = await runTurn({
       memberId: body.memberId,
-      message: body.message,
+      message,
       conversationId: body.conversationId || null,
+      attachments,
     })
     return c.json({ success: true, ...result })
   } catch (err) {

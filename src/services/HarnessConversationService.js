@@ -23,7 +23,7 @@ export class HarnessConversationService {
 
   /** Starts a brand-new conversation with the member's first message
    *  already in history. Returns the created row. */
-  async start({ memberId, initialMessage }) {
+  async start({ memberId, initialMessage, attachments = [] }) {
     if (!memberId) throw new ValidationError('memberId is required')
     if (!initialMessage) throw new ValidationError('initialMessage is required')
 
@@ -31,7 +31,7 @@ export class HarnessConversationService {
       id: genId(),
       memberId,
       status: 'active',
-      messages: [{ role: 'user', content: initialMessage }],
+      messages: [{ role: 'user', content: initialMessage, attachments }],
     })
   }
 
@@ -45,6 +45,18 @@ export class HarnessConversationService {
       throw new ConflictError(`Conversation is "${convo.status}" — cannot append while not active.`)
     }
     return this.conversationRepo.appendMessage(conversationId, message)
+  }
+
+  /** Reopens a completed conversation when the member explicitly selects it
+   * from history and sends a new message. Conversations paused for approval
+   * must go through the approval flow instead, so they remain non-resumable
+   * through the ordinary chat endpoint. */
+  async reopenForTurn({ conversationId }) {
+    const convo = await this.conversationRepo.requireById(conversationId)
+    if (convo.status !== 'completed') {
+      throw new ConflictError(`Conversation is "${convo.status}" — cannot reopen for a new turn.`)
+    }
+    return this.conversationRepo.update(conversationId, { status: 'active' })
   }
 
   /** Suspends a conversation when a tool call throws

@@ -46,18 +46,46 @@ function getConfig() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+const IMAGE_REQUEST = /\b(?:analy[sz]|look|see|view|identify|recognize|read|inspect|describe|what(?:'s| is) in|image|photo|picture)\b/i
+
+async function messagesForModel(messages) {
+  return Promise.all(messages.map(async message => {
+    if (message.role !== 'user' || !Array.isArray(message.attachments) || !message.attachments.length) {
+      return message
+    }
+    const refs = message.attachments.map(a => a.url).filter(Boolean)
+    const referenceText = refs.length ? `\nAttached image reference(s): ${refs.join(', ')}` : ''
+    if (!IMAGE_REQUEST.test(String(message.content || ''))) {
+      const { attachments, ...textOnly } = message
+      return { ...textOnly, content: `${message.content || ''}${referenceText}` }
+    }
+    const content = [{ type: 'text', text: message.content || 'Analyze the attached image.' }]
+    for (const attachment of message.attachments) {
+      if (!attachment.url) continue
+      const response = await fetch(attachment.url)
+      if (!response.ok) throw new Error(`Could not fetch attached image (${response.status})`)
+      const bytes = Buffer.from(await response.arrayBuffer()).toString('base64')
+      const mimeType = attachment.mimeType || response.headers.get('content-type') || 'image/jpeg'
+      content.push({ type: 'image_url', image_url: { url: `data:${mimeType};base64,${bytes}` } })
+    }
+    const { attachments, ...modelMessage } = message
+    return { ...modelMessage, content }
+  }))
+}
+
 export async function chatCompletion({ messages, tools = [], temperature = 0.3, timeoutMs = DEFAULT_TIMEOUT_MS, retries = 2 } = {}) {
   if (!Array.isArray(messages) || !messages.length) {
     throw new Error('chatCompletion requires a non-empty messages array')
   }
 
   const { baseUrl, model } = getConfig()
+  const modelMessages = await messagesForModel(messages)
   const body = {
-    model, messages, temperature,
+    model, messages: modelMessages, temperature,
     ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
   }
 
-  const context = estimateRequestContext({ messages, tools })
+  const context = estimateRequestContext({ messages: modelMessages, tools })
   console.info('[harness] LLM context estimate', {
     messageCount: messages.length, toolCount: tools.length,
     requestBytes: context.requestBytes, estimatedTokens: context.estimatedTokens,

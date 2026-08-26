@@ -1,6 +1,6 @@
 /* ── Layout ───────────────────────────────────────────────── */
-.app   { display: flex; flex-direction: column; min-height: 100vh; }
-.main  { display: flex; flex: 1; }
+.app   { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.main  { display: flex; flex: 1; min-height: 0; }
 
 /* Mobile-only elements: hidden by default, unhidden inside the mobile media query below */
 .mobile-search-bar, .mobile-tabbar, .mobile-fab, .btn-mobile-search { display: none; }
