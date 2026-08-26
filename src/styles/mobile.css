@@ -15,43 +15,23 @@
   .btn-sidebar-toggle { display: flex !important; }
   .topbar-logo span   { display: none; }
 
-  /* Inline search is dropped in favor of the search icon + fullscreen overlay below */
-  .topbar-search { display: none !important; }
-  .btn-mobile-search { display: flex !important; margin-left: auto; }
+  /* Search now IS the mobile topbar — full remaining width once the
+     hamburger/logo/agent icon take their share. Categories moved to
+     the bottom tab bar, freeing this row up entirely for search. */
+  .topbar-search {
+    display: block !important;
+    flex: 1;
+    max-width: none;
+  }
+  .topbar-search input { font-size: 16px; }  /* prevents iOS auto-zoom on focus, same reasoning as the global input rule further down */
 
-  /* Categories is a modal trigger, not a mode — lives as a topbar icon
-     next to search, not in the mode-switching bottom tab bar. */
-  .btn-mobile-categories { display: flex !important; }
 
   /* Primary actions move to the bottom tab bar + FAB; hide the cramped topbar row */
   /* Inventory's "Add component" moves to the FAB, so this row can go. */
   #inventory-actions { display: none !important; }
 
   
-  /* ── Fullscreen mobile search overlay ───────────────────── */
-  .mobile-search-bar {
-    position: fixed;
-    inset: 0;
-    z-index: 400;
-    background: var(--color-background-primary);
-    display: none;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    padding-top: max(10px, env(safe-area-inset-top));
-  }
-  .mobile-search-bar.open { display: flex; }
-  .mobile-search-bar > i { font-size: 17px; color: var(--color-text-tertiary); }
-  .mobile-search-bar input {
-    flex: 1;
-    border: none;
-    background: transparent;
-    font-size: 16px; /* 16px prevents iOS auto-zoom on focus */
-    color: var(--color-text-primary);
-    padding: 8px 0;
-  }
-  .mobile-search-bar input:focus { outline: none; }
-  /* Clinker's entry point becomes the bottom tab on mobile — hide the
+   /* Clinker's entry point becomes the bottom tab on mobile — hide the
      topbar icon so there's exactly one way in, not two. Keep the badge
      logic (agentPanel.js) targeting both ids so neither surface goes
      stale depending on viewport. */

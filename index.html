@@ -22,16 +22,6 @@
       <input type="text" id="search-input" placeholder="Search components…">
     </div>
 
-    <!-- Mobile-only: tapping this expands a fullscreen search field -->
-    <button class="btn-icon btn-mobile-search" id="btn-mobile-search" aria-label="Search" style="display:none">
-      <i class="ti ti-search" style="font-size:20px" aria-hidden="true"></i>
-    </button>
-
-    <!-- Mobile-only: opens the category editor modal -->
-    <button class="btn-icon btn-mobile-categories" id="btn-mobile-categories" aria-label="Categories" style="display:none">
-      <i class="ti ti-category-2" style="font-size:20px" aria-hidden="true"></i>
-    </button>
-
       <button class="btn-icon" id="btn-open-agent-panel" aria-label="Open agent" aria-expanded="false" style="position:relative">
       <i class="ti ti-robot" style="font-size:18px" aria-hidden="true"></i>
       <span id="pending-actions-badge" class="nav-count" style="display:none;position:absolute;top:-2px;right:-2px;background:var(--color-accent);color:#fff">0</span>
@@ -41,15 +31,7 @@
       <button class="btn" id="btn-manage-cats"><i class="ti ti-settings" aria-hidden="true"></i><span> Categories</span></button>
       <button class="btn btn-primary" id="btn-add"><i class="ti ti-plus" aria-hidden="true"></i><span> Add component</span></button>
   </div>
-  <!-- Mobile-only: fullscreen search overlay, triggered by btn-mobile-search -->
-  <div class="mobile-search-bar" id="mobile-search-bar">
-    <i class="ti ti-search" aria-hidden="true"></i>
-    <input type="text" id="mobile-search-input" placeholder="Search components…">
-    <button class="btn-icon" id="btn-mobile-search-close" aria-label="Close search">
-      <i class="ti ti-x" aria-hidden="true"></i>
-    </button>
-  </div>
-
+ 
   <!-- Sidebar backdrop (mobile only) -->
   <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
@@ -123,6 +105,10 @@
     <button class="tab-btn active" id="tab-btn-components" aria-label="All components">
       <i class="ti ti-layout-grid" aria-hidden="true"></i>
       <span>Components</span>
+    </button>
+    <button class="tab-btn" id="tab-btn-categories" aria-label="Manage categories">
+      <i class="ti ti-category-2" aria-hidden="true"></i>
+      <span>Categories</span>
     </button>
     <button class="tab-btn" id="tab-btn-clinker" aria-label="Open Clinker" aria-expanded="false" style="position:relative">
       <i class="ti ti-sparkles" aria-hidden="true"></i>

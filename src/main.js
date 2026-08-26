@@ -316,34 +316,17 @@ function bindStaticEvents() {
     document.getElementById('btn-open-agent-panel')?.setAttribute('aria-expanded', 'false')
     setMode('inventory')
   })
+  document.getElementById('tab-btn-categories').addEventListener('click', () => {
+    document.getElementById('agent-panel')?.classList.remove('open')
+    document.getElementById('btn-open-agent-panel')?.setAttribute('aria-expanded', 'false')
+    openCatModal()
+  })
 
-  // ── Mobile topbar: categories icon opens the category editor modal ──
-  document.getElementById('btn-mobile-categories').addEventListener('click', () => openCatModal())
   // ── Mobile floating action button ──────────────────────────
   // Mirrors whichever "primary create" action applies to the current mode.
   // (Hidden outright outside inventory mode - see setMode - but Designer's
   // and Fabricate's own action bars cover their create flows either way.)
-
-
-  // ── Mobile fullscreen search ────────────────────────────────
-  const mobileSearchBar   = document.getElementById('mobile-search-bar')
-  const mobileSearchInput = document.getElementById('mobile-search-input')
-  const desktopSearchInput = document.getElementById('search-input')
-
-  document.getElementById('btn-mobile-search').addEventListener('click', () => {
-    mobileSearchBar.classList.add('open')
-    mobileSearchInput.value = desktopSearchInput.value
-    mobileSearchInput.focus()
-  })
-  document.getElementById('btn-mobile-search-close').addEventListener('click', () => {
-    mobileSearchBar.classList.remove('open')
-  })
-  // Keep the (hidden) desktop search input in sync so existing render() filtering just works
-  mobileSearchInput.addEventListener('input', () => {
-    desktopSearchInput.value = mobileSearchInput.value
-    render()
-  })
-
+ 
   // nav-all: route by mode
   document.getElementById('nav-all').addEventListener('click', () => {
     if (appMode === 'agenda') { return }
