@@ -227,8 +227,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
             // with a deferred marker so history always stays valid;
             // resumeTurn()'s findUnansweredToolCall() then finds exactly the
             // one real unanswered call (this one), not one of these stubs.
-            await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
-
+    
             for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
               const deferred = parseToolCall(toolCalls[deferredIndex])
               await conversationService.appendMessage({
@@ -239,6 +238,8 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
                 },
               })
             }
+
+	    await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
 
               return {
                 conversationId, status: 'awaiting_confirmation',

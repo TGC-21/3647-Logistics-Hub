@@ -219,6 +219,9 @@ async function sendMessage(event) {
   } catch (error) {
     if (requestEpoch !== conversationEpoch) return
     appendMessage('assistant', `I couldn’t complete that: ${error.message}`)
+    refreshPendingActions().catch( (error) => {
+	console.log(error.message)
+    })
   } finally {
     if (requestEpoch === conversationEpoch) setBusy(false)
   }

@@ -1,40 +1,26 @@
 // backend/_lib/harnessServiceRegistry.js
 // Maps "ServiceClass.methodName" action names (harnessPolicy.js's keys)
 // to actual instances, so the route doesn't need a giant switch. Lazily
+// backend/_lib/harnessServiceRegistry.js
+// Maps "ServiceClass.methodName" action names (harnessPolicy.js's keys)
+// to actual instances, so the route doesn't need a giant switch. Lazily
 // instantiated (each service already defaults its own repos).
 
-import { AssemblyPartService } from '../../src/services/AssemblyPartService.js'
-import { AssemblyService } from '../../src/services/AssemblyService.js'
-import { OnshapeImportService } from '../../src/services/OnshapeImportService.js'
-import { OnshapeReimportService } from '../../src/services/OnshapeReimportService.js'
-import { OnshapeLookupService } from '../../src/services/OnshapeLookupService.js'
-import { InventoryReservationService } from '../../src/services/InventoryReservationService.js'
-import { FabricationJobService } from '../../src/services/FabricationJobService.js'
-import { FabricationDetectionService } from '../../src/services/FabricationDetectionService.js'
-import { CartService } from '../../src/services/CartService.js'
+// Refactor note: Partshelf was cut down to an inventory-only tracker.
+// Every service tied to Designer/Fabricate/Part Orders/Agenda/Onshape
+// import moved to deprecated/ — Clinker (the agent harness) now only
+// resolves the inventory-relevant services below. See
+// backend/_lib/harnessPolicy.js / harnessTools.js, trimmed to match.
 import { CategoryService } from '../../src/services/CategoryService.js'
 import { ComponentService } from '../../src/services/ComponentService.js'
-import { AgendaService } from '../../src/services/AgendaService.js'
 import { InventoryInstanceService } from '../../src/services/InventoryInstanceService.js'
-import { DetectionService } from '../../src/services/DetectionService.js'
 
 let instances = null
 function registry() {
   if (instances) return instances
   instances = {
-    AssemblyPartService: new AssemblyPartService(),
-    AssemblyService: new AssemblyService(),
-    OnshapeImportService: new OnshapeImportService(),
-    OnshapeReimportService: new OnshapeReimportService(),
-    OnshapeLookupService: new OnshapeLookupService(),
-    InventoryReservationService: new InventoryReservationService(),
-    FabricationJobService: new FabricationJobService(),
-    FabricationDetectionService: new FabricationDetectionService(),
-    DetectionService: new DetectionService(),
-    CartService: new CartService(),
     CategoryService: new CategoryService(),
     ComponentService: new ComponentService(),
-    AgendaService: new AgendaService(),
     InventoryInstanceService: new InventoryInstanceService(),
   }
   return instances
