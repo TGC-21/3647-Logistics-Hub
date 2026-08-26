@@ -19,18 +19,9 @@
   .topbar-search { display: none !important; }
   .btn-mobile-search { display: flex !important; margin-left: auto; }
 
-    /* Mode toggle (Inventory/Designer/Fabricate/Part Orders) is replaced
-     entirely by the bottom tab bar on mobile — the bottom bar is the
-     only way to switch mode, so don't show this duplicate row up top. */
-  .mode-toggle { display: none !important; }
-
   /* Categories is a modal trigger, not a mode — lives as a topbar icon
      next to search, not in the mode-switching bottom tab bar. */
   .btn-mobile-categories { display: flex !important; }
-
-  /* Mode toggle: icons only, smaller */
-  .mode-btn       { padding: 5px 8px; }
-  .mode-btn span  { display: none; }
 
   /* Primary actions move to the bottom tab bar + FAB; hide the cramped topbar row */
   /* Inventory's "Add component" moves to the FAB, so this row can go. */
@@ -60,6 +51,11 @@
     padding: 8px 0;
   }
   .mobile-search-bar input:focus { outline: none; }
+  /* Clinker's entry point becomes the bottom tab on mobile — hide the
+     topbar icon so there's exactly one way in, not two. Keep the badge
+     logic (agentPanel.js) targeting both ids so neither surface goes
+     stale depending on viewport. */
+  #btn-open-agent-panel { display: none !important; }
 
   /* ── Bottom tab bar ─────────────────────────────────────── */
   .mobile-tabbar {
@@ -87,6 +83,9 @@
   }
   .tab-btn i { font-size: 21px; }
   .tab-btn.active { color: var(--color-accent); }
+  /* Clinker tab reflects panel-open state via .active, toggled in JS
+     (agentPanel.js), same visual language as "you are here" on the
+     Components tab — not a route, but the affordance should match. */
 
   /* ── Floating action button ─────────────────────────────── */
   .mobile-fab {

@@ -21,10 +21,16 @@ async function request(url, options) {
 }
 
 function updateBadge() {
-  const badge = document.getElementById('pending-actions-badge')
-  if (!badge) return
-  badge.textContent = String(pendingActions.length)
-  badge.style.display = pendingActions.length ? 'inline-flex' : 'none'
+  // Two physical badges now (topbar desktop + mobile bottom tab) since
+  // an element can only have one id — keep them mirrored rather than
+  // picking one, so whichever surface is visible at a given viewport
+  // width is always accurate.
+  ;['pending-actions-badge', 'pending-actions-badge-mobile'].forEach(id => {
+    const badge = document.getElementById(id)
+    if (!badge) return
+    badge.textContent = String(pendingActions.length)
+    badge.style.display = pendingActions.length ? 'inline-flex' : 'none'
+  })
 }
 
 function renderConfirmations() {
@@ -253,9 +259,25 @@ async function decide(pendingActionId, decision) {
 
 export function bindAgentPanelEvents() {
   const panel = document.getElementById('agent-panel')
-  const open = () => { panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false'); document.getElementById('btn-open-agent-panel').setAttribute('aria-expanded', 'true'); refreshPendingActions().catch(console.error); refreshHistory() }
-  const close = () => { panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); document.getElementById('btn-open-agent-panel').setAttribute('aria-expanded', 'false') }
+  const toggleBtns = ['btn-open-agent-panel', 'tab-btn-clinker'].map(id => document.getElementById(id)).filter(Boolean)
+  const open = () => {
+    panel.classList.add('open')
+    panel.setAttribute('aria-hidden', 'false')
+    toggleBtns.forEach(btn => btn.setAttribute('aria-expanded', 'true'))
+    document.getElementById('tab-btn-clinker')?.classList.add('active')
+    document.getElementById('tab-btn-components')?.classList.remove('active')
+    refreshPendingActions().catch(console.error)
+    refreshHistory()
+  }
+  const close = () => {
+    panel.classList.remove('open')
+    panel.setAttribute('aria-hidden', 'true')
+    toggleBtns.forEach(btn => btn.setAttribute('aria-expanded', 'false'))
+    document.getElementById('tab-btn-clinker')?.classList.remove('active')
+  }
+
   document.getElementById('btn-open-agent-panel').addEventListener('click', () => panel.classList.contains('open') ? close() : open())
+  document.getElementById('tab-btn-clinker')?.addEventListener('click', () => panel.classList.contains('open') ? close() : open())
   document.getElementById('btn-close-agent-panel').addEventListener('click', close)
   document.getElementById('btn-new-agent-chat').addEventListener('click', () => startNewChat({ focus: true }))
   document.getElementById('agent-composer').addEventListener('submit', sendMessage)

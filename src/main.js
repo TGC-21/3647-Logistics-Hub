@@ -306,13 +306,16 @@ function bindStaticEvents() {
     if (window.innerWidth <= 640) closeSidebar()
   })
 
-  // Mode toggle
-  document.getElementById('btn-mode-inventory').addEventListener('click', () => setMode('inventory'))
-
-
   // ── Mobile bottom tab bar ──────────────────────────────────
-  document.getElementById('tab-btn-components').addEventListener('click', () => setMode('inventory'))
-
+    document.getElementById('tab-btn-components').addEventListener('click', () => {
+    // Closing the agent panel on nav is a deliberate mobile-only
+    // affordance — the panel is fullscreen-ish on narrow viewports
+    // (agent-panel.css's @media 640px block), so "go to Components"
+    // should feel like leaving the agent, not stacking on top of it.
+    document.getElementById('agent-panel')?.classList.remove('open')
+    document.getElementById('btn-open-agent-panel')?.setAttribute('aria-expanded', 'false')
+    setMode('inventory')
+  })
 
   // ── Mobile topbar: categories icon opens the category editor modal ──
   document.getElementById('btn-mobile-categories').addEventListener('click', () => openCatModal())

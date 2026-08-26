@@ -17,12 +17,6 @@
     </button>
     <div class="topbar-logo"><i class="ti ti-box" aria-hidden="true"></i> Partshelf</div>
 
-    <div class="mode-toggle">
-      <button class="mode-btn" id="btn-mode-inventory">
-        <i class="ti ti-layout-grid" aria-hidden="true"></i> Inventory
-      </button>
-    </div>
-
     <div class="topbar-search" id="topbar-search-wrap">
       <i class="ti ti-search" aria-hidden="true"></i>
       <input type="text" id="search-input" placeholder="Search components…">
@@ -38,7 +32,7 @@
       <i class="ti ti-category-2" style="font-size:20px" aria-hidden="true"></i>
     </button>
 
-    <button class="btn-icon" id="btn-open-agent-panel" aria-label="Open agent" aria-expanded="false" style="position:relative">
+      <button class="btn-icon" id="btn-open-agent-panel" aria-label="Open agent" aria-expanded="false" style="position:relative">
       <i class="ti ti-robot" style="font-size:18px" aria-hidden="true"></i>
       <span id="pending-actions-badge" class="nav-count" style="display:none;position:absolute;top:-2px;right:-2px;background:var(--color-accent);color:#fff">0</span>
     </button>
@@ -121,6 +115,21 @@
       <button class="btn btn-primary" id="btn-add"><i class="ti ti-plus" aria-hidden="true"></i><span> Add component</span></button>
   </div>
 </div>
+
+  <!-- Mobile-only: bottom tab bar. Two destinations: the (only) content
+       screen, and Clinker — which doesn't navigate anywhere, it toggles
+       the same agent panel the desktop topbar button opens. -->
+  <nav class="mobile-tabbar" id="mobile-tabbar" style="display:none">
+    <button class="tab-btn active" id="tab-btn-components" aria-label="All components">
+      <i class="ti ti-layout-grid" aria-hidden="true"></i>
+      <span>Components</span>
+    </button>
+    <button class="tab-btn" id="tab-btn-clinker" aria-label="Open Clinker" aria-expanded="false" style="position:relative">
+      <i class="ti ti-sparkles" aria-hidden="true"></i>
+      <span>Clinker</span>
+      <span id="pending-actions-badge-mobile" class="nav-count" style="display:none;position:absolute;top:2px;right:22%;background:var(--color-accent);color:#fff">0</span>
+    </button>
+  </nav>
 
 <!-- ── Add / Edit Component Modal ─────────────────────────── -->
 <div class="overlay" id="modal-overlay" style="display:none">
