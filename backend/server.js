@@ -26,18 +26,13 @@ try {
   console.warn(`No build found at ${DIST_DIR} — serving API only. Run "npm run build" in the repo root to enable static frontend serving.`);
 }
 
-import assemblyParts from "./routes/assembly-parts.js";
+
 import categories from "./routes/categories.js";
-import cartItems from "./routes/cart-items.js";
+
 import components from "./routes/components.js";
-import fabricationJobs from "./routes/fabrication-jobs.js";
-import fabricationDetection from "./routes/fabrication-detection.js";
-import inventoryReservation from "./routes/inventory-reservation.js";
+
 import changeLog from "./routes/change-log.js";
-import assembliesV2 from "./routes/assemblies-v2.js";
-import agendaTasksV2 from "./routes/agenda-tasks-v2.js";
-import onshapeAssembly from "./routes/onshape-assembly.js";
-import onshapeLookup from "./routes/onshape-lookup.js";
+
 import harnessInvoke from "./routes/harness-invoke.js";
 import pendingActions from "./routes/pending-actions.js";
 import agentChat from "./routes/agent-chat.js";
@@ -60,18 +55,14 @@ app.use(
 // as the endpoint your uptime monitor polls.
 app.get("/health", (c) => c.json({ status: "ok" }));
 
-app.route("/api/assembly-parts", assemblyParts);
+
 app.route("/api/categories", categories);
-app.route("/api/cart-items", cartItems);
+
 app.route("/api/components", components);
-app.route("/api/fabrication-jobs", fabricationJobs);
-app.route("/api/fabrication-detection", fabricationDetection);
-app.route("/api/inventory-reservation", inventoryReservation);
+
 app.route("/api/change-log", changeLog);
-app.route("/api/assemblies-v2", assembliesV2);
-app.route("/api/agenda-tasks-v2", agendaTasksV2);
-app.route("/api/onshape-assembly", onshapeAssembly);
-app.route("/api/onshape-lookup", onshapeLookup);
+
+
 app.route("/api/harness-invoke", harnessInvoke);
 app.route("/api/pending-actions", pendingActions);
 app.route("/api/agent-chat", agentChat);

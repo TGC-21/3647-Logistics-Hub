@@ -30,11 +30,11 @@
 // No @supabase/supabase-js import, no req/res.
 
 import { InventoryInstanceRepository } from '../repositories/InventoryInstanceRepository.js'
-import { AssemblyPartRepository } from '../repositories/AssemblyPartRepository.js'
+
 import { CategoryRepository } from '../repositories/CategoryRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ComponentService } from './ComponentService.js'
-import { InventoryReservationService } from './InventoryReservationService.js'
+
 import { ChangeLogService } from './ChangeLogService.js'
 import { ValidationError } from '../repositories/errors.js'
 import { runBulk } from '../../backend/_lib/bulkOps.js'
@@ -53,19 +53,19 @@ const PATCHABLE_KEYS = ['name', 'description', 'image', 'location', 'quantity', 
 export class InventoryInstanceService {
   constructor({
     instanceRepo        = new InventoryInstanceRepository(),
-    assemblyPartRepo    = new AssemblyPartRepository(),
+
     categoryRepo        = new CategoryRepository(),
     changeLogRepo       = new ChangeLogRepository(),
     componentService    = new ComponentService({ categoryRepo, changeLogRepo }),
-    reservationService  = new InventoryReservationService({ changeLogRepo }),
+
     changeLogService    = new ChangeLogService({ changeLogRepo }),
   } = {}) {
     this.instanceRepo       = instanceRepo
-    this.assemblyPartRepo   = assemblyPartRepo
+
     this.categoryRepo       = categoryRepo
     this.changeLogRepo      = changeLogRepo
     this.componentService   = componentService
-    this.reservationService = reservationService
+
     this.changeLogService   = changeLogService
   }
 
@@ -175,13 +175,7 @@ export class InventoryInstanceService {
     const instance = await this.instanceRepo.findById(instanceId)
     if (!instance) throw new ValidationError(`Inventory instance ${instanceId} not found`)
 
-    const linkingParts = await this.assemblyPartRepo.findLinkingInstance(instanceId)
-    for (const part of linkingParts) {
-      await this.reservationService.unreserve({
-        assemblyPartId: part.id, instanceId, unlinkedQuantity: instance.quantity, resetLocation: '', actorId,
-      })
-    }
-
+  
     await this.instanceRepo.deleteById(instanceId)
 
     const counts = await this.instanceRepo.countsByComponentIds([instance.componentId])

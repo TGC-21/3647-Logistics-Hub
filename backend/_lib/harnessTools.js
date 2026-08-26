@@ -163,7 +163,14 @@ const HAND_WRITTEN = {
     description: 'Deletes an inventory instance outright — first unreserving it from every assembly part currently linking it, then removing the row.',
     parameters: { type: 'object', properties: { instanceId: { type: 'string' } }, required: ['instanceId'] },
   },
-
+  'InventoryInstanceService.getByIds': {
+    description: 'Fetches multiple inventory instances by id in one call.',
+    parameters: { type: 'object', properties: { instanceIds: { type: 'array', items: { type: 'string' } } }, required: ['instanceIds'] },
+  },
+  'InventoryInstanceService.bulkDeleteInstances': {
+    description: 'Deletes multiple inventory instances at once, unreserving each from any assembly part first. Cannot be undone.',
+    parameters: { type: 'object', properties: { instanceIds: { type: 'array', items: { type: 'string' } } }, required: ['instanceIds'] },
+  },
 }
 
 // ── Simple auto-generated actions (id-shaped, no real structure) ─────

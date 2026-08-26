@@ -1,5 +1,5 @@
 import './style.css'
-import { renderSegmentEditor } from './segmentEditor.js'
+
 import {
   uploadImage, deleteImage,
   validateAttribute, reconcileOrphanedInstances,
@@ -18,32 +18,8 @@ import {
   updateComponentFallback,
   createInventoryInstance, updateInventoryInstance, deleteInventoryInstance,
 } from './services/componentsApi.js'
-import {
-  designerBoot,        setToast,
-  renderDesignerSidebar, renderDesignerContent,
-  bindDesignerEvents,  openAssemblyModal,
-  selectAssembly,      openOnshapeModal,
-  bootIsolatedAssembly, bootIsolatedChild,
-} from './designer.js'
 
-import {
-  fabricateBoot,          setFabricateToast,
-  renderFabricateSidebar, renderFabricateContent,
-  bindFabricateEvents,    selectBatch,
-} from './fabricate.js'
 
-import {
-  partOrdersBoot, setPartOrdersToast,
-  renderPartOrdersSidebar, renderPartOrdersContent,
-  bindPartOrdersEvents, selectCart, openCartModal,
-  bindManageVendorsEvents,
-} from './partOrders.js'
-
-// ── new import, alongside the existing fabricate/partOrders imports ──
-import {
-  agendaBoot, setAgendaToast, renderAgendaSidebar, renderAgendaContent,
-  bindAgendaEvents, consumeAgendaDeepLink,
-} from './agenda.js'
 
 import { attachAutocomplete } from './autocomplete.js'
 
@@ -80,12 +56,6 @@ async function boot() {
   if (!getCurrentMemberId()){
 
   }
-  setToast(showToast)
-  setFabricateToast(showToast)
-  setPartOrdersToast(showToast)
-  setAgendaToast(showToast)
-
-  const hasTaskDeepLink = consumeAgendaDeepLink()
 
   // "?asm=<id>" opens a single ROOT assembly full-screen; "?child=<id>"
   // opens a single SUBASSEMBLY node full-screen. Both have no sidebar/other
@@ -94,53 +64,17 @@ async function boot() {
   const isolatedAsmId = params.get('asm')
   const isolatedChildId = params.get('child')
 
-  if (isolatedChildId) {
-    document.body.classList.add('isolated-view')
-    appMode = 'designer'
-    try {
-      await bootIsolatedChild(isolatedChildId)
-    } catch (e) {
-      console.error(e)
-      showToast('Could not load subassembly')
-    }
-    bindStaticEvents()
-    bindDesignerEvents()
-    return
-  }
-
-  if (isolatedAsmId) {
-    document.body.classList.add('isolated-view')
-    appMode = 'designer'
-    try {
-      await bootIsolatedAssembly(isolatedAsmId)
-    } catch (e) {
-      console.error(e)
-      showToast('Could not load assembly')
-    }
-    bindStaticEvents()
-    bindDesignerEvents()
-    return
-  }
-
+  
   try {
     [categories, items] = await Promise.all([fetchCategories(), fetchInventoryInstances()])
-    await designerBoot()
-    await fabricateBoot()
-    await partOrdersBoot()
-    await agendaBoot()
 
   } catch (e) {
     console.error(e)
     showToast('Could not connect to database — check your .env file')
   }
-  appMode = 'agenda'
+  appMode = 'inventory'
   render()
   try { bindStaticEvents() }    catch (e) { console.error('[boot] bindStaticEvents failed', e) }
-  try { bindDesignerEvents() }  catch (e) { console.error('[boot] bindDesignerEvents failed', e) }
-  try { bindFabricateEvents() } catch (e) { console.error('[boot] bindFabricateEvents failed', e) }
-  try { bindPartOrdersEvents() } catch (e) { console.error('[boot] bindPartOrdersEvents failed', e) }
-  try { bindAgendaEvents() } catch (e) {console.error('[boot] bindAgendaEvents failed', e)}
-  try { bindManageVendorsEvents()} catch (e) { console.error('[boot] bindManageVendorsEvents failed', e)}
   try { bindHistoryPanelEvents() } catch (e) { console.error('[boot] bindHistoryPanelEvents failed', e )}
   try { bindAgentPanelEvents() } catch (e) { console.error('[boot] agent panel failed', e) }
 }
@@ -168,61 +102,22 @@ function showToast(msg, onClick) {
 function setMode(newMode) {
   appMode = newMode // 'inventory' | 'designer' | 'fabricate'
 
-  document.getElementById('btn-mode-agenda').classList.toggle('active', appMode === 'agenda')
   document.getElementById('btn-mode-inventory').classList.toggle('active', appMode === 'inventory')
-  document.getElementById('btn-mode-designer').classList.toggle('active', appMode==='designer')
-  document.getElementById('btn-mode-fabricate').classList.toggle('active', appMode === 'fabricate')
-  document.getElementById('btn-mode-partorders').classList.toggle('active', appMode === 'partorders')
-
   document.getElementById('inventory-actions').style.display = appMode === 'inventory' ? '' : 'none'
-  document.getElementById('designer-actions').style.display = appMode === 'designer' ? '' : 'none'
-  document.getElementById('fabricate-actions').style.display = appMode === 'fabricate' ? '' : 'none'
-  document.getElementById('topbar-search-wrap').style.display = appMode === 'inventory' ? '' : 'none'
-  document.getElementById('partorders-actions').style.display = appMode === 'partorders' ? '' : 'none'
 
   // Mobile bottom tab bar + FAB mirror the same mode
-  const tabAgenda     = document.getElementById('tab-btn-agenda')
   const tabComponents = document.getElementById('tab-btn-components')
-  const tabDesigner    = document.getElementById('tab-btn-designer')
-  const tabFabricate = document.getElementById('tab-btn-fabricate')
-  const tabPartorders = document.getElementById('tab-btn-partorders')
-  if (tabComponents && tabDesigner && tabFabricate && tabAgenda){
-    tabAgenda?.classList.toggle('active', appMode === 'agenda')           
+  if (tabComponents){      
     tabComponents.classList.toggle('active', appMode === 'inventory')
-    tabDesigner.classList.toggle('active', appMode ==='designer')
-    tabFabricate.classList.toggle('active', appMode === 'fabricate')
-    tabPartorders?.classList.toggle('active', appMode === 'partorders')
   }
   
-  // Designer/Fabricate each surface their own create actions elsewhere, so the generic 'add' FAB only makes sense in inventory mode.
-  const fab = document.getElementById('mobile-fab')
-  if (fab) fab.classList.toggle('fab-hidden', appMode !== 'inventory')
-
-    // Lets mobile CSS reserve extra bottom padding when a mode's pinned action bar (above the tab bar) is visible, so content isn't hidden.
-    document.body.classList.toggle('designer-mode', appMode === 'designer')
-    document.body.classList.toggle('fabricate-mode', appMode === 'fabricate')
-
   render()
 }
 
 // ── Render ────────────────────────────────────────────────────
 function render() {
-  if (appMode === 'agenda'){
-    renderAgendaSidebar()
-    renderAgendaContent()
-  } else if (appMode === 'designer') {
-    renderDesignerSidebar()
-    renderDesignerContent()
-  } else if (appMode === 'fabricate'){
-    renderFabricateSidebar()
-    renderFabricateContent()
-  } else if (appMode === 'partorders') {
-  renderPartOrdersSidebar()
-  renderPartOrdersContent()
-  } else {
     renderSidebar()
     renderContent()
-  } 
 }
 
 function renderSidebar() {
@@ -379,8 +274,6 @@ function bindStaticEvents() {
   document.getElementById('search-input').addEventListener('input', render)
   document.getElementById('btn-add').addEventListener('click', () => openAddModal())
   document.getElementById('btn-manage-cats').addEventListener('click', openCatModal)
-  document.getElementById('btn-mode-partorders').addEventListener('click', () => setMode('partorders'))
-  document.getElementById('btn-new-cart-topbar').addEventListener('click', () => openCartModal())
 
   attachAutocomplete(document.getElementById('field-loc'), {
     getCandidates: distinctLocations,
@@ -414,19 +307,12 @@ function bindStaticEvents() {
   })
 
   // Mode toggle
-  document.getElementById('btn-mode-agenda').addEventListener('click', () => setMode('agenda'))
   document.getElementById('btn-mode-inventory').addEventListener('click', () => setMode('inventory'))
-  document.getElementById('btn-mode-designer').addEventListener('click', () => setMode('designer'))
-  document.getElementById('btn-mode-fabricate').addEventListener('click', () => setMode('fabricate'))
-  document.getElementById('btn-new-assembly').addEventListener('click', () => openAssemblyModal())
-  document.getElementById('btn-new-from-onshape').addEventListener('click', () => openOnshapeModal('link'))
+
 
   // ── Mobile bottom tab bar ──────────────────────────────────
-  document.getElementById('tab-btn-agenda').addEventListener('click', () => setMode('agenda'))
   document.getElementById('tab-btn-components').addEventListener('click', () => setMode('inventory'))
-  document.getElementById('tab-btn-designer').addEventListener('click', () => setMode('designer'))
-  document.getElementById('tab-btn-fabricate').addEventListener('click', () => setMode('fabricate'))
-  document.getElementById('tab-btn-partorders').addEventListener('click', () => setMode('partorders'))
+
 
   // ── Mobile topbar: categories icon opens the category editor modal ──
   document.getElementById('btn-mobile-categories').addEventListener('click', () => openCatModal())
@@ -434,9 +320,7 @@ function bindStaticEvents() {
   // Mirrors whichever "primary create" action applies to the current mode.
   // (Hidden outright outside inventory mode - see setMode - but Designer's
   // and Fabricate's own action bars cover their create flows either way.)
-  document.getElementById('mobile-fab').addEventListener('click', () => {
-    appMode === 'designer' ? openAssemblyModal() : openAddModal()
-  })
+
 
   // ── Mobile fullscreen search ────────────────────────────────
   const mobileSearchBar   = document.getElementById('mobile-search-bar')
