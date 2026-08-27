@@ -19,12 +19,14 @@
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
 import { executeTool, structuredToolError } from '../../backend/_lib/harnessToolRegistry.js'
+import { PROPOSE_INVENTORY_TOOL_NAME } from './inventoryProposalTool.js'
 import { chatCompletion } from './llmClient.js'
 import { buildToolSchema, parseToolCall } from './toolSchema.js'
 import { getTool } from '../../backend/_lib/harnessToolRegistry.js'
 import { compactToolResult } from './toolResultCompactor.js'
 import { buildContextWindow } from './contextWindow.js'
 import { selectToolActions } from './toolSelection.js'
+import { CategoryService } from '../../src/services/CategoryService.js'
 
 const MAX_TOOL_ITERATIONS = 16   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
 const MAX_IDENTICAL_FAILURES = 2
@@ -186,13 +188,23 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
   const conversationService = new HarnessConversationService()
   const seenCallsThisTurn = new Map()   // callKey -> already-compacted result string
   const failureCounts = new Map()   // callKey -> consecutive failure count
+  const hasAttachment = messages.some(message => message.role === 'user' && message.attachments?.some(a => a?.url))
+  const categoryGuidance = hasAttachment
+    ? await new CategoryService().list()
+    : []
 
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const context = buildContextWindow(messages)
     
     const tools = buildToolSchema({ actionNames: selectToolActions(context.messages) })
-    const assistantMessage = await chatCompletion({ messages: context.messages, tools })
+    const modelMessages = categoryGuidance.length
+      ? context.messages.map((message, index) => index === 0 ? {
+          ...message,
+          content: `${message.content}\n\nAuthoritative category requirements for inventory proposals:\n${categoryGuidance.map(category => `- ${category.name} (categoryId: ${category.id}): ${(category.requiredKeysConfig || []).map(cfg => `${cfg.key} [${cfg.type}]`).join(', ') || 'no required characteristics'}`).join('\n')}`,
+        } : message)
+      : context.messages
+    const assistantMessage = await chatCompletion({ messages: modelMessages, tools })
     const withAssistant = await conversationService.appendMessage({ conversationId, message: assistantMessage })
     messages = withAssistant.messages
 
@@ -207,6 +219,52 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
       const key = callKey(toolName, args)
 
       let toolResultContent
+
+      if (toolName === PROPOSE_INVENTORY_TOOL_NAME) {
+        const attachmentUrl = mostRecentAttachmentUrl(messages)
+        const proposal = {
+          ...args,
+          attachmentUrl,   // server-attached, overrides anything the model tried to pass
+        }
+
+              // Keep the OpenAI protocol valid: this tool_call still needs a
+        // matching 'tool' response before the assistant message is "closed
+        // out," same rule the ConfirmationRequiredError path already
+        // follows for any calls after the interception point.
+      const toolResultContent = JSON.stringify({
+        status: 'awaiting_member_confirmation',
+        note: 'Proposal handed to the member for review — do not attempt this write again in this turn.',
+      })
+      const withToolResult = await conversationService.appendMessage({
+        conversationId, message: { role: 'tool', tool_call_id: toolCallId, content: toolResultContent },
+      })
+      messages = withToolResult.messages
+
+      // Same "stub out anything after this in the batch" discipline the
+      // ConfirmationRequiredError branch uses — a proposal also ends the
+      // turn immediately, so any later calls in this same tool_calls batch
+      // would otherwise be left unanswered.
+        for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
+          const deferred = parseToolCall(toolCalls[deferredIndex])
+          await conversationService.appendMessage({
+            conversationId,
+            message: {
+              role: 'tool', tool_call_id: deferred.toolCallId,
+              content: JSON.stringify({ error: 'Deferred — an inventory proposal was created earlier in this batch and the turn ended. This action was not executed.' }),
+            },
+          })
+        }
+
+        await conversationService.complete({ conversationId })
+
+        return {
+          conversationId,
+          status: 'proposal',
+          proposal,
+          reply: `I've put together a proposed inventory item from the image — review it below.`,
+        }
+      }
+
       if (seenCallsThisTurn.has(key)){
         // Same tool, same args, already answered this turn — hand back
         // the cached result with a note, rather than re-hitting the DB
@@ -298,4 +356,21 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
     reply: fallbackReply.content || 'I ran out of steps before finishing — try narrowing the request.',
     truncated: true,
   }
+}
+
+/** Finds the most recent attachment URL anywhere in conversation
+ *  history — the server's own source of truth for "what image was
+ *  actually attached," never trusted from the model's tool-call args
+ *  (a model could otherwise fabricate/mistype a URL and have it
+ *  written straight into an inventory instance). Walks backward since
+ *  the propose call is always reacting to the LATEST attached image. */
+function mostRecentAttachmentUrl(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === 'user' && Array.isArray(msg.attachments)) {
+      const withUrl = msg.attachments.find(a => a?.url)
+      if (withUrl) return withUrl.url
+    }
+  }
+  return null
 }

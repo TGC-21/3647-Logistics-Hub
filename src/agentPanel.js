@@ -5,11 +5,51 @@
 import { getCurrentMemberId } from './members.js'
 import { uploadAgentImage } from './db.js'
 import { fetchPendingActions, resolvePendingAction } from './services/harnessApi.js'
+import { fetchCategories, createCategory } from './services/categoriesApi.js'
+import { createInventoryInstance, updateInventoryInstance } from './services/componentsApi.js'
+import { fetchInventoryInstances } from './db.js'
+import { attachAutocomplete } from './autocomplete.js'
 
 let conversationId = null
 let pendingActions = []
 let conversationEpoch = 0
 let attachedImage = null
+let categoryCache = null
+let locationCache  = null
+
+async function ensureCategories() {
+  if (!categoryCache) categoryCache = await fetchCategories()
+  return categoryCache
+}
+
+/** Distinct location strings already in use — same derivation main.js's
+ *  distinctLocations() does off its in-memory items list, just fetched
+ *  fresh here since agentPanel.js doesn't share main.js's module state. */
+async function ensureLocations() {
+  if (!locationCache) {
+    const items = await fetchInventoryInstances()
+    locationCache = [...new Set(items.map(it => it.location).filter(Boolean))]
+  }
+  return locationCache
+}
+
+/** Best-effort case-insensitive match of the model's free-text
+ *  categoryName guess against real categories, so the select can
+ *  preselect instead of defaulting to "Uncategorized" when the model
+ *  actually got it right. */
+function guessCategoryId(categoryName, categories) {
+  if (!categoryName) return ''
+  const normalize = value => String(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean).map(token => token.endsWith('s') ? token.slice(0, -1) : token)
+  const wanted = new Set(normalize(categoryName))
+  let best = null
+  for (const category of categories) {
+    const candidate = new Set(normalize(category.name))
+    const overlap = [...wanted].filter(token => candidate.has(token)).length
+    const score = overlap / Math.max(wanted.size, candidate.size)
+    if (overlap && (!best || score > best.score)) best = { category, score }
+  }
+  return best?.score >= 0.5 ? best.category.id : ''
+}
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char])
@@ -46,6 +86,203 @@ function renderConfirmations() {
     </article>`).join('')
   container.querySelectorAll('[data-agent-approve]').forEach(button => button.addEventListener('click', () => decide(button.dataset.agentApprove, 'approved')))
   container.querySelectorAll('[data-agent-deny]').forEach(button => button.addEventListener('click', () => decide(button.dataset.agentDeny, 'denied')))
+}
+
+async function renderInventoryProposal(proposal) {
+  const thread = document.getElementById('agent-thread')
+  const card = document.createElement('article')
+  card.className = 'agent-proposal-card'
+  thread.appendChild(card)
+  card.innerHTML = `<div class="agent-proposal-heading"><i class="ti ti-loader-2 spin" aria-hidden="true"></i> Loading…</div>`
+
+  const categories = await ensureCategories()
+  const locations  = await ensureLocations()
+  const preselectedCatId = categories.some(c => c.id === proposal.categoryId)
+    ? proposal.categoryId
+    : guessCategoryId(proposal.categoryName, categories)
+  const initialCategory = categories.find(c => c.id === preselectedCatId) || null
+
+  card.innerHTML = `
+    <div class="agent-proposal-heading"><i class="ti ti-camera-plus" aria-hidden="true"></i><strong>Proposed inventory item</strong></div>
+    ${proposal.attachmentUrl ? `<img class="agent-proposal-image" src="${escapeHtml(proposal.attachmentUrl)}" alt="Attached photo">` : ''}
+
+    <div class="field"><label>Name</label><input type="text" data-proposal-field="name" value="${escapeHtml(proposal.name || '')}"></div>
+
+    <div class="field">
+      <label>Category</label>
+      <select data-proposal-category></select>
+      <div class="agent-proposal-new-cat" data-new-cat-row style="display:none">
+        <input type="text" data-new-cat-name placeholder="New category name…">
+        <button type="button" class="btn btn-sm" data-new-cat-cancel>Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" data-new-cat-confirm>Create</button>
+      </div>
+      ${!preselectedCatId && proposal.categoryName ? `<div class="agent-proposal-hint">Clinker suggested "${escapeHtml(proposal.categoryName)}" — no exact match found, pick one or create it.</div>` : ''}
+    </div>
+
+    <div class="field"><label>Quantity</label><input type="number" min="0" data-proposal-field="quantity" value="${proposal.quantity ?? ''}"></div>
+    <div class="field"><label>Location</label><input type="text" data-proposal-field="location" value="${escapeHtml(proposal.location || '')}" autocomplete="off"></div>
+    <div class="field"><label>Notes</label><textarea data-proposal-field="notes">${escapeHtml(proposal.notes || '')}</textarea></div>
+
+    <div class="field">
+      <label>Characteristics</label>
+      <div data-proposal-attrs></div>
+    </div>
+
+    ${proposal.reasoning ? `<p class="agent-proposal-reasoning"><i class="ti ti-info-circle" aria-hidden="true"></i> ${escapeHtml(proposal.reasoning)}</p>` : ''}
+    <div class="agent-confirmation-actions">
+      <button class="btn btn-sm" data-proposal-discard>Discard</button>
+      <button class="btn btn-primary btn-sm" data-proposal-confirm>
+        <i class="ti ti-check" aria-hidden="true"></i> Add to inventory
+      </button>
+    </div>`
+
+  // ── Category select ──
+  const catSelect = card.querySelector('[data-proposal-category]')
+  populateCategorySelect(catSelect, categories, preselectedCatId)
+  renderProposalAttrs(card, initialCategory, proposal.attrs || {})
+
+  catSelect.addEventListener('change', () => {
+    if (catSelect.value === '__new__') {
+      card.querySelector('[data-new-cat-row]').style.display = 'flex'
+      catSelect.value = preselectedCatId || ''
+      card.querySelector('[data-new-cat-name]')?.focus()
+      return
+    }
+    const cat = categories.find(c => c.id === catSelect.value) || null
+    renderProposalAttrs(card, cat, proposal.attrs || {})
+  })
+
+  card.querySelector('[data-new-cat-cancel]').addEventListener('click', () => {
+    card.querySelector('[data-new-cat-row]').style.display = 'none'
+  })
+  card.querySelector('[data-new-cat-confirm]').addEventListener('click', async () => {
+    const nameInput = card.querySelector('[data-new-cat-name]')
+    const name = nameInput.value.trim()
+    if (!name) { nameInput.focus(); return }
+    try {
+      // No required-characteristics builder here — keep the in-chat
+      // flow fast. A member who wants typed required fields on this
+      // new category can add them afterward via Manage Categories,
+      // same as any category created without them today.
+      const saved = await createCategory({ name, requiredKeysConfig: [], actorId: getCurrentMemberId() })
+      categoryCache = null   // invalidate so the next proposal card sees it too
+      categories.push(saved)
+      populateCategorySelect(catSelect, categories, saved.id)
+      card.querySelector('[data-new-cat-row]').style.display = 'none'
+      renderProposalAttrs(card, saved, proposal.attrs || {})
+    } catch (error) {
+      appendMessage('assistant', `Couldn't create that category: ${error.message}`)
+    }
+  })
+
+  // ── Location autocomplete (reuses the same ghost-text + dropdown
+  //    component the manual Add Component modal uses) ──
+  const locInput = card.querySelector('[data-proposal-field="location"]')
+  attachAutocomplete(locInput, {
+    getCandidates: () => locations,
+    wrapperEl: locInput.closest('.field'),
+  })
+
+  thread.scrollTop = thread.scrollHeight
+  card.querySelector('[data-proposal-discard]').addEventListener('click', () => card.remove())
+  card.querySelector('[data-proposal-confirm]').addEventListener('click', () => confirmProposal(card, proposal, categories))
+}
+
+function populateCategorySelect(select, categories, selectedId) {
+  select.innerHTML = '<option value="">— Uncategorized —</option>' +
+    categories.map(c => `<option value="${c.id}"${c.id === selectedId ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('') +
+    '<option value="__new__">+ New category…</option>'
+}
+
+/** Renders the characteristics rows for whichever category is currently
+ *  selected: one row per that category's requiredKeysConfig entry
+ *  (pre-filled from the model's attrs guess where the key matches),
+ *  plus any of the model's OTHER attrs guesses as freeform extras below
+ *  a divider — so a guess like "Pitch" isn't silently dropped just
+ *  because the matched/created category doesn't define it as required. */
+function renderProposalAttrs(card, category, modelAttrs) {
+  const wrap = card.querySelector('[data-proposal-attrs]')
+  const requiredConfig = category?.requiredKeysConfig || []
+  const requiredKeys = new Set(requiredConfig.map(c => c.key))
+  const extras = Object.entries(modelAttrs).filter(([k]) => !requiredKeys.has(k))
+
+  wrap.innerHTML = `
+    ${requiredConfig.map(cfg => `
+      <div class="attr-row" data-required-attr-row data-config-key="${escapeHtml(cfg.key)}">
+        <input type="text" value="${escapeHtml(cfg.key)}" readonly style="flex:1">
+        <input type="text" data-required-attr-value value="${escapeHtml(modelAttrs[cfg.key] ?? '')}" style="flex:1.5" placeholder="${cfg.type === 'quantity' ? cfg.defaultUnit || 'value' : 'value'}">
+      </div>`).join('')}
+    ${!category ? `<div class="agent-proposal-hint">Pick a category above to see its required fields.</div>` : ''}
+    ${extras.length ? `
+      <div class="agent-proposal-extra-label">Additional (not required by this category)</div>
+      ${extras.map(([k, v]) => `
+        <div class="attr-row" data-extra-attr-row>
+          <input type="text" data-extra-attr-key value="${escapeHtml(k)}" style="flex:1">
+          <input type="text" data-extra-attr-value value="${escapeHtml(String(v))}" style="flex:1.5">
+          <button type="button" class="btn-icon" data-remove-extra-attr aria-label="Remove characteristic"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>`).join('')}` : ''}
+    <button type="button" class="btn btn-sm" data-add-extra-attr style="align-self:flex-start;margin-top:2px">
+      <i class="ti ti-plus" aria-hidden="true"></i> Add characteristic
+    </button>`
+
+  wrap.querySelector('[data-add-extra-attr]').addEventListener('click', () => {
+    const row = document.createElement('div')
+    row.className = 'attr-row'
+    row.dataset.extraAttrRow = '1'
+    row.innerHTML = `<input type="text" data-extra-attr-key placeholder="Key" style="flex:1">
+                      <input type="text" data-extra-attr-value placeholder="Value" style="flex:1.5">
+                      <button type="button" class="btn-icon" data-remove-extra-attr aria-label="Remove characteristic"><i class="ti ti-x" aria-hidden="true"></i></button>`
+    wrap.querySelector('[data-add-extra-attr]').before(row)
+    row.querySelector('input').focus()
+  })
+  wrap.querySelectorAll('[data-remove-extra-attr]').forEach(button => button.addEventListener('click', () => button.closest('[data-extra-attr-row]')?.remove()))
+}
+
+async function confirmProposal(card, proposal, categories) {
+  const val = sel => card.querySelector(sel)?.value?.trim() || ''
+  const name = val('[data-proposal-field="name"]')
+  if (!name) { card.querySelector('[data-proposal-field="name"]').focus(); return }
+
+  const categoryId = card.querySelector('[data-proposal-category]').value || null
+
+  const attrs = {}
+  card.querySelectorAll('[data-required-attr-row]').forEach(row => {
+    const key = row.dataset.configKey
+    const value = row.querySelector('[data-required-attr-value]').value.trim()
+    if (value) attrs[key] = value
+  })
+  card.querySelectorAll('[data-extra-attr-row]').forEach(row => {
+    const key = row.querySelector('[data-extra-attr-key]')?.value.trim()
+    const value = row.querySelector('[data-extra-attr-value]')?.value.trim() || ''
+    if (key) attrs[key] = value
+  })
+
+  const confirmBtn = card.querySelector('[data-proposal-confirm]')
+  confirmBtn.disabled = true
+  confirmBtn.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i>'
+
+  try {
+    const instance = await createInventoryInstance({
+      categoryId,
+      attrs,
+      fallback: { name, description: '', image: proposal.attachmentUrl || null },
+      name,
+      description: '',
+      image: proposal.attachmentUrl || null,
+      location: val('[data-proposal-field="location"]'),
+      quantity: parseInt(val('[data-proposal-field="quantity"]'), 10) || 0,
+      tags: [],
+      notes: val('[data-proposal-field="notes"]'),
+      actorId: getCurrentMemberId(),
+    })
+    locationCache = null   // the new instance may have introduced a new location string
+    card.remove()
+    appendMessage('assistant', `Added "${instance.name}" to inventory${categoryId ? '' : ' (uncategorized)'}.`)
+  } catch (error) {
+    confirmBtn.disabled = false
+    confirmBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Add to inventory'
+    appendMessage('assistant', `Couldn't save that: ${error.message}`)
+  }
 }
 
 function appendInline(target, text) {
@@ -312,7 +549,9 @@ async function sendMessage(event) {
     // its audit history, but never revive that prior conversation in this UI.
     if (requestEpoch !== conversationEpoch) return
     conversationId = result.conversationId
-    appendMessage('assistant', result.reply || result.message || 'I’ve paused here until you decide on the requested action.')
+    appendMessage('assistant', result.reply || result.message || 'I\'ve paused here until you decide on the requested action.')
+    if (result.status === 'proposal' && result.proposal) renderInventoryProposal(result.proposal)
+    await Promise.all([refreshPendingActions(), refreshHistory()])
     await Promise.all([refreshPendingActions(), refreshHistory()])
   } catch (error) {
     if (requestEpoch !== conversationEpoch) return
@@ -338,11 +577,19 @@ async function decide(pendingActionId, decision) {
         // action, even after a reload/new chat. Switch to that persisted
         // thread rather than appending its reply onto an unrelated one.
         showHistory(resumedConversation)
+
+
       } else {
         // Keep the relationship correct even if the history list is stale
         // or has reached its display limit.
-        conversationId = result.turn.conversationId
-        if (result.turn.reply) appendMessage('assistant', result.turn.reply)
+        // conversationId = result.turn.conversationId
+        // if (result.turn.reply) appendMessage('assistant', result.turn.reply)
+
+                  // inside sendMessage(), replacing the plain appendMessage('assistant', ...) line:
+        conversationId = result.conversationId
+        appendMessage('assistant', result.reply || result.message || 'I\'ve paused here until you decide on the requested action.')
+        if (result.status === 'proposal' && result.proposal) renderInventoryProposal(result.proposal)
+        await Promise.all([refreshPendingActions(), refreshHistory()])
       }
     }
     if (result.turnError) appendMessage('assistant', `The decision was saved, but I couldn’t continue: ${result.turnError}`)

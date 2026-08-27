@@ -12,6 +12,8 @@
 // has no use for and shouldn't see).
 
 import { HARNESS_TOOLS } from '../../backend/_lib/harnessTools.js'
+import { PROPOSE_INVENTORY_TOOL_SCHEMA, PROPOSE_INVENTORY_TOOL_NAME } from './inventoryProposalTool.js'
+
 
 /** Converts one harnessToolRegistry tool descriptor into one OpenAI
  *  `tools` array entry. Exported standalone so a caller with an
@@ -28,12 +30,21 @@ export function toOpenAiTool({ name, description, parameters }) {
   }
 }
 
-/** The full tool array for a chat-completions request — everything the
- *  harness is allowed to call, translated wholesale. This is what
- *  conversationLoop.js passes as `tools` to llmClient.chatCompletion(). */
+/**
+ * Virtual, non-service-backed tools that are always offered regardless
+ * of domain scoping (selectToolActions never filters these out, since
+ * they have no ServiceClass.method actionName to match against). Same
+ * treatment toolSelection.js's own doc comment describes for
+ * expand_scope — propose_inventory_instance joins that category.
+ */
+const ALWAYS_INCLUDED_TOOLS = [PROPOSE_INVENTORY_TOOL_SCHEMA]
+
 export function buildToolSchema({ actionNames = null } = {}) {
   const allowed = actionNames ? new Set(actionNames) : null
-  return HARNESS_TOOLS.filter(tool => !allowed || allowed.has(tool.actionName)).map(toOpenAiTool)
+  const scoped = HARNESS_TOOLS
+    .filter(tool => !allowed || allowed.has(tool.actionName))
+    .map(toOpenAiTool)
+  return [...scoped, ...ALWAYS_INCLUDED_TOOLS]
 }
 
 /** Parses an OpenAI tool_calls entry back into { toolName, args } for
@@ -46,17 +57,14 @@ export function buildToolSchema({ actionNames = null } = {}) {
 export function parseToolCall(toolCall) {
   const name = toolCall?.function?.name
   const rawArgs = toolCall?.function?.arguments
-
-  if (!name) {
-    throw new Error('Malformed tool_call from LLM — missing function.name')
-  }
-
+  if (!name) throw new Error('Malformed tool_call from LLM — missing function.name')
   let args
   try {
     args = rawArgs ? JSON.parse(rawArgs) : {}
   } catch (e) {
     throw new Error(`LLM produced invalid JSON arguments for tool "${name}": ${e.message}`)
   }
-
   return { toolName: name, args, toolCallId: toolCall.id }
 }
+
+export { PROPOSE_INVENTORY_TOOL_NAME }

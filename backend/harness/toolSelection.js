@@ -167,6 +167,8 @@ export function selectToolActions(messages) {
  *  the literal string. */
 export const EXPAND_SCOPE_TOOL_NAME = 'expand_scope'
 
+
+
 /** All domain keys a conversation has NOT yet touched — what
  *  expand_scope's own tool schema should offer as choices, and what a
  *  successful expand_scope call adds to scope. */

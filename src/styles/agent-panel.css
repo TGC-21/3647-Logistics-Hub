@@ -31,3 +31,18 @@
   .agent-thread { min-height: 0; }
   .agent-composer textarea { font-size: 16px; }
 }
+.agent-proposal-card { width:100%; max-width:100%; min-width:0; flex:0 0 auto; box-sizing:border-box; border:.5px solid var(--color-border-secondary); border-radius:var(--border-radius-md); padding:10px; margin:6px 0; display:flex; flex-direction:column; gap:8px; background:var(--color-background-primary); }
+.agent-proposal-card .field, .agent-proposal-card input, .agent-proposal-card textarea, .agent-proposal-card select { min-width:0; max-width:100%; box-sizing:border-box; }
+.agent-proposal-heading { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--color-accent); }
+.agent-proposal-image { max-width:160px; border-radius:6px; align-self:flex-start; }
+.agent-proposal-attrs { display:flex; flex-direction:column; gap:4px; }
+.agent-proposal-attrs .attr-row { display:flex; align-items:center; gap:4px; min-width:0; }
+.agent-proposal-attrs .attr-row input, .agent-proposal-attrs .attr-row select { flex:1 1 0 !important; width:0; }
+.agent-proposal-attrs .attr-row .btn-icon { flex:0 0 auto; }
+.agent-proposal-reasoning { font-size:11px; color:var(--color-text-tertiary); margin:0; }
+
+.agent-proposal-new-cat { display:flex; gap:6px; margin-top:6px; }
+.agent-proposal-new-cat input { flex:1; padding:6px 8px; border:.5px solid var(--color-border-secondary); border-radius:var(--border-radius-md); font-size:12px; background:var(--color-background-primary); color:var(--color-text-primary); }
+.agent-proposal-hint { font-size:11px; color:var(--color-text-tertiary); margin-top:4px; }
+.agent-proposal-extra-label { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--color-text-tertiary); margin:6px 0 2px; }
+.agent-proposal-card select { padding:6px 8px; border:.5px solid var(--color-border-secondary); border-radius:var(--border-radius-md); font-size:12px; background:var(--color-background-primary); color:var(--color-text-primary); font-family:var(--font-sans); }
