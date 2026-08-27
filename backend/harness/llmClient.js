@@ -46,19 +46,20 @@ function getConfig() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-const IMAGE_REQUEST = /\b(?:analy[sz]|look|see|view|identify|recognize|read|inspect|describe|what(?:'s| is) in|image|photo|picture)\b/i
-
+// Every user message carrying an image attachment is sent as real
+// multimodal content — no keyword gate. The previous IMAGE_REQUEST regex
+// silently downgraded an attached image to a bare URL string whenever the
+// member's wording didn't happen to match a fixed word list ("identify",
+// "describe", "photo", etc.), which meant the model never actually saw
+// the image on those turns and had to guess. "The member attached an
+// image this turn" is sufficient justification on its own to pay the
+// fetch+base64 cost — that's the whole signal we need.
 async function messagesForModel(messages) {
   return Promise.all(messages.map(async message => {
     if (message.role !== 'user' || !Array.isArray(message.attachments) || !message.attachments.length) {
       return message
     }
-    const refs = message.attachments.map(a => a.url).filter(Boolean)
-    const referenceText = refs.length ? `\nAttached image reference(s): ${refs.join(', ')}` : ''
-    if (!IMAGE_REQUEST.test(String(message.content || ''))) {
-      const { attachments, ...textOnly } = message
-      return { ...textOnly, content: `${message.content || ''}${referenceText}` }
-    }
+
     const content = [{ type: 'text', text: message.content || 'Analyze the attached image.' }]
     for (const attachment of message.attachments) {
       if (!attachment.url) continue

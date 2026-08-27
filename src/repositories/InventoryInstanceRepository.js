@@ -45,6 +45,14 @@ export class InventoryInstanceRepository {
     return data ? toLocal(data) : null
   }
 
+  /** Assembly parts that currently point at an inventory instance. */
+  async findAssemblyPartsLinkingInstance(instanceId) {
+    const { data, error } = await this.db
+      .from('assembly_parts').select('id').contains('linked_instance_ids', [instanceId])
+    if (error) throw new DatabaseError(`assembly_parts lookup failed: ${error.message}`, error)
+    return data ?? []
+  }
+
   async findByIds(ids) {
     if (!ids || !ids.length) return []
     const { data, error } = await this.db

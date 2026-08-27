@@ -191,7 +191,14 @@ export class InventoryInstanceService {
     const instance = await this.instanceRepo.findById(instanceId)
     if (!instance) throw new ValidationError(`Inventory instance ${instanceId} not found`)
 
-  
+    // Release the row before deleting it. The assembly_parts links are kept
+    // for the existing assembly edit/reconciliation flow, but the inventory
+    // reservation must not remain in an in_assembly state.
+    const linkingParts = this.instanceRepo.findAssemblyPartsLinkingInstance
+      ? await this.instanceRepo.findAssemblyPartsLinkingInstance(instanceId)
+      : []
+    if (linkingParts.length) await this.instanceRepo.unreserve(instanceId)
+
     await this.instanceRepo.deleteById(instanceId)
 
     const counts = await this.instanceRepo.countsByComponentIds([instance.componentId])

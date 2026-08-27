@@ -69,11 +69,10 @@ function rowHTML(item) {
         <span class="part-badge part-badge--${item.severity === 'destructive' ? 'pending' : 'partial'}">
           <i class="ti ${icon}" aria-hidden="true"></i> ${label}
         </span>
-        <span style="font-size:13px;font-weight:500">${item.actionName}</span>
+        <span style="font-size:13px;font-weight:500">${item.reason || 'Clinker wants to perform an action'}</span>
       </div>
       <span style="font-size:11px;color:var(--color-text-tertiary)">${new Date(item.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
     </div>
-    ${item.reason ? `<div style="font-size:12px;color:var(--color-text-secondary)">${item.reason}</div>` : ''}
     <details style="font-size:11px;color:var(--color-text-tertiary)">
       <summary style="cursor:pointer">Details</summary>
       <pre style="white-space:pre-wrap;word-break:break-word;margin-top:4px">${JSON.stringify(item.actionArgs, null, 2)}</pre>

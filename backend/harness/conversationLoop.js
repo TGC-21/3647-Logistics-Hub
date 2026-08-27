@@ -18,7 +18,7 @@
 
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
-import { executeTool } from '../../backend/_lib/harnessToolRegistry.js'
+import { executeTool, structuredToolError } from '../../backend/_lib/harnessToolRegistry.js'
 import { chatCompletion } from './llmClient.js'
 import { buildToolSchema, parseToolCall } from './toolSchema.js'
 import { getTool } from '../../backend/_lib/harnessToolRegistry.js'
@@ -258,12 +258,19 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
           const failures = (failureCounts.get(key) || 0) + 1
           failureCounts.set(key, failures)
 
-          toolResultContent = failures >= MAX_IDENTICAL_FAILURES
-            ? JSON.stringify({
-                error: err.message || 'Tool execution failed',
-                _note: `This exact call has now failed ${failures} times in a row with the same arguments. Retrying it again with the same arguments will not work — either the arguments are wrong, the referenced item does not exist, or a different tool/approach is needed. Do not repeat this exact call.`,
-              })
-            : JSON.stringify({ error: err.message || 'Tool execution failed' })
+          toolResultContent = JSON.stringify({
+            success: false,
+            data: null,
+            error: {
+              ...structuredToolError(err),
+              ...(failures >= MAX_IDENTICAL_FAILURES ? {
+                code: 'REPEATED_FAILURE',
+                message: `This exact call failed ${failures} times. Use a different tool or arguments.`,
+                retryable: false,
+              } : {}),
+            },
+            meta: { tool: rawCall.function?.name, attempt: failures },
+          })
         }
       }
       

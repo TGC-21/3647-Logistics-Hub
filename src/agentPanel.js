@@ -116,13 +116,48 @@ function renderMarkdown(content) {
   return root
 }
 
-function appendMessage(role, content) {
+/**
+ * Renders one message bubble. `attachments` is the same shape stored on a
+ * conversation's messages ([{ url, mimeType, name, path }]) and produced by
+ * uploadAgentImage — any entry with a `url` is rendered as a thumbnail above
+ * the text, click-to-expand in a new tab. Works for both freshly-sent
+ * messages and messages replayed from history (see showHistory below),
+ * since both paths ultimately pass the same attachments shape.
+ */
+function appendMessage(role, content, attachments = []) {
   const thread = document.getElementById('agent-thread')
   thread.querySelector('.agent-welcome')?.remove()
   const message = document.createElement('div')
   message.className = `agent-message agent-message--${role}`
-  if (role === 'assistant') message.append(renderMarkdown(content))
-  else message.textContent = content
+
+  const images = (attachments || []).filter(a => a && a.url)
+  if (images.length) {
+    const imagesWrap = document.createElement('div')
+    imagesWrap.className = 'agent-message-images'
+    images.forEach(a => {
+      const img = document.createElement('img')
+      img.className = 'agent-message-image'
+      img.src = a.url
+      img.alt = a.name || 'Attached image'
+      img.loading = 'lazy'
+      img.title = 'Click to open full size'
+      img.addEventListener('click', () => window.open(a.url, '_blank', 'noreferrer'))
+      imagesWrap.appendChild(img)
+    })
+    message.appendChild(imagesWrap)
+  }
+
+  if (content) {
+    if (role === 'assistant') {
+      message.append(renderMarkdown(content))
+    } else {
+      const textEl = document.createElement('div')
+      textEl.className = 'agent-message-text'
+      textEl.textContent = content
+      message.appendChild(textEl)
+    }
+  }
+
   thread.appendChild(message)
   thread.scrollTop = thread.scrollHeight
 }
@@ -146,6 +181,7 @@ function startNewChat({ focus = false } = {}) {
   input.value = ''
   attachedImage = null
   updateAttachmentLabel()
+  clearAttachmentPreview()
   setBusy(false)
   if (focus) input.focus()
 }
@@ -155,6 +191,39 @@ function updateAttachmentLabel() {
   if (!button) return
   button.title = attachedImage ? `Attached: ${attachedImage.name}` : 'Attach image'
   button.classList.toggle('active', Boolean(attachedImage))
+}
+
+/** Small thumbnail + remove button shown above the composer once an image
+ *  is picked, so the member can see/confirm what they're about to send
+ *  before it's uploaded — mirrors most chat apps' attach-preview pattern. */
+function renderAttachmentPreview() {
+  let preview = document.getElementById('agent-attachment-preview')
+  const composer = document.getElementById('agent-composer')
+  if (!attachedImage) {
+    preview?.remove()
+    return
+  }
+  if (!preview) {
+    preview = document.createElement('div')
+    preview.id = 'agent-attachment-preview'
+    preview.className = 'agent-attachment-preview'
+    composer.parentElement.insertBefore(preview, composer)
+  }
+  const localUrl = attachedImage.previewUrl || (attachedImage.file ? URL.createObjectURL(attachedImage.file) : attachedImage.url)
+  attachedImage.previewUrl = localUrl
+  preview.innerHTML = `
+    <img src="${localUrl}" alt="${escapeHtml(attachedImage.name || 'Attachment')}">
+    <span class="agent-attachment-name">${escapeHtml(attachedImage.name || 'Attached image')}</span>
+    <button type="button" class="btn-icon" id="btn-remove-agent-attachment" aria-label="Remove attachment"><i class="ti ti-x" aria-hidden="true"></i></button>`
+  document.getElementById('btn-remove-agent-attachment').addEventListener('click', () => {
+    attachedImage = null
+    updateAttachmentLabel()
+    clearAttachmentPreview()
+  })
+}
+
+function clearAttachmentPreview() {
+  document.getElementById('agent-attachment-preview')?.remove()
 }
 
 function setBusy(busy) {
@@ -209,7 +278,9 @@ function showHistory(conversation) {
   const thread = document.getElementById('agent-thread')
   thread.innerHTML = '<div class="agent-history-notice">Continuing this saved conversation. Choose New chat to start a separate topic.</div>'
   for (const message of conversation.messages || []) {
-    if ((message.role === 'user' || message.role === 'assistant') && message.content) appendMessage(message.role, message.content)
+    if ((message.role === 'user' || message.role === 'assistant') && (message.content || message.attachments?.length)) {
+      appendMessage(message.role, message.content, message.attachments)
+    }
   }
   setBusy(false)
 }
@@ -226,14 +297,16 @@ async function sendMessage(event) {
     try { attachment = await uploadAgentImage(memberId, attachment.file) }
     catch (error) { appendMessage('assistant', `I couldn’t upload that image: ${error.message}`); setBusy(false); return }
   }
-  appendMessage('user', message || 'Attached an image.')
+  const attachmentsForDisplay = attachment ? [attachment] : []
+  appendMessage('user', message || (attachmentsForDisplay.length ? '' : 'Attached an image.'), attachmentsForDisplay)
   input.value = ''
   attachedImage = null
   updateAttachmentLabel()
+  clearAttachmentPreview()
   setBusy(true)
   const requestEpoch = conversationEpoch
   try {
-    const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId, attachments: attachment ? [attachment] : [] }) })
+    const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId, attachments: attachmentsForDisplay }) })
     // The member selected New chat (or the page initialized a fresh chat)
     // while this request was still running. Let the server finish and retain
     // its audit history, but never revive that prior conversation in this UI.
@@ -316,6 +389,7 @@ export function bindAgentPanelEvents() {
     if (file.size > 10 * 1024 * 1024) return
     attachedImage = { file, name: file.name }
     updateAttachmentLabel()
+    renderAttachmentPreview()
     imageInput.value = ''
   })
   // Reloading never resumes a server conversation. Use the exact same path

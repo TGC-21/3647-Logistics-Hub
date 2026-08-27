@@ -1,0 +1,50 @@
+/* ── Clinker: image attachments in chat ──────────────────────
+   Append this file's contents to the end of src/styles/agent-panel.css
+   (or add `@import './styles/agent-panel-images.css';` to style.css
+   alongside the existing agent-panel.css import). */
+
+.agent-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.agent-message-image {
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: 8px;
+  border: 0.5px solid var(--color-border-secondary);
+  object-fit: cover;
+  cursor: zoom-in;
+  display: block;
+}
+.agent-message--user .agent-message-images { justify-content: flex-end; }
+.agent-message-text { white-space: pre-wrap; }
+
+/* Composer attachment preview — shown above the input once an image is picked */
+.agent-attachment-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+}
+.agent-attachment-preview img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.agent-attachment-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

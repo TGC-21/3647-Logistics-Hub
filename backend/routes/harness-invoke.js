@@ -14,7 +14,7 @@
 
 import { Hono } from 'hono'
 import { assertHarnessToken } from '../../backend/_lib/harnessAuth.js'
-import { listTools, executeTool } from '../../backend/_lib/harnessToolRegistry.js'
+import { listTools, executeTool, structuredToolError } from '../../backend/_lib/harnessToolRegistry.js'
 import { statusForError } from '../../src/repositories/errors.js'
 
 const harnessInvoke = new Hono()
@@ -69,7 +69,7 @@ harnessInvoke.post('/', async (c) => {
       }, 202)
     }
     console.error('[harness-invoke]', err)
-    return c.json({ error: err.message ?? 'Internal server error' }, statusForError(err))
+    return c.json({ success: false, result: { success: false, data: null, error: structuredToolError(err), meta: {} } }, statusForError(err))
   }
 })
 
