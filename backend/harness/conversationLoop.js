@@ -31,6 +31,14 @@ import { CategoryService } from '../../src/services/CategoryService.js'
 const MAX_TOOL_ITERATIONS = 16   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
 const MAX_IDENTICAL_FAILURES = 2
 
+function toolSuccess(data = null, meta = {}) {
+  return { success: true, data, error: null, meta }
+}
+
+function toolFailure(error, meta = {}) {
+  return { success: false, data: null, error, meta }
+}
+
 /**
  * Runs one turn of a conversation for a member's message. Returns:
  *   { conversationId, status: 'completed', reply: string }
@@ -136,13 +144,13 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true, res
   let toolResultContent
   try {
     const result = await executeTool(toolName, { ...resolvedArgs, confirmed: true }, { memberId, isAgent, reason: null })
-    toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
+    toolResultContent = JSON.stringify(compactToolResult(result ?? toolSuccess()))
   } catch (err) {
     // A second ConfirmationRequiredError here would mean trust level
     // dropped between pause and approval, or a policy bug — surface it
     // as a tool error rather than re-pausing silently, since the human
     // already made a decision on this specific call.
-    toolResultContent = JSON.stringify({ error: err.message || 'Tool execution failed on resume' })
+    toolResultContent = JSON.stringify(toolFailure({ code: 'TOOL_EXECUTION_FAILED', message: err.message || 'Tool execution failed on resume', retryable: false }, { phase: 'resume' }))
   }
 
   const withToolResult = await conversationService.appendMessage({
@@ -231,10 +239,10 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
         // matching 'tool' response before the assistant message is "closed
         // out," same rule the ConfirmationRequiredError path already
         // follows for any calls after the interception point.
-      const toolResultContent = JSON.stringify({
-        status: 'awaiting_member_confirmation',
+      const toolResultContent = JSON.stringify(toolSuccess(null, {
+        tool: toolName, outcome: 'proposal',
         note: 'Proposal handed to the member for review — do not attempt this write again in this turn.',
-      })
+      }))
       const withToolResult = await conversationService.appendMessage({
         conversationId, message: { role: 'tool', tool_call_id: toolCallId, content: toolResultContent },
       })
@@ -250,7 +258,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
             conversationId,
             message: {
               role: 'tool', tool_call_id: deferred.toolCallId,
-              content: JSON.stringify({ error: 'Deferred — an inventory proposal was created earlier in this batch and the turn ended. This action was not executed.' }),
+              content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because an inventory proposal was created earlier in the batch.', retryable: false }, { deferred: true })),
             },
           })
         }
@@ -270,10 +278,8 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
         // the cached result with a note, rather than re-hitting the DB
         // (or, worse, letting a second identical call silently return a
         // DIFFERENT answer mid-turn and confuse the model further).
-        toolResultContent = JSON.stringify({
-          ...JSON.parse(seenCallsThisTurn.get(key)),
-          _note: 'Identical call already made earlier this turn — reusing that result. If you need fresh data, that likely means something else is wrong with your approach, not this tool.',
-        })
+        const cached = JSON.parse(seenCallsThisTurn.get(key))
+        toolResultContent = JSON.stringify({ ...cached, meta: { ...cached.meta, cached: true, note: 'Identical call already made earlier this turn; reused cached result.' } })
       } else {
         try {
           const result = await executeTool(toolName, args, { memberId, isAgent, reason: null })
@@ -300,7 +306,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
                 conversationId,
                 message: {
                   role: 'tool', tool_call_id: deferred.toolCallId,
-                  content: JSON.stringify({ error: 'Deferred — waiting on confirmation for an earlier action in this batch. This action was not executed.' }),
+                  content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because an earlier action in the batch is waiting for confirmation.', retryable: false }, { deferred: true })),
                 },
               })
             }

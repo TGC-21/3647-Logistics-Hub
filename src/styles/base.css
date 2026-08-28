@@ -24,6 +24,9 @@
   --border-radius-md:           7px;
   --border-radius-lg:           10px;
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: #c9c5c1;
+  --scrollbar-thumb-hover: var(--color-accent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,8 +44,22 @@
     --color-accent-mid:           #7d1e1e;
     --color-success-light:        #0d2e1a;
     --color-warning-light:        #2e1f00;
+    --scrollbar-thumb:            #57534e;
   }
 }
+
+/* ── Scrollbars ──────────────────────────────────────────── */
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border-width: 2px; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 body {
   font-family: var(--font-sans);

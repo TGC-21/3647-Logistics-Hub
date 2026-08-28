@@ -42,13 +42,15 @@ function guessCategoryId(categoryName, categories) {
   const normalize = value => String(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean).map(token => token.endsWith('s') ? token.slice(0, -1) : token)
   const wanted = new Set(normalize(categoryName))
   let best = null
+  let tied = false
   for (const category of categories) {
     const candidate = new Set(normalize(category.name))
     const overlap = [...wanted].filter(token => candidate.has(token)).length
     const score = overlap / Math.max(wanted.size, candidate.size)
-    if (overlap && (!best || score > best.score)) best = { category, score }
+    if (overlap && (!best || score > best.score)) { best = { category, score }; tied = false }
+    else if (overlap && best && score === best.score) tied = true
   }
-  return best?.score >= 0.5 ? best.category.id : ''
+  return best?.score >= 0.5 && !tied ? best.category.id : ''
 }
 
 function escapeHtml(value = '') {

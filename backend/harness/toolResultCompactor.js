@@ -57,6 +57,26 @@ export function compactToolResult(result, { maxBytes = MAX_RESULT_BYTES } = {}) 
   const compacted = compactValue(result)
   if (Buffer.byteLength(JSON.stringify(compacted)) <= maxBytes) return compacted
 
+  // Preserve the structured tool-result contract even when its data is a
+  // large collection. Only the data payload is reduced; success/error/meta
+  // remain machine-readable for the model and for later diagnostics.
+  if (compacted && !Array.isArray(compacted) &&
+      Object.prototype.hasOwnProperty.call(compacted, 'success') &&
+      Object.prototype.hasOwnProperty.call(compacted, 'data')) {
+    const data = compacted.data
+    if (Array.isArray(data)) {
+      const items = []
+      for (const item of data) {
+        const candidate = [...items, item]
+        const envelope = { ...compacted, data: candidate, meta: { ...(compacted.meta || {}), truncated: true, totalItems: data.length } }
+        if (Buffer.byteLength(JSON.stringify(envelope)) > maxBytes) break
+        items.push(item)
+      }
+      return { ...compacted, data: items, meta: { ...(compacted.meta || {}), truncated: true, totalItems: data.length } }
+    }
+    return { ...compacted, data: null, error: compacted.error || { code: 'RESULT_TOO_LARGE', message: 'Tool data was too large; use a narrower query.', retryable: false }, meta: { ...(compacted.meta || {}), truncated: true } }
+  }
+
   if (Array.isArray(compacted)) {
     const items = []
     for (const item of compacted) {

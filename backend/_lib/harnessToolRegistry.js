@@ -128,10 +128,17 @@ export async function executeTool(name, args, { memberId, isAgent = true, reason
     methodName: resolved.methodName,
     args, memberId, memberTrustLevel, isAgent, reason: reason || describeToolAction(tool, args),
   })
+  const isCollection = Array.isArray(result)
+  const count = isCollection ? result.length : undefined
+  const ambiguous = tool.actionName === 'ComponentService.search' && count > 1
   return {
     success: true,
     data: result ?? null,
     error: null,
-    meta: { tool: name, action: tool.actionName },
+    meta: {
+      tool: name, action: tool.actionName,
+      ...(isCollection ? { resultType: 'collection', count } : {}),
+      ...(ambiguous ? { ambiguous: true, resolutionRequired: true } : {}),
+    },
   }
 }

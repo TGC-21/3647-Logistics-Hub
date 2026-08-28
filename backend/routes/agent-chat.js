@@ -23,6 +23,7 @@ import { statusForError } from '../../src/repositories/errors.js'
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 
 const agentChat = new Hono()
+const activeTurns = new Set()
 
 // Conversation history is only used for the panel's "Previous topics"
 // list. A client must explicitly choose an item; page reload never resumes
@@ -48,7 +49,23 @@ agentChat.post('/', async (c) => {
   const message = String(body.message || '').trim() || (attachments.length ? 'The user sent a file without a question.' : '')
   if (!message) return c.json({ error: 'message is required' }, 400)
 
+  let lockKey = null
+  let lockAcquired = false
   try {
+    lockKey = `${body.memberId}:${body.conversationId || 'new'}`
+    if (activeTurns.has(lockKey)) {
+      return c.json({
+        success: false,
+        result: {
+          success: false,
+          data: null,
+          error: { code: 'CONFLICT', message: 'Another Clinker turn is already running for this conversation.', retryable: true },
+          meta: { lockKey: body.conversationId || 'new' },
+        },
+      }, 409)
+    }
+    activeTurns.add(lockKey)
+    lockAcquired = true
     const result = await runTurn({
       memberId: body.memberId,
       message,
@@ -59,6 +76,8 @@ agentChat.post('/', async (c) => {
   } catch (err) {
     console.error('[agent-chat]', err)
     return c.json({ error: err.message ?? 'Internal server error' }, statusForError(err))
+  } finally {
+    if (lockAcquired) activeTurns.delete(lockKey)
   }
 })
 

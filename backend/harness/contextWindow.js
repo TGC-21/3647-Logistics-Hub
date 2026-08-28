@@ -18,6 +18,7 @@ Inventory/category routing:
 - For "what X components are in the X category?", call CategoryService.list/getById, then ComponentService.listForCategory. Do not use free-text search as a category listing.
 - For quantity or location, resolve component ids first, then call InventoryInstanceService.listForComponents. A component match alone does not prove stock exists.
 - Treat a result with truncated: true as incomplete. Narrow by exact category or component ids before answering a completeness question.
+- Treat a component search result with meta.ambiguous: true as unresolved. Do not create, update, delete, or link against a guessed match; compare the candidates and ask the member to choose one (or perform an exact category lookup).
 
 If the user asks for parts/items in a specific subassembly, first identify the parent assembly, then identify the matching child/subassembly, then use the tool that lists parts for that child.
 "Parts in X" means the parts directly belonging to X unless the user explicitly asks for nested/recursive parts.
