@@ -39,21 +39,6 @@ harnessInvoke.post('/', async (c) => {
         return c.json({ success: true, result })
       }
 
-      case 'resolve': {
-        const updated = await gateway.resolvePendingAction({
-          pendingActionId: body.pendingActionId,
-          decision:        body.decision,
-          resolvedBy:      body.resolvedBy,
-        })
-        return c.json({ success: true, pendingAction: updated })
-      }
-
-      case 'inbox': {
-        const repo = new PendingActionRepository()
-        const items = await repo.findAwaitingForMember(body.memberId)
-        return c.json({ success: true, items })
-      }
-
       default:
        return c.json({ error: `Unknown action "${body.action}" — expected: invoke.` }, 400)    
     }

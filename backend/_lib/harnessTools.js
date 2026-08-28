@@ -181,31 +181,9 @@ const HAND_WRITTEN = {
   },
 }
 
-// ── Simple auto-generated actions (id-shaped, no real structure) ─────
-const AUTO_SPEC = {
-
-}
-
-function autoFromSpec(fieldSpecs) {
-  const properties = {}
-  const required = []
-  for (const spec of fieldSpecs) {
-    const field = typeof spec === 'string' ? spec : spec.field
-    const type = typeof spec === 'string' ? 'string' : spec.type
-    properties[field] = { type }
-    required.push(field)
-  }
-  return { type: 'object', properties, required }
-}
-
-// ── Assemble the registry ─────────────────────────────────────────────
-const DESCRIPTIONS = {
-}
-
 export const HARNESS_TOOLS = Object.entries(ACTION_SEVERITY).map(([actionName, severity]) => {
   const [serviceClass, methodName] = actionName.split('.')
   const hand = HAND_WRITTEN[actionName]
-  const autoFields = AUTO_SPEC[actionName]
 
   if (!hand && !autoFields) {
     throw new Error(`harnessTools.js: no schema (hand-written or auto) defined for action "${actionName}" — every ACTION_SEVERITY entry needs one.`)
@@ -215,7 +193,7 @@ export const HARNESS_TOOLS = Object.entries(ACTION_SEVERITY).map(([actionName, s
     name: actionName.replace('.', '_').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(),
     actionName,
     description: hand?.description || DESCRIPTIONS[actionName] || `${methodName} on ${serviceClass}.`,
-    parameters: hand?.parameters || autoFromSpec(autoFields),
+    parameters: hand?.parameters,
     severity,
   }
 })
