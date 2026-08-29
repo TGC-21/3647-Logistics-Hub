@@ -29,6 +29,39 @@ export function toOpenAiTool({ name, description, parameters }) {
     },
   }
 }
+// ── Sentinel-token sanitization ───────────────────────────────────────
+// Locally-hosted models occasionally leak template/control artifacts —
+// stray sequences like `<|"|>` or other `<|...|>`-shaped tokens — into
+// otherwise syntactically valid tool-call JSON, most often wrapping a
+// string value or object key (e.g. `<|"|>bore<|"|>` instead of `bore`).
+// Because the surrounding JSON still parses, nothing in
+// harnessToolRegistry's schema validation catches this (it only checks
+// presence/type, not string content). This is a defensive net, not a
+// fix for the underlying model/inference-server behavior — the real
+// fix is on the model/grammar/stop-token side.
+const SENTINEL_TOKEN_PATTERN = /<\|[^|<>]{0,40}\|>/g
+
+function stripSentinelTokens(value) {
+  return typeof value === 'string' ? value.replace(SENTINEL_TOKEN_PATTERN, '') : value
+}
+
+/** Recursively walks a parsed JSON value, stripping sentinel tokens out
+ *  of every string — both values AND object keys, since the observed
+ *  corruption wraps keys just as often as values (e.g. attribute names
+ *  in an `attrs` map). Returns a new value; never mutates in place. */
+function sanitizeParsedArgs(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeParsedArgs)
+  }
+  if (value && typeof value === 'object') {
+    const result = {}
+    for (const [key, v] of Object.entries(value)) {
+      result[stripSentinelTokens(key)] = sanitizeParsedArgs(v)
+    }
+    return result
+  }
+  return stripSentinelTokens(value)
+}
 
 /**
  * Virtual, non-service-backed tools that are always offered regardless
@@ -60,7 +93,8 @@ export function parseToolCall(toolCall) {
   if (!name) throw new Error('Malformed tool_call from LLM — missing function.name')
   let args
   try {
-    args = rawArgs ? JSON.parse(rawArgs) : {}
+    const parsed = rawArgs ? JSON.parse(rawArgs) : {}
+    args = sanitizeParsedArgs(parsed)
   } catch (e) {
     throw new Error(`LLM produced invalid JSON arguments for tool "${name}": ${e.message}`)
   }

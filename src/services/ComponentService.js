@@ -21,6 +21,7 @@ import { ComponentRepository } from '../repositories/ComponentRepository.js'
 import { CategoryRepository } from '../repositories/CategoryRepository.js'
 import { ChangeLogRepository } from '../repositories/ChangeLogRepository.js'
 import { ValidationError } from '../repositories/errors.js'
+import { validateRequiredAttributes, reconcileAttrKeys } from './CategoryService.js'
 import { buildComponentSignature } from '../componentMatch.js'
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -52,7 +53,31 @@ export class ComponentService {
 
     const category = await this.categoryRepo.findById(categoryId)
     const fields = category.requiredKeysConfig || []
-    const signature = buildComponentSignature(categoryId, fields, attrs || {})
+
+    // Reconcile attrs keys against the category's own key spelling
+    // before validating. LLM-produced keys reliably drift in
+    // cosmetic-only ways — "Chain_size" for "Chain size", "chain size"
+    // for "Chain Size", stray whitespace — that a strict equality
+    // check would (correctly, but unhelpfully) reject even though the
+    // model clearly meant the real required key. reconcileAttrKeys
+    // rewrites any attrs key that normalizes to the same thing as a
+    // required key onto that key's canonical spelling; anything left
+    // over is a genuinely different/unmatched key, which
+    // validateRequiredAttributes below will still catch normally
+    // (e.g. a truly missing key, or sentinel-token corruption that
+    // survived toolSchema.js's sanitization).
+    const reconciledAttrs = reconcileAttrKeys(attrs || {}, fields)
+
+    if (fields.length) {
+      const attributesArrayForValidation = Object.entries(reconciledAttrs).map(([key, value]) => ({ key, value }))
+      const { valid, errors } = validateRequiredAttributes(attributesArrayForValidation, fields)
+      if (!valid) {
+        const detail = Object.entries(errors).map(([key, msg]) => `"${key}": ${msg}`).join('; ')
+        throw new ValidationError(`Attributes do not satisfy category "${category.name}"'s required characteristics — ${detail}`)
+      }
+    }
+
+    const signature = buildComponentSignature(categoryId, fields, reconciledAttrs)
 
     const candidates = await this.componentRepo.findByCategory(categoryId)
     const match = candidates.find(c => {
@@ -61,7 +86,7 @@ export class ComponentService {
     })
     if (match) return match
 
-    const attributesArray = Object.entries(attrs || {}).map(([key, value]) => ({ key, value }))
+    const attributesArray = Object.entries(reconciledAttrs).map(([key, value]) => ({ key, value }))
 
     const created = await this.componentRepo.insert({
       id:                   genId(),

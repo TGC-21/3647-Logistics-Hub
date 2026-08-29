@@ -63,12 +63,12 @@ const HAND_WRITTEN = {
     parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
   },
   'ComponentService.findOrCreate': {
-    description: 'Finds an existing component matching a category + attribute signature, or creates a new one.',
+    description: 'Finds an existing component matching a category + attribute signature, or creates a new one. Use this if the user requests to create an inventory instance, and you need to match the user\'s request to a component.',
     parameters: {
       type: 'object',
       properties: {
         categoryId: { type: 'string' },
-        attrs: { type: 'object', description: 'Flat { key: value } map matching the category\'s required characteristics.' },
+        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig (from CategoryService.getById/list), including any spaces — e.g. use "Chain size" exactly, never "Chain_size" or "chain-size". Do not rename, abbreviate, snake_case, or otherwise alter a required key.' },
         fallback: { type: 'object', description: 'Optional { name, description, image } used only if a new component is created.' },
       },
       required: ['categoryId', 'attrs'],
@@ -132,13 +132,13 @@ const HAND_WRITTEN = {
     parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
   },
   'InventoryInstanceService.createInstance': {
-    description: 'Adds new physical stock to inventory. If the user refers to a component already found or created in this conversation, pass its componentId directly; otherwise resolve (or create) it from categoryId + attrs. Never omit a known componentId and fall back to a generic category.',
+    description: 'Adds new physical stock to inventory, resolving-or-creating its component AS PART OF THIS CALL — do not search for an existing matching component first and do not call ComponentService.findOrCreate/search as a pre-check; this call already does that internally. If the user refers to a component already found or created earlier in this conversation, pass its componentId directly. Otherwise, resolve categoryId by matching the category name against the part the user described (via CategoryService.list/getById) and pass attrs using that category\'s requiredKeysConfig keys exactly as spelled — then call this directly. Never omit a known componentId and fall back to a generic category, and never stop to ask the user for a category if an existing category plausibly matches what they described.',
     parameters: {
       type: 'object',
       properties: {
         componentId: { type: 'string', description: 'Existing component identity to attach this inventory instance to. Prefer this when a prior tool returned the component.' },
         categoryId: { type: 'string', description: 'Omit to fall back to the "Uncategorized" category.' },
-        attrs: { type: 'object', description: 'Flat { key: value } map matching the category\'s requiredKeysConfig — see CategoryService.getById.' },
+        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig (see CategoryService.getById), including any spaces — e.g. use "Chain size" exactly, never "Chain_size" or "chain-size". Do not rename, abbreviate, snake_case, or otherwise alter a required key.' },
         fallback: { type: 'object', description: 'Optional { name, description, image } used only if this creates a brand-new component.' },
         name: { type: 'string' },
         description: { type: 'string' },
@@ -157,7 +157,7 @@ const HAND_WRITTEN = {
       properties: {
         instanceId: { type: 'string' },
         categoryId: { type: 'string' },
-        attrs: { type: 'object' },
+        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig, including any spaces — never snake_case or otherwise alter a required key.' },
         name: { type: 'string' },
         description: { type: 'string' },
         location: { type: 'string' },

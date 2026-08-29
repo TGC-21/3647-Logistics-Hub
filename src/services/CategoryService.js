@@ -104,6 +104,46 @@ export function validateAttribute(value, config) {
   return { valid: true }
 }
 
+/** Normalizes a key for tolerant comparison: lowercase, underscores/
+ *  hyphens treated as spaces, whitespace collapsed and trimmed. Two
+ *  keys that normalize to the same string are treated as "the same
+ *  characteristic" for reconciliation purposes below. */
+function normalizeKeyForMatch(key) {
+  return String(key ?? '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Rewrites an attrs map's keys onto a category's requiredKeysConfig
+ * canonical spelling wherever they normalize to the same thing (case,
+ * underscore/hyphen-for-space, extra whitespace) — e.g. "Chain_size"
+ * or "chain size" both become "Chain size" if that's the category's
+ * real key. This exists specifically to tolerate cosmetic key drift
+ * from LLM-produced JSON, which reliably substitutes underscores for
+ * spaces in object keys; it does NOT invent a match for a key that
+ * isn't a close cosmetic variant of a real required key — anything
+ * left unmatched passes through unchanged, so a genuinely wrong or
+ * corrupted key still fails validateRequiredAttributes normally
+ * rather than being silently accepted.
+ *
+ * Pure function, no I/O — safe to reuse from ComponentService or any
+ * other write path without instantiating a CategoryService.
+ */
+export function reconcileAttrKeys(attrs, requiredKeysConfig) {
+  if (!requiredKeysConfig?.length) return { ...attrs }
+  const canonicalByNormalized = new Map(requiredKeysConfig.map(cfg => [normalizeKeyForMatch(cfg.key), cfg.key]))
+  const result = {}
+  for (const [key, value] of Object.entries(attrs || {})) {
+    const canonical = canonicalByNormalized.get(normalizeKeyForMatch(key))
+    result[canonical ?? key] = value
+  }
+  return result
+}
+
+
 /** Validate a full attributes array against a category's required
  *  characteristic configs. Returns { valid, errors } where errors is
  *  keyed by characteristic name. */

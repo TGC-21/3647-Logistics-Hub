@@ -256,7 +256,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
     const modelMessages = categoryGuidance.length
       ? context.messages.map((message, index) => index === 0 ? {
           ...message,
-          content: `${message.content}\n\nAuthoritative category requirements for inventory proposals:\n${categoryGuidance.map(category => `- ${category.name} (categoryId: ${category.id}): ${(category.requiredKeysConfig || []).map(cfg => `${cfg.key} [${cfg.type}]`).join(', ') || 'no required characteristics'}`).join('\n')}`,
+          content: `${message.content}\n\nAuthoritative category requirements for inventory proposals:\n${categoryGuidance.map(category => `- ${category.name} (categoryId: ${category.id}): ${(category.requiredKeysConfig || []).map(cfg => `${cfg.key} [${cfg.type}]`).join(', ') || 'no required characteristics'}`).join('\n')}\n\nAn image is attached this turn. If it shows any physical part(s) the member might want added to inventory, you MUST call propose_inventory_instance at least once per distinct part you can visually identify — do not reply with only a text question asking the member to list/describe the parts themselves; that defeats the purpose of attaching a photo. Use your best guess for every field, mark uncertain fields with confidence: "low" or leave them blank, and let the member correct the proposal card afterward instead of asking first.`,
         } : message)
       : context.messages
     const assistantMessage = await chatCompletion({ messages: modelMessages, tools })
