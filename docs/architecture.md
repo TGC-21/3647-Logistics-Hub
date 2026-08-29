@@ -1,23 +1,5 @@
 This document explains Partshelf's internal organization. It focuses on concepts and workflows rather than implementation details. Reading this document should provide enough understanding to navigate most of the codebase without reading individual source files.
 
-
-## High level architecture:
-                    Onshape
-                        │
-                        ▼
-              Assembly Import API
-                        │
-                        ▼
-                  Designer System
-                        │
-         ┌──────────────┼──────────────┐
-         ▼              ▼              ▼
- Inventory Links   Fabrication Jobs   Part Orders
-         │              │              │
-         └──────────────┼──────────────┘
-                        ▼
-                 Real Robot Assembly
-
 ## Core Design philosophy
 
 Partshelf intentionally models the physical world.
@@ -88,67 +70,7 @@ Example:
 
 Separating Components from Inventory allows multiple storage locations for the same part.
 
-## Assemblies
-Assemblies describe how Components combine into larger systems. Assemblies originate primarily from Onshape BOM imports.
-
-Assemblies may contain:
-- Components
-- Child Assemblies
-
-allowing recursive structures.
-
-Example:
-> Robotic Arm
-> ↓
-> Arm Base
-> ↓
-> Arm Gearbox
-
-Each level remains independently manageable.
-
-## Assembly Parts
-
-Assembly Parts represent requirements. Unlike Inventory, they describe:
-
-> "This assembly requires three of this Component."
-
-Assembly Parts become satisfied by exactly one of three workflows:
-
-> Inventory 
-> Fabrication
-> Purchase
-
-The designer is responsible for deciding which path each part follows.
-
-## Fabrication Jobs
-
-Fabrication Jobs promise future inventory. When an assembly requires a custom part that does not yet exist, the Designer creates a Fabrication Job. Once completed, the resulting Inventory Instance satisfies the Assembly requirement. This allows manufacturing to be planned before inventory exists.
-
-## Part Orders
-
-Purchased components follow a similar workflow. Assembly requirements become Cart Items. Cart Items are grouped by vendor.
-Example:
-> McMaster
-> ↓
-> Cart
-> ↓
-> Purchase
-> ↓
-> Receive
-> ↓
-> Inventory
-
-## Agenda Tasks
-
-Agenda Tasks track action items. They have a start date, deadline, status (complete, not started, etc), priority level, executors, and linked items. executors refers to members that carry out the task, and linked items can be components, assemblies, cart items, fabrication jobs, or assembly parts.
-
 # System responsibilities
-
-## Agenda
-Responsible for:
-- Agenda Tasks
-- Communicating action items and to-do items to users
-- Answers "What should I be doing today? What is there to work on?
 
 ## Inventory
 Responsible for:
@@ -161,60 +83,6 @@ Responsible for:
 - Images
 
 Inventory never concerns itself with CAD.
-
-## Designer
-Responsible for: 
-
-- Assemblies
-- BOM imports
-- Child assemblies
-- Assembly requirements
-- Linking inventory
-- Creating fabrication jobs
-- Creating purchase requests
-
-Designer is the bridge between CAD and reality.
-
-## Fabrication
-
-Responsible for:
-
-- Manufacturing queues
-- Batching
-- Claiming work
-- Tracking progress
-- Creating finished inventory
-
-Fabrication should never need to understand Onshape. It only receives manufacturing requirements.
-
-## Part Orders
-
-Responsible for:
-
-- Vendor grouping
-- Purchasing
-- Receiving
-- Updating inventory
-
-# Data Flow
-The most important workflow in Partshelf is:
-> Onshape
-> ↓
-> Assembly import
-> ↓
-> Assembly Parts
-> ↓
-> Resolve Requirements
-> ↓
-> Inventory
-> Fabrication
-> Purchase
-> ↓
-> Finished Inventory
-> ↓
-> Physical Assembly
-
-Every major feature exists somewhere in this pipeline.
 
 # Architectural Principles
 
@@ -237,15 +105,7 @@ The user interface should reflect the team's real manufacturing process. Every a
 The long-term vision is to evolve Partshelf into a complete logistics platform supporting:
 
 - Inventory
-- CAD
-- Fabrication
-- Purchasing
-- Assembly
-- Project management
-- Task assignment
-- Team coordination
 
 while preserving the same underlying philosophy:
 
-One system from CAD to a finished assembly.
 

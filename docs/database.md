@@ -14,20 +14,6 @@ The database was designed around a few guiding principles.
 
 ## 1. Model the Real World
 
-The database attempts to represent the physical lifecycle of a robotics part rather than simply storing inventory. Every part generally progresses through some combination of the following stages:
-
-> Onshape CAD
-> ↓
-> Assembly Design
-> ↓
-> Fabrication OR Purchase
-> ↓
-> Inventory
-> ↓
-> Robot Assembly
-
-Rather than creating completely independent systems for each stage, Partshelf models them as connected pieces of one workflow.
-
 ## 2. Single Source of Truth
 
 Information should only exist in one place.
@@ -78,34 +64,14 @@ This dramatically reduces duplicate data.
 # Entity Relationship Diagram
 
 ```
-
-```
                     Category
                         │
                         │
                         ▼
                   Component
                         │
-          ┌─────────────┼─────────────┐
-          ▼             ▼             ▼
- Inventory Instance  Assembly Part  Fabrication Job
-                                        │
-                                        ▼
-                                Inventory Instance
+                        |
+                        ▼              
+                Inventory Instance  
 
-Assembly
-     │
-     ▼
-Assembly Child
-     │
-     ▼
-Assembly
-
-Vendor
-    │
-    ▼
-Cart
-    │
-    ▼
-Cart Item
 ```
