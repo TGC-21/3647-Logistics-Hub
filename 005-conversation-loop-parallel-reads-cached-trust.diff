@@ -1,0 +1,184 @@
+--- a/backend/harness/conversationLoop.js
++++ b/backend/harness/conversationLoop.js
+@@ -14,7 +14,7 @@
+ 
+ import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
+ import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
+-import { executeTool, structuredToolError } from '../../backend/_lib/harnessToolRegistry.js'
++import { executeTool, structuredToolError, fetchMemberTrust } from '../../backend/_lib/harnessToolRegistry.js'
+ import { PROPOSE_INVENTORY_TOOL_NAME } from './inventoryProposalTool.js'
+ import { chatCompletion } from './llmClient.js'
+ import { buildToolSchema, parseToolCall } from './toolSchema.js'
+@@ -74,7 +74,10 @@
+   const blockedCall = findUnansweredToolCall(convo.messages)
+   if (!blockedCall) {
+     throw new Error(`Conversation ${conversationId} has no unanswered tool_call to resume — nothing to replay.`)
+   }
+   const { toolCallId, toolName, args } = blockedCall
++
++  // Fetched once, same reasoning as continueLoop()'s single fetch below —
++  // this function only ever replays one call, but the cost is identical
++  // either way, so keep the calling convention (pass memberTrustLevel
++  // through) consistent between the two entry points.
++  const memberTrustLevel = await fetchMemberTrust(memberId)
+ 
+   const toolActionName = getTool(toolName)?.actionName
+@@ -114,7 +117,7 @@
+ 
+   let toolResultContent
+   try {
+-    const result = await executeTool(toolName, { ...resolvedArgs, confirmed: true }, { memberId, isAgent, reason: null })
++    const result = await executeTool(toolName, { ...resolvedArgs, confirmed: true }, { memberId, isAgent, reason: null, memberTrustLevel })
+     toolResultContent = JSON.stringify(compactToolResult(result ?? toolSuccess()))
+   } catch (err) {
+     // A second ConfirmationRequiredError here would mean trust level
+@@ -152,6 +155,19 @@
+ function callKey(toolName, args) {
+   return `${toolName}::${JSON.stringify(args, Object.keys(args || {}).sort())}`
+ }
+ 
++/** Runs one tool call and normalizes its outcome to the same shape
++ *  Promise.allSettled() produces — { status: 'fulfilled', value } |
++ *  { status: 'rejected', reason } — so a prefetched (parallel) outcome
++ *  and a freshly-awaited (sequential) outcome can be handled by
++ *  identical code afterward in continueLoop()'s tool-call loop.
++ *  `value` is already the compacted, JSON-stringified tool-result
++ *  content, ready to append as a message — same shape the old inline
++ *  try/catch produced. */
++async function invokeToolCall(toolName, args, ctx) {
++  try {
++    const result = await executeTool(toolName, args, { ...ctx, reason: null })
++    return { status: 'fulfilled', value: JSON.stringify(compactToolResult(result ?? { success: true })) }
++  } catch (err) {
++    return { status: 'rejected', reason: err }
++  }
++}
++
+ /** Shared tail of runTurn()'s loop, factored out so resumeTurn() can
+  *  rejoin the same iteration logic after appending its one replayed
+  *  tool result, instead of duplicating the LLM round-trip/tool-call
+@@ -164,6 +180,10 @@
+   const hasAttachment = messages.some(message => message.role === 'user' && message.attachments?.some(a => a?.url))
+   const categoryGuidance = hasAttachment
+     ? await new CategoryService().list()
+     : []
++
++  // Fetched once for the whole turn (every tool call below reuses this),
++  // instead of once per tool call — see fetchMemberTrust()'s doc comment.
++  const memberTrustLevel = await fetchMemberTrust(memberId)
+ 
+ 
+   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+@@ -262,6 +282,33 @@
+       }
+     }
+ 
++    // Independent read-only tool calls at the START of a batch (before
++    // any write/destructive call) have no ordering dependency on each
++    // other, so run them concurrently instead of one at a time — this
++    // is the common case (the model asking for a search plus a couple
++    // of lookups in one round). The run stops at the first non-read
++    // call, since anything after a write could depend on that write's
++    // effects, and at the first call whose tool can't be resolved to a
++    // severity at all (conservative default: don't parallelize what we
++    // can't classify).
++    //
++    // Only the OUTCOME (success/failure) is prefetched here — the
++    // actual history-append and confirmation-pause handling below is
++    // completely unchanged and still runs sequentially per call in
++    // original order, so a failure or a ConfirmationRequiredError
++    // behaves exactly as if every call had run sequentially. This just
++    // removes the "wait for read #1 before starting read #2" latency
++    // for the common all-succeed case.
++    const leadingReadRun = []
++    for (const rawCall of toolCalls) {
++      const parsed = parseToolCall(rawCall)
++      if (getTool(parsed.toolName)?.severity !== 'read') break
++      leadingReadRun.push(parsed)
++    }
++    const prefetched = new Map()
++    if (leadingReadRun.length >= 2) {
++      updateTurnProgress(progressId, `calling ${leadingReadRun.length} tools`)
++      const settled = await Promise.all(
++        leadingReadRun.map(({ toolName, args }) => invokeToolCall(toolName, args, { memberId, isAgent, memberTrustLevel }))
++      )
++      leadingReadRun.forEach(({ toolName, args }, idx) => prefetched.set(callKey(toolName, args), settled[idx]))
++    }
++
+     for (let callIndex = 0; callIndex < toolCalls.length; callIndex++) {
+       const rawCall = toolCalls[callIndex]
+       const { toolName, args, toolCallId } = parseToolCall(rawCall)
+@@ -278,60 +325,65 @@
+         const cached = JSON.parse(seenCallsThisTurn.get(key))
+         toolResultContent = JSON.stringify({ ...cached, meta: { ...cached.meta, cached: true, note: 'Identical call already made earlier this turn; reused cached result.' } })
+       } else {
+-        try {
+-          const result = await executeTool(toolName, args, { memberId, isAgent, reason: null })
+-          toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
+-          seenCallsThisTurn.set(key, toolResultContent)
+-          failureCounts.delete(key)
+-        } catch (err) {
+-          if (err.name === 'ConfirmationRequiredError') {
++        // Reuse the prefetched outcome if this call was part of the
++        // leading read run above; otherwise run it now, same as before.
++        const outcome = prefetched.has(key)
++          ? prefetched.get(key)
++          : await invokeToolCall(toolName, args, { memberId, isAgent, memberTrustLevel })
++
++        if (outcome.status === 'fulfilled') {
++          toolResultContent = outcome.value
++          seenCallsThisTurn.set(key, toolResultContent)
++          failureCounts.delete(key)
++        } else {
++          const err = outcome.reason
++          if (err.name === 'ConfirmationRequiredError') {
+             // The assistant message carrying this whole tool_calls batch is
+             // already queued in pendingMessages (not yet persisted). If this
+             // isn't the LAST call in the batch, every call AFTER this one
+             // still has no matching 'tool' reply — and never will, since
+             // we're about to pause and return. Stub each remaining call out
+             // with a deferred marker so history always stays protocol-valid;
+             // resumeTurn()'s findUnansweredToolCall() then finds exactly the
+             // one real unanswered call (this one), not one of these stubs.
+             // Everything queued so far (assistant message, any already-
+             // succeeded tool results before this call, and these stubs) is
+             // flushed in ONE write before pausing, so the conversation is
+             // never left with the pending row set but the stubs unwritten.
+             for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
+               const deferred = parseToolCall(toolCalls[deferredIndex])
+               pendingMessages.push({
+                 role: 'tool', tool_call_id: deferred.toolCallId,
+                 content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because an earlier action in the batch is waiting for confirmation.', retryable: false }, { deferred: true })),
+               })
+             }
+ 
+             await conversationService.appendMessages({ conversationId, messages: pendingMessages })
+             await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
+ 
+             return {
+               conversationId, status: 'awaiting_confirmation',
+               pendingActionId: err.reason,
+               message: `Waiting on your confirmation for "${toolName}" before continuing.`,
+             }
+           }
+           const failures = (failureCounts.get(key) || 0) + 1
+           failureCounts.set(key, failures)
+ 
+           toolResultContent = JSON.stringify({
+             success: false,
+             data: null,
+             error: {
+               ...structuredToolError(err),
+               ...(failures >= MAX_IDENTICAL_FAILURES ? {
+                 code: 'REPEATED_FAILURE',
+                 message: `This exact call failed ${failures} times. Use a different tool or arguments.`,
+                 retryable: false,
+               } : {}),
+             },
+             meta: { tool: rawCall.function?.name, attempt: failures },
+           })
+         }
+       }
+ 
+       pendingMessages.push({ role: 'tool', tool_call_id: toolCallId, content: toolResultContent })
+     }

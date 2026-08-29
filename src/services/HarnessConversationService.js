@@ -47,6 +47,21 @@ export class HarnessConversationService {
     return this.conversationRepo.appendMessage(conversationId, message)
   }
 
+  /** Batched counterpart to appendMessage() — see
+   *  HarnessConversationRepository.appendMessages()'s doc comment for
+   *  why this exists. Same active-only guard as appendMessage(); a
+   *  no-op (returns the conversation unchanged) when messages is empty
+   *  so a caller can call this unconditionally without a length check. */
+  async appendMessages({ conversationId, messages }) {
+    if (!messages?.length) return this.conversationRepo.requireById(conversationId)
+    const convo = await this.conversationRepo.requireById(conversationId)
+    if (convo.status !== 'active') {
+      throw new ConflictError(`Conversation is "${convo.status}" — cannot append while not active.`)
+    }
+    return this.conversationRepo.appendMessages(conversationId, messages)
+  }
+
+
   /** Reopens a completed conversation when the member explicitly selects it
    * from history and sends a new message. Conversations paused for approval
    * must go through the approval flow instead, so they remain non-resumable

@@ -95,7 +95,12 @@ function validateArgs(schema, args) {
   return errors
 }
 
-async function fetchMemberTrust(memberId) {
+/** Exported so callers driving many tool calls in one turn (the
+ *  conversation loop) can fetch a member's trust level ONCE and pass it
+ *  into every executeTool() call, instead of this function re-querying
+ *  Supabase for the same member on every single tool invocation within
+ *  the same turn. */
+export async function fetchMemberTrust(memberId) {
   const { data, error } = await getSupabase().from('members').select('trust_level').eq('id', memberId).maybeSingle()
   if (error) throw error
   if (!data) throw new NotFoundError(`Member ${memberId} not found`)
@@ -108,8 +113,15 @@ async function fetchMemberTrust(memberId) {
  * action needs a human decision first (propagated unchanged from
  * HarnessGateway — same shape the caller already handles), or whatever
  * the underlying service throws otherwise.
- */
-export async function executeTool(name, args, { memberId, isAgent = true, reason = null } = {}) {
+ *
+ * `memberTrustLevel`, when provided, skips the trust-level lookup this
+ * function would otherwise perform on every call — pass it when the
+ * caller already fetched it once for the whole turn (see
+ * conversationLoop.js). Omit it (as harness-invoke.js's single-shot
+ * callers do) to have this function resolve it itself, unchanged from
+ * before.
+*/
+export async function executeTool(name, args, { memberId, isAgent = true, reason = null, memberTrustLevel = null } = {}) {
   const tool = getTool(name)
   if (!tool) throw new ValidationError(`Unknown tool "${name}"`)
 
@@ -119,14 +131,14 @@ export async function executeTool(name, args, { memberId, isAgent = true, reason
   const resolved = resolveAction(tool.actionName)
   if (!resolved) throw new ValidationError(`Tool "${name}" has no resolvable service action`)
 
-  const memberTrustLevel = await fetchMemberTrust(memberId)
+  const trustLevel = memberTrustLevel ?? await fetchMemberTrust(memberId)
   const gateway = new HarnessGateway()
 
   const result = await gateway.invoke({
     actionName: tool.actionName,
     serviceInstance: resolved.serviceInstance,
     methodName: resolved.methodName,
-    args, memberId, memberTrustLevel, isAgent, reason: reason || describeToolAction(tool, args),
+    args, memberId, memberTrustLevel: trustLevel, isAgent, reason: reason || describeToolAction(tool, args),
   })
   const isCollection = Array.isArray(result)
   const count = isCollection ? result.length : undefined

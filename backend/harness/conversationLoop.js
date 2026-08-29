@@ -18,14 +18,15 @@
 
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
-import { executeTool, structuredToolError } from '../../backend/_lib/harnessToolRegistry.js'
+import { executeTool, structuredToolError, fetchMemberTrust } from '../../backend/_lib/harnessToolRegistry.js'
 import { PROPOSE_INVENTORY_TOOL_NAME } from './inventoryProposalTool.js'
 import { chatCompletion } from './llmClient.js'
 import { buildToolSchema, parseToolCall } from './toolSchema.js'
 import { getTool } from '../../backend/_lib/harnessToolRegistry.js'
 import { compactToolResult } from './toolResultCompactor.js'
 import { buildContextWindow } from './contextWindow.js'
-import { selectToolActions } from './toolSelection.js'
+import { selectToolActions, scopedDomains } from './toolSelection.js'
+import { domainSnippetsFor, allDomainSnippets } from './domainContext.js'
 import { CategoryService } from '../../src/services/CategoryService.js'
 import { updateTurnProgress } from './turnProgress.js'
 
@@ -108,6 +109,11 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true, res
   }
   const { toolCallId, toolName, args } = blockedCall
 
+  // Fetched once, same reasoning as continueLoop()'s single fetch below —
+  // this function only ever replays one call, but the cost is identical
+  // either way, so keep the calling convention (pass memberTrustLevel
+  // through) consistent between the two entry points.
+  const memberTrustLevel = await fetchMemberTrust(memberId)
   const toolActionName = getTool(toolName)?.actionName
 
 
@@ -144,7 +150,7 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true, res
 
   let toolResultContent
   try {
-    const result = await executeTool(toolName, { ...resolvedArgs, confirmed: true }, { memberId, isAgent, reason: null })
+    const result = await executeTool(toolName, { ...resolvedArgs, confirmed: true }, { memberId, isAgent, reason: null, memberTrustLevel })
     toolResultContent = JSON.stringify(compactToolResult(result ?? toolSuccess()))
   } catch (err) {
     // A second ConfirmationRequiredError here would mean trust level
@@ -189,6 +195,23 @@ function callKey(toolName, args) {
   return `${toolName}::${JSON.stringify(args, Object.keys(args || {}).sort())}`
 }
 
+/** Runs one tool call and normalizes its outcome to the same shape
+ *  Promise.allSettled() produces — { status: 'fulfilled', value } |
+ *  { status: 'rejected', reason } — so a prefetched (parallel) outcome
+ *  and a freshly-awaited (sequential) outcome can be handled by
+ *  identical code afterward in continueLoop()'s tool-call loop.
+ *  `value` is already the compacted, JSON-stringified tool-result
+ *  content, ready to append as a message — same shape the old inline
+ *  try/catch produced. */
+async function invokeToolCall(toolName, args, ctx) {
+  try {
+    const result = await executeTool(toolName, args, { ...ctx, reason: null })
+    return { status: 'fulfilled', value: JSON.stringify(compactToolResult(result ?? { success: true })) }
+  } catch (err) {
+    return { status: 'rejected', reason: err }
+  }
+}
+
 /** Shared tail of runTurn()'s loop, factored out so resumeTurn() can
  *  rejoin the same iteration logic after appending its one replayed
  *  tool result, instead of duplicating the LLM round-trip/tool-call
@@ -203,11 +226,33 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
     : []
 
 
+  // Fetched once for the whole turn (every tool call below reuses this),
+  // instead of once per tool call — see fetchMemberTrust()'s doc comment.
+  const memberTrustLevel = await fetchMemberTrust(memberId)
+
+  // Domain scope — and therefore the tool list AND the domain-guidance
+  // text baked into the system prompt — is resolved ONCE for the whole
+  // turn, not recomputed on every one of this turn's LLM round-trips.
+  // A single turn can make several round trips back-to-back (one per
+  // tool-call batch) before returning to the member. If the offered
+  // tools or system prompt shifted between those round trips — e.g.
+  // because a tool call made mid-turn happened to touch a keyword-
+  // matched domain — every round trip would hand the inference server
+  // a DIFFERENT prompt prefix, defeating whatever prompt/KV-cache reuse
+  // it would otherwise get across those back-to-back calls and forcing
+  // it to reprocess the whole request from scratch each time instead of
+  // just the newly-appended tail. expand_scope remains the deliberate,
+  // cross-turn way to widen scope (see toolSelection.js's own doc
+  // comment) — this freeze only removes the ACCIDENTAL widening that
+  // used to happen from rescanning tool_calls already made earlier in
+  // this same turn.
+  const tools = buildToolSchema({ actionNames: selectToolActions(messages) })
+  const domains = scopedDomains(messages)
+  const domainGuidance = domains.size ? domainSnippetsFor(domains) : allDomainSnippets()
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     updateTurnProgress(progressId, 'thinking')
-    const context = buildContextWindow(messages)
-    
-    const tools = buildToolSchema({ actionNames: selectToolActions(context.messages) })
+    const context = buildContextWindow(messages, { domainGuidance })
+
     const modelMessages = categoryGuidance.length
       ? context.messages.map((message, index) => index === 0 ? {
           ...message,
@@ -285,6 +330,37 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
           : `I've put together a proposed inventory item from the image — review it below.`,
       }
     }
+    // Independent read-only tool calls at the START of a batch (before
+    // any write/destructive call) have no ordering dependency on each
+    // other, so run them concurrently instead of one at a time — this
+    // is the common case (the model asking for a search plus a couple
+    // of lookups in one round). The run stops at the first non-read
+    // call, since anything after a write could depend on that write's
+    // effects, and at the first call whose tool can't be resolved to a
+    // severity at all (conservative default: don't parallelize what we
+    // can't classify).
+    //
+    // Only the OUTCOME (success/failure) is prefetched here — the
+    // actual history-append and confirmation-pause handling below is
+    // completely unchanged and still runs sequentially per call in
+    // original order, so a failure or a ConfirmationRequiredError
+    // behaves exactly as if every call had run sequentially. This just
+    // removes the "wait for read #1 before starting read #2" latency
+    // for the common all-succeed case.
+    const leadingReadRun = []
+    for (const rawCall of toolCalls) {
+      const parsed = parseToolCall(rawCall)
+      if (getTool(parsed.toolName)?.severity !== 'read') break
+      leadingReadRun.push(parsed)
+    }
+    const prefetched = new Map()
+    if (leadingReadRun.length >= 2) {
+      updateTurnProgress(progressId, `calling ${leadingReadRun.length} tools`)
+      const settled = await Promise.all(
+        leadingReadRun.map(({ toolName, args }) => invokeToolCall(toolName, args, { memberId, isAgent, memberTrustLevel }))
+      )
+      leadingReadRun.forEach(({ toolName, args }, idx) => prefetched.set(callKey(toolName, args), settled[idx]))
+    }
 
     for (let callIndex = 0; callIndex < toolCalls.length; callIndex++) {
       const rawCall = toolCalls[callIndex]
@@ -302,12 +378,18 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
         const cached = JSON.parse(seenCallsThisTurn.get(key))
         toolResultContent = JSON.stringify({ ...cached, meta: { ...cached.meta, cached: true, note: 'Identical call already made earlier this turn; reused cached result.' } })
       } else {
-        try {
-          const result = await executeTool(toolName, args, { memberId, isAgent, reason: null })
-          toolResultContent = JSON.stringify(compactToolResult(result ?? { success: true }))
+        // Reuse the prefetched outcome if this call was part of the
+        // leading read run above; otherwise run it now, same as before.
+        const outcome = prefetched.has(key)
+          ? prefetched.get(key)
+          : await invokeToolCall(toolName, args, { memberId, isAgent, memberTrustLevel })
+
+        if (outcome.status === 'fulfilled') {
+          toolResultContent = outcome.value
           seenCallsThisTurn.set(key, toolResultContent)
           failureCounts.delete(key)
-        } catch (err) {
+        } else {
+          const err = outcome.reason
           if (err.name === 'ConfirmationRequiredError') {
             // The assistant message carrying this whole tool_calls batch is
             // already in history. If this isn't the LAST call in the batch,

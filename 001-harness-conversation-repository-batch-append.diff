@@ -1,0 +1,36 @@
+--- a/src/repositories/HarnessConversationRepository.js
++++ b/src/repositories/HarnessConversationRepository.js
+@@ -113,6 +113,33 @@
+     }
+   }
+ 
++  /** Batched counterpart to appendMessage() — persists an entire batch
++   *  of messages in ONE read-modify-write instead of one round trip per
++   *  message. conversationLoop.js accumulates a turn's assistant +
++   *  tool-result messages locally (see its `pendingMessages` buffer)
++   *  and flushes once per LLM round-trip via this method, instead of
++   *  calling appendMessage() once per message — which was re-fetching
++   *  and re-writing the full (growing) messages array on every single
++   *  message in a turn. Same retry-on-conflict discipline as
++   *  appendMessage(). No-ops (returns the current row) if newMessages
++   *  is empty, so callers don't need to guard an empty batch themselves. */
++  async appendMessages(id, newMessages, { retries = 3 } = {}) {
++    if (!newMessages || !newMessages.length) return this.requireById(id)
++    for (let attempt = 0; ; attempt++) {
++      const current = await this.requireById(id)
++      try {
++        return await this.update(
++          id,
++          { messages: [...current.messages, ...newMessages] },
++          { expectedUpdatedAt: current.updatedAt }
++        )
++      } catch (err) {
++        if (err.name === 'ConflictError' && attempt < retries) continue
++        throw err
++      }
++    }
++  }
++
+   /** Appends one or more proposals to the queue, retrying on a
+    *  concurrent-write conflict the same way appendMessage() does —
+    *  the queue is read-modify-written, so it needs the same race

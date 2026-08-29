@@ -1,0 +1,46 @@
+--- a/backend/harness/conversationLoop.js
++++ b/backend/harness/conversationLoop.js
+@@ -19,7 +19,8 @@
+ import { getTool } from '../../backend/_lib/harnessToolRegistry.js'
+ import { compactToolResult } from './toolResultCompactor.js'
+ import { buildContextWindow } from './contextWindow.js'
+-import { selectToolActions } from './toolSelection.js'
++import { selectToolActions, scopedDomains } from './toolSelection.js'
++import { domainSnippetsFor, allDomainSnippets } from './domainContext.js'
+ import { CategoryService } from '../../src/services/CategoryService.js'
+ import { updateTurnProgress } from './turnProgress.js'
+ 
+@@ -184,14 +185,32 @@
+   // Fetched once for the whole turn (every tool call below reuses this),
+   // instead of once per tool call — see fetchMemberTrust()'s doc comment.
+   const memberTrustLevel = await fetchMemberTrust(memberId)
+ 
++  // Domain scope — and therefore the tool list AND the domain-guidance
++  // text baked into the system prompt — is resolved ONCE for the whole
++  // turn, not recomputed on every one of this turn's LLM round-trips.
++  // A single turn can make several round trips back-to-back (one per
++  // tool-call batch) before returning to the member. If the offered
++  // tools or system prompt shifted between those round trips — e.g.
++  // because a tool call made mid-turn happened to touch a keyword-
++  // matched domain — every round trip would hand the inference server
++  // a DIFFERENT prompt prefix, defeating whatever prompt/KV-cache reuse
++  // it would otherwise get across those back-to-back calls and forcing
++  // it to reprocess the whole request from scratch each time instead of
++  // just the newly-appended tail. expand_scope remains the deliberate,
++  // cross-turn way to widen scope (see toolSelection.js's own doc
++  // comment) — this freeze only removes the ACCIDENTAL widening that
++  // used to happen from rescanning tool_calls already made earlier in
++  // this same turn.
++  const tools = buildToolSchema({ actionNames: selectToolActions(messages) })
++  const domains = scopedDomains(messages)
++  const domainGuidance = domains.size ? domainSnippetsFor(domains) : allDomainSnippets()
+ 
+   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+     updateTurnProgress(progressId, 'thinking')
+-    const context = buildContextWindow(messages)
+-    
+-    const tools = buildToolSchema({ actionNames: selectToolActions(context.messages) })
++    const context = buildContextWindow(messages, { domainGuidance })
+     const modelMessages = categoryGuidance.length
+       ? context.messages.map((message, index) => index === 0 ? {
+           ...message,

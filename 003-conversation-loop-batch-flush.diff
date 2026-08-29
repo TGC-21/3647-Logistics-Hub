@@ -1,0 +1,139 @@
+--- a/backend/harness/conversationLoop.js
++++ b/backend/harness/conversationLoop.js
+@@ -235,13 +235,17 @@
+         } : message)
+       : context.messages
+     const assistantMessage = await chatCompletion({ messages: modelMessages, tools })
+-    const withAssistant = await conversationService.appendMessage({ conversationId, message: assistantMessage })
+-    messages = withAssistant.messages
++    // Accumulated locally for the duration of this LLM round-trip and
++    // flushed to harness_conversations in ONE write (appendMessages),
++    // instead of one appendMessage() round trip per message — see
++    // HarnessConversationRepository.appendMessages()'s doc comment.
++    const pendingMessages = [assistantMessage]
+ 
+     const toolCalls = assistantMessage.tool_calls || []
+     if (!toolCalls.length) {
++      const withAssistant = await conversationService.appendMessages({ conversationId, messages: pendingMessages })
++      messages = withAssistant.messages
+       return { conversationId, status: 'completed', reply: assistantMessage.content || '' }
+     }
+ 
+@@ -269,26 +273,20 @@
+ 
+         if (toolName === PROPOSE_INVENTORY_TOOL_NAME) {
+           proposals.push({ ...args, attachmentUrl })
+-          const withAck = await conversationService.appendMessage({
+-            conversationId,
+-            message: {
+-              role: 'tool', tool_call_id: toolCallId,
+-              content: JSON.stringify(toolSuccess(null, {
+-                tool: toolName, outcome: 'proposal',
+-                note: 'Queued for member review — do not attempt this write again in this turn.',
+-              })),
+-            },
++          pendingMessages.push({
++            role: 'tool', tool_call_id: toolCallId,
++            content: JSON.stringify(toolSuccess(null, {
++              tool: toolName, outcome: 'proposal',
++              note: 'Queued for member review — do not attempt this write again in this turn.',
++            })),
+           })
+-          messages = withAck.messages
+         } else {
+-          const withDeferred = await conversationService.appendMessage({
+-            conversationId,
+-            message: {
+-              role: 'tool', tool_call_id: toolCallId,
+-              content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because one or more inventory proposals were created in the same batch.', retryable: false }, { deferred: true })),
+-            },
++          pendingMessages.push({
++            role: 'tool', tool_call_id: toolCallId,
++            content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because one or more inventory proposals were created in the same batch.', retryable: false }, { deferred: true })),
+           })
+-          messages = withDeferred.messages
+         }
+       }
+ 
++      const withBatch = await conversationService.appendMessages({ conversationId, messages: pendingMessages })
++      messages = withBatch.messages
++
+       const { pendingProposals } = await conversationService.queueProposals({ conversationId, proposals })
+       await conversationService.complete({ conversationId })
+ 
+@@ -338,32 +336,32 @@
+           failureCounts.delete(key)
+         } catch (err) {
+           if (err.name === 'ConfirmationRequiredError') {
+-            // The assistant message carrying this whole tool_calls batch is
+-            // already in history. If this isn't the LAST call in the batch,
+-            // every call AFTER this one still has no matching 'tool' reply —
+-            // and never will, since we're about to pause and return. Left
+-            // unanswered, the next chatCompletion() call would send a
+-            // protocol-invalid history (an assistant tool_calls entry with no
+-            // reply), which strict chat templates reject — same failure class
+-            // as the earlier system-message bug. Stub each remaining call out
+-            // with a deferred marker so history always stays valid;
+-            // resumeTurn()'s findUnansweredToolCall() then finds exactly the
+-            // one real unanswered call (this one), not one of these stubs.
+-    
++            // The assistant message carrying this whole tool_calls batch is
++            // already queued in pendingMessages (not yet persisted). If this
++            // isn't the LAST call in the batch, every call AFTER this one
++            // still has no matching 'tool' reply — and never will, since
++            // we're about to pause and return. Stub each remaining call out
++            // with a deferred marker so history always stays protocol-valid;
++            // resumeTurn()'s findUnansweredToolCall() then finds exactly the
++            // one real unanswered call (this one), not one of these stubs.
++            // Everything queued so far (assistant message, any already-
++            // succeeded tool results before this call, and these stubs) is
++            // flushed in ONE write before pausing, so the conversation is
++            // never left with the pending row set but the stubs unwritten.
+             for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
+               const deferred = parseToolCall(toolCalls[deferredIndex])
+-              await conversationService.appendMessage({
+-                conversationId,
+-                message: {
+-                  role: 'tool', tool_call_id: deferred.toolCallId,
+-                  content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because an earlier action in the batch is waiting for confirmation.', retryable: false }, { deferred: true })),
+-                },
++              pendingMessages.push({
++                role: 'tool', tool_call_id: deferred.toolCallId,
++                content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because an earlier action in the batch is waiting for confirmation.', retryable: false }, { deferred: true })),
+               })
+             }
+ 
+-	    await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
++            await conversationService.appendMessages({ conversationId, messages: pendingMessages })
++            await conversationService.pauseForConfirmation({ conversationId, pendingActionId: err.reason })
+ 
+-              return {
+-                conversationId, status: 'awaiting_confirmation',
+-                pendingActionId: err.reason,
+-                message: `Waiting on your confirmation for "${toolName}" before continuing.`,
++            return {
++              conversationId, status: 'awaiting_confirmation',
++              pendingActionId: err.reason,
++              message: `Waiting on your confirmation for "${toolName}" before continuing.`,
+             }
+           }
+           const failures = (failureCounts.get(key) || 0) + 1
+@@ -384,12 +382,12 @@
+             meta: { tool: rawCall.function?.name, attempt: failures },
+           })
+         }
+       }
+-      
+-      const withToolResult = await conversationService.appendMessage({
+-        conversationId, message: { role: 'tool', tool_call_id: toolCallId, content: toolResultContent },
+-      })
+-      messages = withToolResult.messages
++
++      pendingMessages.push({ role: 'tool', tool_call_id: toolCallId, content: toolResultContent })
+     }
++
++    const withBatch = await conversationService.appendMessages({ conversationId, messages: pendingMessages })
++    messages = withBatch.messages
+   }
+ 
+   const context = buildContextWindow(messages)

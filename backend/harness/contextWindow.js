@@ -98,8 +98,17 @@ function summaryFor(omittedMessages) {
  * Keeps the latest user request plus as many complete recent tool rounds as
  * fit. Older durable history is represented by a concise server-generated
  * summary, never raw database JSON.
- */
-export function buildContextWindow(messages, { maxHistoryBytes = DEFAULT_MAX_HISTORY_BYTES } = {}) {
+ *
+ * `domainGuidance`, when passed, is used verbatim instead of being
+ * recomputed from `messages` — callers driving multiple LLM round-trips
+ * within one turn (conversationLoop.js) resolve it ONCE per turn and
+ * pass the same string into every call here, so the system message's
+ * text stays byte-identical across those round-trips instead of
+ * potentially shifting mid-turn. Omit it (as existing callers/tests do)
+ * to have this function resolve it itself, unchanged from before.
+  */
+
+export function buildContextWindow(messages, { maxHistoryBytes = DEFAULT_MAX_HISTORY_BYTES, domainGuidance = null } = {}) {
   if (!Array.isArray(messages) || !messages.length) throw new Error('buildContextWindow requires conversation messages')
 
   const userIndex = latestUserIndex(messages)
@@ -131,11 +140,15 @@ export function buildContextWindow(messages, { maxHistoryBytes = DEFAULT_MAX_HIS
   const systemContent = trimmed
   ? `${CLINKER_RESPONSE_INSTRUCTIONS}\n\n${summaryFor(omitted).content}`
   : CLINKER_RESPONSE_INSTRUCTIONS
-  const domains = scopedDomains(messages)
-  const domainGuidance = domains.size ? domainSnippetsFor(domains) : allDomainSnippets()
+  let resolvedDomainGuidance = domainGuidance
+  if (resolvedDomainGuidance === null) {
+    const domains = scopedDomains(messages)
+    resolvedDomainGuidance = domains.size ? domainSnippetsFor(domains) : allDomainSnippets()
+  }
+ 
 
   const contextMessages = [
-    { role: 'system', content: `${systemContent}\n\n${domainGuidance}` },
+    { role: 'system', content: `${systemContent}\n\n${resolvedDomainGuidance}` },
     userMessage,
     ...selectedMessages,
   ]
