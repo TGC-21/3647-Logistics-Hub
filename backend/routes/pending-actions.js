@@ -17,7 +17,9 @@ import { HarnessGateway } from '../../src/services/HarnessGateway.js'
 import { PendingActionRepository } from '../../src/repositories/PendingActionRepository.js'
 import { HarnessConversationService } from '../../src/services/HarnessConversationService.js'
 import { resumeTurn } from '../harness/conversationLoop.js'
+import { withTurnLock } from '../harness/turnLock.js'
 import { statusForError } from '../../src/repositories/errors.js'
+import { beginTurnProgress, endTurnProgress } from '../harness/turnProgress.js'
 
 const pendingActions = new Hono()
 
@@ -58,15 +60,31 @@ pendingActions.post('/', async (c) => {
         // separate poll/wake step.
         await conversationService.resumeAfterApproval({ conversationId: convo.id })
 
+        // Same lock key scheme as agent-chat.js (`${memberId}:${conversationId}`)
+        // — this is Fix #2's whole point: a runTurn() the member fires
+        // off from the chat box and a resumeTurn() triggered by an
+        // approve/deny click must never run concurrently against the
+        // same conversation row.
+        const lockKey = `${updated.memberId}:${convo.id}`
+        const progressId = String(body.progressId || '')
+        if (progressId) beginTurnProgress(progressId)
         try {
-          const turnResult = await resumeTurn({
-            conversationId: convo.id,
-            memberId: updated.memberId,
-            isAgent: updated.isAgent,
-            resolvedPendingAction: updated,
-          })
+            const turnResult = await withTurnLock(lockKey, () =>
+            resumeTurn({
+              conversationId: convo.id,
+              memberId: updated.memberId,
+              isAgent: updated.isAgent,
+              resolvedPendingAction: updated,
+              progressId,
+            })
+          )
+          if (progressId) endTurnProgress(progressId)
           return c.json({ success: true, pendingAction: updated, turn: turnResult })
         } catch (err) {
+          if (progressId) endTurnProgress(progressId)
+          if (err.code === 'TURN_LOCKED') {
+            return c.json({ success: true, pendingAction: updated, turnError: err.message })
+          }
           // Resume failing shouldn't mask that the approval itself
           // succeeded — surface both: the pending_actions row IS
           // resolved, but the conversation didn't advance. Caller

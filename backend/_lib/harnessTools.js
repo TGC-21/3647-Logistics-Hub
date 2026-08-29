@@ -132,10 +132,11 @@ const HAND_WRITTEN = {
     parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
   },
   'InventoryInstanceService.createInstance': {
-    description: 'Adds new physical stock to inventory — resolves (or creates) the component it belongs to from categoryId + attrs, then creates the instance at a location with a quantity. Use for "we received/have N more of X" requests.',
+    description: 'Adds new physical stock to inventory. If the user refers to a component already found or created in this conversation, pass its componentId directly; otherwise resolve (or create) it from categoryId + attrs. Never omit a known componentId and fall back to a generic category.',
     parameters: {
       type: 'object',
       properties: {
+        componentId: { type: 'string', description: 'Existing component identity to attach this inventory instance to. Prefer this when a prior tool returned the component.' },
         categoryId: { type: 'string', description: 'Omit to fall back to the "Uncategorized" category.' },
         attrs: { type: 'object', description: 'Flat { key: value } map matching the category\'s requiredKeysConfig — see CategoryService.getById.' },
         fallback: { type: 'object', description: 'Optional { name, description, image } used only if this creates a brand-new component.' },

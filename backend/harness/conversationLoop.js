@@ -27,6 +27,7 @@ import { compactToolResult } from './toolResultCompactor.js'
 import { buildContextWindow } from './contextWindow.js'
 import { selectToolActions } from './toolSelection.js'
 import { CategoryService } from '../../src/services/CategoryService.js'
+import { updateTurnProgress } from './turnProgress.js'
 
 const MAX_TOOL_ITERATIONS = 16   // hard ceiling against a runaway tool-call loop (model never settling on plain text)
 const MAX_IDENTICAL_FAILURES = 2
@@ -50,7 +51,7 @@ function toolFailure(error, meta = {}) {
  * function-calling convention, so the model can react to it rather
  * than the whole turn crashing.
  */
-export async function runTurn({ memberId, message, conversationId = null, attachments = [], isAgent = true }) {
+export async function runTurn({ memberId, message, conversationId = null, attachments = [], isAgent = true, progressId = null }) {
   const conversationService = new HarnessConversationService()
 
   let convo = conversationId
@@ -78,7 +79,7 @@ export async function runTurn({ memberId, message, conversationId = null, attach
     messages = updated.messages
   }
 
-  return continueLoop({ conversationId: convo.id, memberId, isAgent, messages })
+  return continueLoop({ conversationId: convo.id, memberId, isAgent, messages, progressId })
 
 }
 
@@ -92,7 +93,7 @@ export async function runTurn({ memberId, message, conversationId = null, attach
  * without a matching 'tool' response, re-executes it with
  * confirmed: true, appends the result, then continues the normal loop.
  */
-export async function resumeTurn({ conversationId, memberId, isAgent = true, resolvedPendingAction = null }) {
+export async function resumeTurn({ conversationId, memberId, isAgent = true, resolvedPendingAction = null, progressId = null }) {
   const conversationService = new HarnessConversationService()
   const pendingActionRepo = new PendingActionRepository()
 
@@ -158,7 +159,7 @@ export async function resumeTurn({ conversationId, memberId, isAgent = true, res
     message: { role: 'tool', tool_call_id: toolCallId, content: toolResultContent },
   })
 
-  return continueLoop({ conversationId, memberId, isAgent, messages: withToolResult.messages })
+  return continueLoop({ conversationId, memberId, isAgent, messages: withToolResult.messages, progressId })
 }
 
 /** Walks message history backward to the most recent assistant message
@@ -192,7 +193,7 @@ function callKey(toolName, args) {
  *  rejoin the same iteration logic after appending its one replayed
  *  tool result, instead of duplicating the LLM round-trip/tool-call
  *  handling a second time. */
-async function continueLoop({ conversationId, memberId, isAgent, messages }) {
+async function continueLoop({ conversationId, memberId, isAgent, messages, progressId = null }) {
   const conversationService = new HarnessConversationService()
   const seenCallsThisTurn = new Map()   // callKey -> already-compacted result string
   const failureCounts = new Map()   // callKey -> consecutive failure count
@@ -203,6 +204,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
 
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    updateTurnProgress(progressId, 'thinking')
     const context = buildContextWindow(messages)
     
     const tools = buildToolSchema({ actionNames: selectToolActions(context.messages) })
@@ -225,6 +227,7 @@ async function continueLoop({ conversationId, memberId, isAgent, messages }) {
       const rawCall = toolCalls[callIndex]
       const { toolName, args, toolCallId } = parseToolCall(rawCall)
       const key = callKey(toolName, args)
+      updateTurnProgress(progressId, `calling ${toolName}`)
 
       let toolResultContent
 

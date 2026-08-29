@@ -6,7 +6,7 @@
 // See AGENTIC_HARNESS_PHASE3_EXECUTION.md.
 
 import { getSupabase } from './supabaseClient.js'
-import { DatabaseError, NotFoundError } from './errors.js'
+import { DatabaseError, NotFoundError, ConflictError } from './errors.js'
 
 function toLocal(row) {
   return {
@@ -87,23 +87,54 @@ export class HarnessConversationRepository {
   /** Generic partial update — the loop calls this after every LLM
    *  round-trip (append to messages) and every status transition
    *  (pause/resume/complete). updated_at is bumped explicitly since
-   *  there's no DB trigger for it. */
-  async update(id, patch) {
+   *  there's no DB trigger for it.
+   *
+   *  `expectedUpdatedAt`, when passed, turns this into an optimistic-
+   *  concurrency-checked write: the UPDATE only applies if the row's
+   *  current updated_at still matches what the caller last read. If
+   *  another writer touched the row in between (e.g. resumeTurn() and
+   *  runTurn() racing on the same conversation), zero rows match and
+   *  this throws ConflictError instead of silently overwriting
+   *  whatever the other writer just wrote — the read-modify-write race
+   *  that was previously losing whole messages/status transitions. */
+  async update(id, patch, { expectedUpdatedAt = null } = {}) {
     const columns = { updated_at: new Date().toISOString() }
     if (patch.status !== undefined)          columns.status = patch.status
     if (patch.messages !== undefined)        columns.messages = patch.messages
     if (patch.pendingActionId !== undefined) columns.pending_action_id = patch.pendingActionId
 
-    const { data, error } = await this.db
-      .from('harness_conversations').update(columns).eq('id', id).select().maybeSingle()
+    let query = this.db.from('harness_conversations').update(columns).eq('id', id)
+    if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt)
+    const { data, error } = await query.select().maybeSingle()
     if (error) throw new DatabaseError(`harness_conversations update failed: ${error.message}`, error)
+    if (!data && expectedUpdatedAt) {
+      throw new ConflictError(`harness_conversations ${id} was modified concurrently — retry from a fresh read.`)
+    }
     return data ? toLocal(data) : null
   }
 
   /** Convenience: append one message and persist in one call — the
-   *  loop's most common write (every LLM turn, every tool result). */
-  async appendMessage(id, message) {
-    const current = await this.requireById(id)
-    return this.update(id, { messages: [...current.messages, message] })
-  }
+   *  loop's most common write (every LLM turn, every tool result).
+   *
+   *  Retries the read-append-write on a ConflictError (another writer
+   *  won the race) by re-reading the now-current messages array and
+   *  re-appending — this is what actually fixes the "a message
+   *  vanishes" symptom instead of just detecting it. A message is
+   *  never silently dropped; the append is replayed against whatever
+   *  the winning writer left behind. */
+  async appendMessage(id, message, { retries = 3 } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const current = await this.requireById(id)
+      try {
+        return await this.update(
+          id,
+          { messages: [...current.messages, message] },
+          { expectedUpdatedAt: current.updatedAt }
+        )
+      } catch (err) {
+        if (err.name === 'ConflictError' && attempt < retries) continue
+        throw err
+      }
+    }
+  } 
 }

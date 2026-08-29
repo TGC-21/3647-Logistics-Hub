@@ -121,11 +121,15 @@ export class InventoryInstanceService {
    * fallback_name/description/image ONLY if this call actually creates
    * a new component).
    */
-  async createInstance({ categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+  async createInstance({ componentId = null, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
     if (!name || !name.trim()) throw new ValidationError('name is required')
 
-    const resolvedCategoryId = await this._resolveCategoryId(categoryId)
-    const component = await this.componentService.findOrCreate({ categoryId: resolvedCategoryId, attrs, fallback, actorId })
+    // A known component is an explicit identity reference. Never re-resolve
+    // it from category/attrs: that can silently create an unrelated
+    // Uncategorized component when a follow-up agent turn omits context.
+    const component = componentId
+      ? await this.componentService.componentRepo.findById(componentId)
+      : await this.componentService.findOrCreate({ categoryId: await this._resolveCategoryId(categoryId), attrs, fallback, actorId })
 
     const instance = await this.instanceRepo.insert({
       id: genId(), componentId: component.id,

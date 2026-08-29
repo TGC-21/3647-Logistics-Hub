@@ -19,7 +19,6 @@ export async function fetchPendingActions(memberId) {
   return items
 }
 
-export async function resolvePendingAction({ pendingActionId, decision, resolvedBy }) {
-  const { pendingAction } = await callPendingActionsApi('resolve', { pendingActionId, decision, resolvedBy })
-  return pendingAction
+export async function resolvePendingAction({ pendingActionId, decision, resolvedBy, progressId }) {
+  return callPendingActionsApi('resolve', { pendingActionId, decision, resolvedBy, progressId })
 }

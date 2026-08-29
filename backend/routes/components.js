@@ -53,6 +53,7 @@ components.post('/', async (c) => {
       }
       case 'createInstance': {
         const instance = await instanceService.createInstance({
+          componentId: body.componentId,
           categoryId: body.categoryId,
           attrs: body.attrs || {},
           fallback: body.fallback || null,

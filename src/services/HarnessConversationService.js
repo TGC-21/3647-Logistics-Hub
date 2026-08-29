@@ -56,7 +56,11 @@ export class HarnessConversationService {
     if (convo.status !== 'completed') {
       throw new ConflictError(`Conversation is "${convo.status}" — cannot reopen for a new turn.`)
     }
-    return this.conversationRepo.update(conversationId, { status: 'active' })
+    return this.conversationRepo.update(
+      conversationId,
+      { status: 'active' },
+      { expectedUpdatedAt: convo.updatedAt }
+    )
   }
 
   /** Suspends a conversation when a tool call throws
@@ -68,10 +72,11 @@ export class HarnessConversationService {
     if (convo.status !== 'active') {
       throw new ConflictError(`Conversation is "${convo.status}" — cannot pause from this state.`)
     }
-    return this.conversationRepo.update(conversationId, {
-      status: 'awaiting_confirmation',
-      pendingActionId,
-    })
+    return this.conversationRepo.update(
+      conversationId,
+      { status: 'awaiting_confirmation', pendingActionId },
+      { expectedUpdatedAt: convo.updatedAt }
+    )
   }
 
   /** Called once the loop is ready to replay the blocked tool call
@@ -84,10 +89,11 @@ export class HarnessConversationService {
     if (convo.status !== 'awaiting_confirmation') {
       throw new ConflictError(`Conversation is "${convo.status}" — nothing to resume.`)
     }
-    return this.conversationRepo.update(conversationId, {
-      status: 'active',
-      pendingActionId: null,
-    })
+    return this.conversationRepo.update(
+      conversationId,
+      { status: 'active', pendingActionId: null },
+      { expectedUpdatedAt: convo.updatedAt }
+    )
   }
 
   /** A denied pending action ends the conversation rather than looping
@@ -99,10 +105,11 @@ export class HarnessConversationService {
     if (convo.status !== 'awaiting_confirmation') {
       throw new ConflictError(`Conversation is "${convo.status}" — nothing to abandon.`)
     }
-    return this.conversationRepo.update(conversationId, {
-      status: 'active',
-      pendingActionId: null,
-    })
+    return this.conversationRepo.update(
+      conversationId,
+      { status: 'active', pendingActionId: null },
+      { expectedUpdatedAt: convo.updatedAt }
+    )
   }
 
   async complete({ conversationId }) {

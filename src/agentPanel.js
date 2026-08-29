@@ -16,6 +16,7 @@ let conversationEpoch = 0
 let attachedImage = null
 let categoryCache = null
 let locationCache  = null
+let progressPoll = null
 
 async function ensureCategories() {
   if (!categoryCache) categoryCache = await fetchCategories()
@@ -83,11 +84,23 @@ function renderConfirmations() {
   container.innerHTML = pendingActions.map(item => `
     <article class="agent-confirmation" data-pending-action="${escapeHtml(item.id)}">
       <div class="agent-confirmation-heading"><i class="ti ti-alert-triangle" aria-hidden="true"></i><strong>Approval needed</strong></div>
-      <p>Clinker wants to <strong>${escapeHtml(item.actionName)}</strong>${item.reason ? `: ${escapeHtml(item.reason)}` : '.'}</p>
+      <p>${confirmationSummary(item)}</p>
       <div class="agent-confirmation-actions"><button class="btn btn-sm" data-agent-deny="${escapeHtml(item.id)}">Deny</button><button class="btn btn-primary btn-sm" data-agent-approve="${escapeHtml(item.id)}">Approve</button></div>
     </article>`).join('')
   container.querySelectorAll('[data-agent-approve]').forEach(button => button.addEventListener('click', () => decide(button.dataset.agentApprove, 'approved')))
   container.querySelectorAll('[data-agent-deny]').forEach(button => button.addEventListener('click', () => decide(button.dataset.agentDeny, 'denied')))
+}
+
+function confirmationSummary(item) {
+  const args = item.actionArgs || {}
+  if (item.actionName === 'ComponentService.findOrCreate') {
+    const name = args.name || args.description || 'this component'
+    const details = Object.entries(args.attrs || {}).filter(([key, value]) => value !== '' && value != null)
+      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+    return `Clinker wants to create or reuse <strong>${escapeHtml(name)}</strong>${details.length ? `<br><span class="agent-confirmation-details">${escapeHtml(details.join(' · '))}</span>` : '.'}`
+  }
+  const readable = item.actionName?.split('.').pop()?.replace(/[A-Z]/g, letter => ` ${letter.toLowerCase()}`).trim() || 'complete this action'
+  return `Clinker wants to <strong>${escapeHtml(readable)}</strong>${item.reason ? `: ${escapeHtml(item.reason)}` : '.'}`
 }
 
 async function renderInventoryProposal(proposal) {
@@ -468,9 +481,27 @@ function clearAttachmentPreview() {
 function setBusy(busy) {
   const input = document.getElementById('agent-message')
   const send = document.getElementById('btn-send-agent-message')
+  const thread = document.getElementById('agent-thread')
   input.disabled = busy
   send.disabled = busy
   send.innerHTML = busy ? '<i class="ti ti-loader-2 spin" aria-hidden="true"></i>' : '<i class="ti ti-arrow-up" aria-hidden="true"></i><span>Send</span>'
+
+  const existingStatus = document.getElementById('agent-thinking-status')
+  if (!busy) {
+    if (progressPoll) { clearInterval(progressPoll); progressPoll = null }
+    existingStatus?.remove()
+    return
+  }
+  if (existingStatus) return
+
+  const status = document.createElement('div')
+  status.id = 'agent-thinking-status'
+  status.className = 'agent-message agent-message--assistant agent-thinking-status'
+  status.setAttribute('role', 'status')
+  status.setAttribute('aria-label', 'Clinker is thinking')
+  status.innerHTML = '<i class="ti ti-loader-2 spin" aria-hidden="true"></i><span>Clinker is thinking…</span>'
+  thread.appendChild(status)
+  thread.scrollTop = thread.scrollHeight
 }
 
 async function refreshPendingActions() {
@@ -544,8 +575,16 @@ async function sendMessage(event) {
   clearAttachmentPreview()
   setBusy(true)
   const requestEpoch = conversationEpoch
+  const progressId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+  progressPoll = setInterval(async () => {
+    try {
+      const result = await request(`/api/agent-chat/progress/${encodeURIComponent(progressId)}`)
+      const status = document.querySelector('#agent-thinking-status span')
+      if (status && result.progress?.phase) status.textContent = result.progress.phase === 'thinking' ? 'Clinker is thinking…' : `Clinker is ${result.progress.phase}…`
+    } catch { /* the main request remains the source of truth */ }
+  }, 700)
   try {
-    const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId, attachments: attachmentsForDisplay }) })
+    const result = await request('/api/agent-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId, message, conversationId, attachments: attachmentsForDisplay, progressId }) })
     // The member selected New chat (or the page initialized a fresh chat)
     // while this request was still running. Let the server finish and retain
     // its audit history, but never revive that prior conversation in this UI.
@@ -553,7 +592,6 @@ async function sendMessage(event) {
     conversationId = result.conversationId
     appendMessage('assistant', result.reply || result.message || 'I\'ve paused here until you decide on the requested action.')
     if (result.status === 'proposal' && result.proposal) renderInventoryProposal(result.proposal)
-    await Promise.all([refreshPendingActions(), refreshHistory()])
     await Promise.all([refreshPendingActions(), refreshHistory()])
   } catch (error) {
     if (requestEpoch !== conversationEpoch) return
@@ -567,8 +605,19 @@ async function sendMessage(event) {
 }
 
 async function decide(pendingActionId, decision) {
+  const progressId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+  if (decision === 'approved') {
+    setBusy(true)
+    progressPoll = setInterval(async () => {
+      try {
+        const result = await request(`/api/agent-chat/progress/${encodeURIComponent(progressId)}`)
+        const status = document.querySelector('#agent-thinking-status span')
+        if (status && result.progress?.phase) status.textContent = result.progress.phase === 'thinking' ? 'Clinker is thinking…' : `Clinker is ${result.progress.phase}…`
+      } catch { /* the approval request remains the source of truth */ }
+    }, 700)
+  }
   try {
-    const result = await resolvePendingAction({ pendingActionId, decision, resolvedBy: getCurrentMemberId() })
+    const result = await resolvePendingAction({ pendingActionId, decision, resolvedBy: getCurrentMemberId(), progressId })
     pendingActions = pendingActions.filter(item => item.id !== pendingActionId)
     updateBadge(); renderConfirmations()
     const conversations = await refreshHistory()
@@ -579,23 +628,22 @@ async function decide(pendingActionId, decision) {
         // action, even after a reload/new chat. Switch to that persisted
         // thread rather than appending its reply onto an unrelated one.
         showHistory(resumedConversation)
-
-
       } else {
-        // Keep the relationship correct even if the history list is stale
-        // or has reached its display limit.
-        // conversationId = result.turn.conversationId
-        // if (result.turn.reply) appendMessage('assistant', result.turn.reply)
-
-                  // inside sendMessage(), replacing the plain appendMessage('assistant', ...) line:
-        conversationId = result.conversationId
-        appendMessage('assistant', result.reply || result.message || 'I\'ve paused here until you decide on the requested action.')
-        if (result.status === 'proposal' && result.proposal) renderInventoryProposal(result.proposal)
-        await Promise.all([refreshPendingActions(), refreshHistory()])
+        // The resumed conversation isn't in the (limited) recent-history
+        // list yet — fixed dead branch that previously read fields off
+        // the wrong object (`result.conversationId`/`result.reply`
+        // don't exist on this response; the real data is under
+        // `result.turn`). Switch to it directly from the turn payload
+        // instead of silently no-op'ing.
+        conversationEpoch++
+        conversationId = result.turn.conversationId
+        appendMessage('assistant', result.turn.reply || result.turn.message || 'I\'ve resumed this conversation.')
+        if (result.turn.status === 'proposal' && result.turn.proposal) renderInventoryProposal(result.turn.proposal)
       }
     }
     if (result.turnError) appendMessage('assistant', `The decision was saved, but I couldn’t continue: ${result.turnError}`)
   } catch (error) { appendMessage('assistant', `I couldn’t save that decision: ${error.message}`) }
+  finally { if (decision === 'approved') setBusy(false) }
 }
 
 export function bindAgentPanelEvents() {
