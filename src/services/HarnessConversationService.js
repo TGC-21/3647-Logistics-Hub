@@ -134,4 +134,43 @@ export class HarnessConversationService {
   async findByPendingActionId(pendingActionId) {
     return this.conversationRepo.findByPendingActionId(pendingActionId)
   }
+
+  /** Queues one or more image-sourced inventory proposals onto the
+   *  conversation's durable pending_proposals array, each stamped
+   *  with a fresh id/status/createdAt. This is what makes a proposal
+   *  survive a reload or a different session opening the same
+   *  conversation — the confirmation card is derived from this array,
+   *  never from an in-memory HTTP response alone. Does NOT touch
+   *  conversation status (unlike pauseForConfirmation) — a pending
+   *  proposal is informational, not a hard gate on the next turn; the
+   *  member can keep chatting with other proposals still queued. */
+  async queueProposals({ conversationId, proposals }) {
+    if (!proposals?.length) throw new ValidationError('proposals must be a non-empty array')
+    const stamped = proposals.map(p => ({
+      id: genId(),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      resolvedAt: null,
+      instanceId: null,
+      ...p,
+    }))
+    return this.conversationRepo.appendProposals(conversationId, stamped)
+  }
+
+  /** Flips one queued proposal to 'confirmed' (instanceId set, once
+   *  the member's edited form actually created the instance
+   *  client-side) or 'discarded'. Returns { conversation, nextProposal }
+   *  so the caller can immediately chain into showing the next queued
+   *  item from the SAME photo without the member re-prompting —
+   *  nextProposal is the oldest remaining entry with status 'pending',
+   *  or null if the queue is empty. */
+  async resolveProposal({ conversationId, proposalId, decision, instanceId = null }) {
+    if (!['confirmed', 'discarded'].includes(decision)) {
+      throw new ValidationError(`decision must be "confirmed" or "discarded"`)
+    }
+    const updated = await this.conversationRepo.resolveProposal(conversationId, proposalId, { status: decision, instanceId })
+    if (!updated) throw new ValidationError('This proposal was already resolved or no longer exists.')
+    const nextProposal = updated.pendingProposals.find(p => p.status === 'pending') || null
+    return { conversation: updated, nextProposal }
+  }
 }

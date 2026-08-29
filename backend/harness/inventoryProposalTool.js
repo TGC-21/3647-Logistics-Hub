@@ -13,7 +13,13 @@ export const PROPOSE_INVENTORY_TOOL_SCHEMA = {
       'field you CAN read from the image (e.g. engraved text, tooth count, size markings) — leave a field blank only ' +
       'if you genuinely cannot infer it, never guess a location or quantity you can\'t see. ' +
       'Before proposing, call CategoryService.list and use the exact returned categoryId and category name whenever the image clearly matches an existing category; never invent a category id. ' +
-      'Required characteristics are mandatory category schema: copy every required key exactly into attrs, provide a value when visually supported, and leave only genuinely unreadable values blank for the member to fill in; never replace a required key with a synonym or omit it.',
+      'Required characteristics are mandatory category schema: copy every required key exactly into attrs, provide a value when visually supported, and leave only genuinely unreadable values blank for the member to fill in; never replace a required key with a synonym or omit it. ' +
+      'IMPORTANT — multiple items in one photo: if the image shows more than one distinct physical part (e.g. several ' +
+      'different gears, a mix of bolts and spacers, a tray of assorted parts), call this tool ONCE PER DISTINCT PART, ' +
+      'all within this same response, rather than stopping after the first one. Do not wait for the member to ask ' +
+      'about the remaining items and do not silently pick only the most obvious one — every distinct part you can ' +
+      'identify should get its own call. The member will review and confirm each proposal one at a time on their end; ' +
+      'you do not need to do anything further once you have called this for every part you can see.',
     parameters: {
       type: 'object',
       properties: {

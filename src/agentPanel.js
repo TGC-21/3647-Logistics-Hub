@@ -5,12 +5,21 @@
 import { getCurrentMemberId } from './members.js'
 import { uploadAgentImage } from './db.js'
 import { fetchPendingActions, resolvePendingAction } from './services/harnessApi.js'
+import { resolveProposal as resolveProposalApi } from './services/agentProposalsApi.js'
 import { fetchCategories, createCategory } from './services/categoriesApi.js'
 import { createInventoryInstance, updateInventoryInstance } from './services/componentsApi.js'
 import { fetchInventoryInstances } from './db.js'
 import { attachAutocomplete } from './autocomplete.js'
 
 let conversationId = null
+
+// Proposals not yet shown to the member, for the CURRENT conversation
+// only — cleared on New chat / switching to a different saved
+// conversation. Authoritative for "what shows next": stepping through
+// this queue never depends on a round-trip to the server, so a slow or
+// failed resolveProposal() sync can never strand the member mid-review
+// (see syncProposalResolution below).
+let proposalQueue = []
 let pendingActions = []
 let conversationEpoch = 0
 let attachedImage = null
@@ -103,7 +112,44 @@ function confirmationSummary(item) {
   return `Clinker wants to <strong>${escapeHtml(readable)}</strong>${item.reason ? `: ${escapeHtml(item.reason)}` : '.'}`
 }
 
+function resetProposalQueue() {
+  proposalQueue = []
+}
+
+/** Adds proposals to the local review queue without duplicating one
+ *  already queued or already rendered/resolved. `list` may be the
+ *  full batch from a turn response, or the full pendingProposals array
+ *  from a resumed conversation — either way only genuinely 'pending'
+ *  entries are worth queueing. */
+function enqueueProposals(list) {
+  const seen = new Set(proposalQueue.map(p => p.id))
+  for (const p of list || []) {
+    if (!p || seen.has(p.id)) continue
+    if (p.status && p.status !== 'pending') continue
+    proposalQueue.push(p)
+    seen.add(p.id)
+  }
+}
+
+/** Pops and renders the next queued proposal, if any — the local,
+ *  always-available half of advancing "confirm this one" ->
+ *  "confirm the next one." Never waits on the network. */
+function showNextQueuedProposal() {
+  const next = proposalQueue.shift()
+  if (next) renderInventoryProposal(next)
+}
+
+
 async function renderInventoryProposal(proposal) {
+  // Captured at render time rather than read from the module-level
+  // `conversationId` inside the confirm/discard handlers below — the
+  // member could switch to a different chat (or start a new one) while
+  // this card is still sitting in the thread, and a resolve() call
+  // must always target the conversation that actually queued this
+  // specific proposal, not whatever conversation happens to be active
+  // by the time the button is clicked.
+  const proposalConversationId = conversationId
+
   const thread = document.getElementById('agent-thread')
   const card = document.createElement('article')
   card.className = 'agent-proposal-card'
@@ -199,8 +245,29 @@ async function renderInventoryProposal(proposal) {
   })
 
   thread.scrollTop = thread.scrollHeight
-  card.querySelector('[data-proposal-discard]').addEventListener('click', () => card.remove())
-  card.querySelector('[data-proposal-confirm]').addEventListener('click', () => confirmProposal(card, proposal, categories))
+  card.querySelector('[data-proposal-discard]').addEventListener('click', () => discardProposal(card, proposal, proposalConversationId))
+  card.querySelector('[data-proposal-confirm]').addEventListener('click', () => confirmProposal(card, proposal, categories, proposalConversationId))
+}
+
+/** Marks a proposal resolved server-side, purely so it's recorded as
+ *  done for every session (not just this tab) and never resurfaces
+ *  via showHistory's cross-session resume. Deliberately NOT on the
+ *  critical path for "what shows next" — that's proposalQueue, which
+ *  already has every remaining item from this batch/conversation in
+ *  memory. A failed or slow sync here is logged and otherwise ignored;
+ *  it must never block or skip the local queue advance, or a network
+ *  hiccup silently ends the whole review flow (that was the bug: the
+ *  old code only advanced to the next item once THIS call succeeded). */
+function syncProposalResolution(proposalConversationId, proposalId, decision, instanceId = null) {
+  if (!proposalConversationId || !proposalId) return
+  resolveProposalApi({ conversationId: proposalConversationId, proposalId, decision, instanceId })
+    .catch(error => console.error('[agent-panel] resolveProposal sync failed (local queue continues regardless)', error))
+}
+
+function discardProposal(card, proposal, proposalConversationId) {
+  card.remove()
+  syncProposalResolution(proposalConversationId, proposal.id, 'discarded')
+  showNextQueuedProposal()
 }
 
 function populateCategorySelect(select, categories, selectedId) {
@@ -253,7 +320,7 @@ function renderProposalAttrs(card, category, modelAttrs) {
   wrap.querySelectorAll('[data-remove-extra-attr]').forEach(button => button.addEventListener('click', () => button.closest('[data-extra-attr-row]')?.remove()))
 }
 
-async function confirmProposal(card, proposal, categories) {
+async function confirmProposal(card, proposal, categories, proposalConversationId) {
   const val = sel => card.querySelector(sel)?.value?.trim() || ''
   const name = val('[data-proposal-field="name"]')
   if (!name) { card.querySelector('[data-proposal-field="name"]').focus(); return }
@@ -293,6 +360,8 @@ async function confirmProposal(card, proposal, categories) {
     locationCache = null   // the new instance may have introduced a new location string
     card.remove()
     appendMessage('assistant', `Added "${instance.name}" to inventory${categoryId ? '' : ' (uncategorized)'}.`)
+    syncProposalResolution(proposalConversationId, proposal.id, 'confirmed', instance.id)
+    showNextQueuedProposal()
   } catch (error) {
     confirmBtn.disabled = false
     confirmBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Add to inventory'
@@ -428,6 +497,7 @@ function renderWelcome() {
 function startNewChat({ focus = false } = {}) {
   conversationEpoch++
   conversationId = null
+  resetProposalQueue()
   renderWelcome()
   const input = document.getElementById('agent-message')
   input.value = ''
@@ -553,6 +623,16 @@ function showHistory(conversation) {
     }
   }
   setBusy(false)
+
+  // Cross-session parity: proposals queued by ANY session (this tab, a
+  // different device, a reload) live in the conversation row itself
+  // (harness_conversations.pending_proposals), not in this tab's
+  // in-memory state — so opening the same conversation anywhere always
+  // shows the same still-unresolved queue, in the same order, not just
+  // its first entry.
+  resetProposalQueue()
+  enqueueProposals((conversation.pendingProposals || []).filter(p => p.status === 'pending'))
+  showNextQueuedProposal()
 }
 
 async function sendMessage(event) {
@@ -591,7 +671,14 @@ async function sendMessage(event) {
     if (requestEpoch !== conversationEpoch) return
     conversationId = result.conversationId
     appendMessage('assistant', result.reply || result.message || 'I\'ve paused here until you decide on the requested action.')
-    if (result.status === 'proposal' && result.proposal) renderInventoryProposal(result.proposal)
+    if (result.status === 'proposal') {
+      // result.proposals is the full still-pending batch (one photo can
+      // yield several); result.proposal is the same list's first entry,
+      // kept only for older clients. Queue the whole batch so discarding
+      // item 1 advances straight to item 2 without another round trip.
+      enqueueProposals(result.proposals?.length ? result.proposals : [result.proposal].filter(Boolean))
+      showNextQueuedProposal()
+    }
     await Promise.all([refreshPendingActions(), refreshHistory()])
   } catch (error) {
     if (requestEpoch !== conversationEpoch) return
@@ -638,7 +725,10 @@ async function decide(pendingActionId, decision) {
         conversationEpoch++
         conversationId = result.turn.conversationId
         appendMessage('assistant', result.turn.reply || result.turn.message || 'I\'ve resumed this conversation.')
-        if (result.turn.status === 'proposal' && result.turn.proposal) renderInventoryProposal(result.turn.proposal)
+        if (result.turn.status === 'proposal') {
+          enqueueProposals(result.turn.proposals?.length ? result.turn.proposals : [result.turn.proposal].filter(Boolean))
+          showNextQueuedProposal()
+        }
       }
     }
     if (result.turnError) appendMessage('assistant', `The decision was saved, but I couldn’t continue: ${result.turnError}`)

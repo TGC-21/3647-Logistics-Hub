@@ -4,6 +4,11 @@
 // conversation loop's persistence — a row is the resumable unit for a
 // paused (ConfirmationRequiredError) or ongoing agent conversation.
 // See AGENTIC_HARNESS_PHASE3_EXECUTION.md.
+//
+// pending_proposals (schema_harness_proposal_queue.sql) is mapped the
+// same way pending_action_id already is: a plain column, read/written
+// through the same generic update()/appendMessage() path, no special
+// casing needed elsewhere in this file.
 
 import { getSupabase } from './supabaseClient.js'
 import { DatabaseError, NotFoundError, ConflictError } from './errors.js'
@@ -15,6 +20,7 @@ function toLocal(row) {
     status:           row.status,
     messages:         row.messages ?? [],
     pendingActionId:  row.pending_action_id ?? null,
+    pendingProposals: row.pending_proposals ?? [],
     createdAt:        row.created_at,
     updatedAt:        row.updated_at,
   }
@@ -75,10 +81,10 @@ export class HarnessConversationRepository {
     return data ? toLocal(data) : null
   }
 
-  async insert({ id, memberId, status = 'active', messages = [], pendingActionId = null }) {
+  async insert({ id, memberId, status = 'active', messages = [], pendingActionId = null, pendingProposals = [] }) {
     const { data, error } = await this.db
       .from('harness_conversations')
-      .insert({ id, member_id: memberId, status, messages, pending_action_id: pendingActionId })
+      .insert({ id, member_id: memberId, status, messages, pending_action_id: pendingActionId, pending_proposals: pendingProposals })
       .select().single()
     if (error) throw new DatabaseError(`harness_conversations insert failed: ${error.message}`, error)
     return toLocal(data)
@@ -86,8 +92,9 @@ export class HarnessConversationRepository {
 
   /** Generic partial update — the loop calls this after every LLM
    *  round-trip (append to messages) and every status transition
-   *  (pause/resume/complete). updated_at is bumped explicitly since
-   *  there's no DB trigger for it.
+   *  (pause/resume/complete), and now also for pending_proposals
+   *  queue mutations. updated_at is bumped explicitly since there's no
+   *  DB trigger for it.
    *
    *  `expectedUpdatedAt`, when passed, turns this into an optimistic-
    *  concurrency-checked write: the UPDATE only applies if the row's
@@ -102,6 +109,7 @@ export class HarnessConversationRepository {
     if (patch.status !== undefined)          columns.status = patch.status
     if (patch.messages !== undefined)        columns.messages = patch.messages
     if (patch.pendingActionId !== undefined) columns.pending_action_id = patch.pendingActionId
+    if (patch.pendingProposals !== undefined) columns.pending_proposals = patch.pendingProposals
 
     let query = this.db.from('harness_conversations').update(columns).eq('id', id)
     if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt)
@@ -136,5 +144,45 @@ export class HarnessConversationRepository {
         throw err
       }
     }
-  } 
+  }
+
+  /** Appends one or more proposals to the queue, retrying on a
+   *  concurrent-write conflict the same way appendMessage() does —
+   *  the queue is read-modify-written, so it needs the same race
+   *  protection as the messages array. */
+  async appendProposals(id, newProposals, { retries = 3 } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const current = await this.requireById(id)
+      try {
+        return await this.update(
+          id,
+          { pendingProposals: [...current.pendingProposals, ...newProposals] },
+          { expectedUpdatedAt: current.updatedAt }
+        )
+      } catch (err) {
+        if (err.name === 'ConflictError' && attempt < retries) continue
+        throw err
+      }
+    }
+  }
+
+  /** Flips one proposal's status in place (pending -> confirmed |
+   *  discarded), same retry-on-conflict discipline. Returns the
+   *  updated conversation, or null if no proposal with that id was
+   *  found (caller decides whether that's an error). */
+  async resolveProposal(id, proposalId, { status, instanceId = null }, { retries = 3 } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const current = await this.requireById(id)
+      const idx = current.pendingProposals.findIndex(p => p.id === proposalId)
+      if (idx === -1) return null
+      const next = [...current.pendingProposals]
+      next[idx] = { ...next[idx], status, instanceId, resolvedAt: new Date().toISOString() }
+      try {
+        return await this.update(id, { pendingProposals: next }, { expectedUpdatedAt: current.updatedAt })
+      } catch (err) {
+        if (err.name === 'ConflictError' && attempt < retries) continue
+        throw err
+      }
+    }
+  }
 }

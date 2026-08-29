@@ -223,6 +223,69 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
       return { conversationId, status: 'completed', reply: assistantMessage.content || '' }
     }
 
+    // A single photo can contain several distinct physical parts — the
+    // model is instructed (see inventoryProposalTool.js's description)
+    // to call propose_inventory_instance once PER distinct part in the
+    // SAME batch rather than stopping after the first. Scan the whole
+    // batch up front for any such calls: if present, every propose
+    // call becomes one queued proposal (not just the first), and any
+    // OTHER tool call in that same batch is deferred — mixing a
+    // real write/read with "here are N things to review" in one
+    // batch isn't a pattern worth supporting, and deferring keeps the
+    // OpenAI protocol valid (every tool_call still gets a 'tool' reply).
+    const proposeCallIndices = toolCalls
+      .map((call, index) => ({ call, index }))
+      .filter(({ call }) => call.function?.name === PROPOSE_INVENTORY_TOOL_NAME)
+
+    if (proposeCallIndices.length) {
+      const attachmentUrl = mostRecentAttachmentUrl(messages)
+      const proposals = []
+
+      for (let callIndex = 0; callIndex < toolCalls.length; callIndex++) {
+        const rawCall = toolCalls[callIndex]
+        const { toolName, toolCallId, args } = parseToolCall(rawCall)
+
+        if (toolName === PROPOSE_INVENTORY_TOOL_NAME) {
+          proposals.push({ ...args, attachmentUrl })
+          const withAck = await conversationService.appendMessage({
+            conversationId,
+            message: {
+              role: 'tool', tool_call_id: toolCallId,
+              content: JSON.stringify(toolSuccess(null, {
+                tool: toolName, outcome: 'proposal',
+                note: 'Queued for member review — do not attempt this write again in this turn.',
+              })),
+            },
+          })
+          messages = withAck.messages
+        } else {
+          const withDeferred = await conversationService.appendMessage({
+            conversationId,
+            message: {
+              role: 'tool', tool_call_id: toolCallId,
+              content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because one or more inventory proposals were created in the same batch.', retryable: false }, { deferred: true })),
+            },
+          })
+          messages = withDeferred.messages
+        }
+      }
+
+      const { pendingProposals } = await conversationService.queueProposals({ conversationId, proposals })
+      await conversationService.complete({ conversationId })
+
+      const stillPending = pendingProposals.filter(p => p.status === 'pending')
+
+      return {
+        conversationId,
+        status: 'proposal',
+        proposals: stillPending,
+        proposal: stillPending[0] || null,   // back-compat single-proposal field for older clients
+        reply: stillPending.length > 1
+          ? `I found ${stillPending.length} items in the photo — review them one at a time below.`
+          : `I've put together a proposed inventory item from the image — review it below.`,
+      }
+    }
+
     for (let callIndex = 0; callIndex < toolCalls.length; callIndex++) {
       const rawCall = toolCalls[callIndex]
       const { toolName, args, toolCallId } = parseToolCall(rawCall)
@@ -230,51 +293,6 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
       updateTurnProgress(progressId, `calling ${toolName}`)
 
       let toolResultContent
-
-      if (toolName === PROPOSE_INVENTORY_TOOL_NAME) {
-        const attachmentUrl = mostRecentAttachmentUrl(messages)
-        const proposal = {
-          ...args,
-          attachmentUrl,   // server-attached, overrides anything the model tried to pass
-        }
-
-              // Keep the OpenAI protocol valid: this tool_call still needs a
-        // matching 'tool' response before the assistant message is "closed
-        // out," same rule the ConfirmationRequiredError path already
-        // follows for any calls after the interception point.
-      const toolResultContent = JSON.stringify(toolSuccess(null, {
-        tool: toolName, outcome: 'proposal',
-        note: 'Proposal handed to the member for review — do not attempt this write again in this turn.',
-      }))
-      const withToolResult = await conversationService.appendMessage({
-        conversationId, message: { role: 'tool', tool_call_id: toolCallId, content: toolResultContent },
-      })
-      messages = withToolResult.messages
-
-      // Same "stub out anything after this in the batch" discipline the
-      // ConfirmationRequiredError branch uses — a proposal also ends the
-      // turn immediately, so any later calls in this same tool_calls batch
-      // would otherwise be left unanswered.
-        for (let deferredIndex = callIndex + 1; deferredIndex < toolCalls.length; deferredIndex++) {
-          const deferred = parseToolCall(toolCalls[deferredIndex])
-          await conversationService.appendMessage({
-            conversationId,
-            message: {
-              role: 'tool', tool_call_id: deferred.toolCallId,
-              content: JSON.stringify(toolFailure({ code: 'DEFERRED', message: 'This action was not executed because an inventory proposal was created earlier in the batch.', retryable: false }, { deferred: true })),
-            },
-          })
-        }
-
-        await conversationService.complete({ conversationId })
-
-        return {
-          conversationId,
-          status: 'proposal',
-          proposal,
-          reply: `I've put together a proposed inventory item from the image — review it below.`,
-        }
-      }
 
       if (seenCallsThisTurn.has(key)){
         // Same tool, same args, already answered this turn — hand back
