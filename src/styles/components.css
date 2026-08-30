@@ -434,3 +434,24 @@
   background: var(--color-accent-light);
   color: var(--color-accent);
 }
+
+/* ── AI-suggested field values (image analysis) ─────────────── */
+.field input.ai-suggested,
+.field textarea.ai-suggested,
+.field select.ai-suggested,
+.attr-row input.ai-suggested,
+.attr-row select.ai-suggested {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  background: var(--color-accent-light);
+  border-color: var(--color-accent-mid);
+}
+.ai-suggested-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-accent);
+  margin-left: 4px;
+}

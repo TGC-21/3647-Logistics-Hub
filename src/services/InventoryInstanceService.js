@@ -48,7 +48,7 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
 // ComponentService.findOrCreate's "categoryId is required" rule (that
 // rule stays load-bearing for every OTHER caller).
 const UNCATEGORIZED_CATEGORY_NAME = 'Uncategorized'
-const PATCHABLE_KEYS = ['name', 'description', 'image', 'location', 'quantity', 'tags', 'status', 'notes']
+const PATCHABLE_KEYS = ['name', 'description', 'image', 'location', 'quantity', 'status', 'notes']
 
 export class InventoryInstanceService {
   constructor({
@@ -121,7 +121,7 @@ export class InventoryInstanceService {
    * fallback_name/description/image ONLY if this call actually creates
    * a new component).
    */
-  async createInstance({ componentId = null, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+  async createInstance({ componentId = null, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, notes = '', actorId = null }) {
     if (!name || !name.trim()) throw new ValidationError('name is required')
 
     // A known component is an explicit identity reference. Never re-resolve
@@ -133,7 +133,7 @@ export class InventoryInstanceService {
 
     const instance = await this.instanceRepo.insert({
       id: genId(), componentId: component.id,
-      name: name.trim(), description, image, location, quantity, tags, status: 'available', notes,
+      name: name.trim(), description, image, location, quantity, status: 'available', notes,
     })
 
     await this.changeLogRepo.record({
@@ -153,7 +153,7 @@ export class InventoryInstanceService {
    * order main.js already used: write the instance first, THEN check
    * whether the component it left behind is now unreferenced).
    */
-  async updateInstance({ instanceId, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+  async updateInstance({ instanceId, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, notes = '', actorId = null }) {
     if (!name || !name.trim()) throw new ValidationError('name is required')
 
     const before = await this.instanceRepo.findById(instanceId)
@@ -164,7 +164,7 @@ export class InventoryInstanceService {
 
     const after = await this.instanceRepo.update(instanceId, {
       componentId: component.id,
-      name: name.trim(), description, image, location, quantity, tags, notes,
+      name: name.trim(), description, image, location, quantity, notes,
     })
 
     const commitId = this.changeLogRepo.newCommitId()

@@ -67,9 +67,9 @@ export async function deleteComponentIfOrphaned({ componentId, instanceCount, ac
  * requiring one, so this never fails the way a bare
  * ComponentService.findOrCreate call would.
  */
-export async function createInventoryInstance({ categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+export async function createInventoryInstance({ categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, notes = '', actorId = null }) {
   const { instance } = await callComponentsApi('createInstance', {
-    categoryId, attrs, fallback, name, description, image, location, quantity, tags, notes, actorId,
+    categoryId, attrs, fallback, name, description, image, location, quantity, notes, actorId,
   })
   return instance
 }
@@ -78,9 +78,9 @@ export async function createInventoryInstance({ categoryId, attrs, fallback = nu
  *  component from the (possibly changed) category/attrs — may re-parent
  *  the instance onto a different component, orphan-checking the old one
  *  server-side if so. */
-export async function updateInventoryInstance({ instanceId, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, tags = [], notes = '', actorId = null }) {
+export async function updateInventoryInstance({ instanceId, categoryId, attrs, fallback = null, name, description = '', image = null, location = '', quantity = 0, notes = '', actorId = null }) {
   const { instance } = await callComponentsApi('updateInstance', {
-    instanceId, categoryId, attrs, fallback, name, description, image, location, quantity, tags, notes, actorId,
+    instanceId, categoryId, attrs, fallback, name, description, image, location, quantity, notes, actorId,
   })
   return instance
 }

@@ -28,6 +28,7 @@ import {restoreMemberSession, getCurrentMemberId, loginMember, addMember } from 
 import { requireLogin, bindLoginScreenEvents } from './loginScreen.js'
 import { bindHistoryPanelEvents } from './historyPanel.js'
 import { bindAgentPanelEvents } from './agentPanel.js'
+import { analyzeInventoryImage } from './services/imageAnalysisApi.js'
 
 // unreserveInventoryUnits import removed — deleteFromDetail's manual
 // unreserve-then-delete loop moved server-side into
@@ -38,7 +39,6 @@ window.reconcileInventory = reconcileOrphanedInstances
 let items         = []
 let categories    = []
 let editingId     = null
-let editingTags   = []
 let currentImageFile = null
 let currentImageUrl  = null
 let detailId      = null
@@ -159,44 +159,17 @@ function renderSidebar() {
         <div class="nav-item${active ? ' active' : ''}" style="font-size:12px;padding:3px 8px" data-view-cat="${cat.id}">
           <i class="ti ti-layout-grid" style="font-size:13px" aria-hidden="true"></i> All in category
         </div>
-        ${tagEntries.map(([t, c]) => `
-          <div class="tag-item${view.type === 'tag' && view.tag === t && view.catId === cat.id ? ' active' : ''}"
-               data-view-tag="${t}" data-view-tag-cat="${cat.id}">
-            <span class="tag-pill">${t}</span>
-            <span style="font-size:10px;color:var(--color-text-tertiary)">${c}</span>
-          </div>`).join('')}
+
       </div>`
     catNav.appendChild(g)
   })
 
-  // Global tags
-  const allTagCounts = {}
-  items.forEach(it => (it.tags || []).forEach(t => { allTagCounts[t] = (allTagCounts[t] || 0) + 1 }))
-  const allTagEntries = Object.entries(allTagCounts).sort(([a],[b]) => a.localeCompare(b))
-  const tagsNav     = document.getElementById('tags-nav')
-  const tagsDivider = document.getElementById('tags-divider')
-  const tagsLabel   = document.getElementById('tags-label')
-  if (allTagEntries.length) {
-    tagsDivider.style.display = ''
-    tagsLabel.style.display   = ''
-    tagsNav.innerHTML = allTagEntries.map(([t, c]) => `
-      <div class="tag-item${view.type === 'tag' && view.tag === t && !view.catId ? ' active' : ''}"
-           style="margin:0 4px" data-view-tag="${t}" data-view-tag-cat="">
-        <span class="tag-pill">${t}</span>
-        <span style="font-size:10px;color:var(--color-text-tertiary)">${c}</span>
-      </div>`).join('')
-  } else {
-    tagsDivider.style.display = 'none'
-    tagsLabel.style.display   = 'none'
-    tagsNav.innerHTML = ''
-  }
 }
 
 function renderContent() {
   const q = (document.getElementById('search-input').value || '').toLowerCase()
   let titleText = 'All components'
   if (view.type === 'cat' && view.catId) titleText = (catById(view.catId) || {}).name || 'Category'
-  if (view.type === 'tag') titleText = '#' + view.tag + (view.catId ? ' in ' + (catById(view.catId) || {}).name : '')
   document.getElementById('content-title').textContent = titleText
 
   const area = document.getElementById('main-area')
@@ -247,7 +220,6 @@ function matchQ(it, q, cat) {
   if (!q) return true
   return it.name.toLowerCase().includes(q)
     || (it.description || '').toLowerCase().includes(q)
-    || (it.tags || []).some(t => t.toLowerCase().includes(q))
     || ((cat || {}).name || '').toLowerCase().includes(q)
     || (it.location || '').toLowerCase().includes(q)
 }
@@ -267,7 +239,6 @@ function cardHTML(it) {
         ${it.location ? `<span class="card-meta-item"><i class="ti ti-map-pin" style="font-size:11px" aria-hidden="true"></i>${it.location}</span>` : ''}
       </div>` : ''}
       ${it.description ? `<div class="card-desc">${it.description}</div>` : ''}
-      <div class="card-tags">${(it.tags || []).map(t => `<span class="tag">${t}</span>`).join('')}</div>
     </div>
   </div>`
 }
@@ -343,7 +314,7 @@ function bindStaticEvents() {
     if (appMode === 'agenda') { return }
     if (appMode === 'designer') { selectAssembly(null); return }
     if (appMode === 'fabricate') { selectBatch(null); return }
-    setView('all', null, null)
+    setView('all', null)
   })
 
   // Sidebar delegation (inventory only — designer/fabricate items bind their own listeners)
@@ -352,9 +323,7 @@ function bindStaticEvents() {
     const toggle = e.target.closest('[data-cat-toggle]')
     if (toggle) { toggleCat(toggle.dataset.catToggle); return }
     const viewCat = e.target.closest('[data-view-cat]')
-    if (viewCat) { e.stopPropagation(); setView('cat', viewCat.dataset.viewCat, null); return }
-    const viewTag = e.target.closest('[data-view-tag]')
-    if (viewTag) { e.stopPropagation(); setView('tag', viewTag.dataset.viewTagCat || null, viewTag.dataset.viewTag); return }
+    if (viewCat) { e.stopPropagation(); setView('cat', viewCat.dataset.viewCat); return }
   })
 
   // Main area delegation (card clicks — inventory only)
@@ -413,20 +382,23 @@ function bindStaticEvents() {
   document.getElementById('btn-save-component-view').addEventListener('click', saveComponentFallback)
   document.getElementById('btn-save-item').addEventListener('click', saveItem)
 
+  document.getElementById('field-image-analysis').addEventListener('change', async (e) => {
+    if (e.target.checked && currentImageFile) await runImageAnalysis()
+  })
+
   // Tags input
-  document.getElementById('tags-wrap').addEventListener('click', () => document.getElementById('tag-input').focus())
-  document.getElementById('tag-input').addEventListener('keydown', handleTagKey)
+
 }
 
 // ── View navigation ───────────────────────────────────────────
-function setView(type, catId, tag) {
-  view = { type, catId, tag }
+function setView(type, catId) {
+  view = { type, catId}
   render()
 }
 
 function toggleCat(catId) {
   if (openCats.has(catId)) openCats.delete(catId); else openCats.add(catId)
-  setView('cat', catId, null)
+  setView('cat', catId)
 }
 
 // ── Add / Edit Component Modal ────────────────────────────────
@@ -592,7 +564,8 @@ function buildRequiredAttrRow(cfg, existingVal) {
 }
 
 function openAddModal(prefillCatId) {
-  editingId = null; editingTags = []; currentImageFile = null; currentImageUrl = null
+  document.querySelectorAll('.ai-suggested').forEach(el => el.classList.remove('ai-suggested'))
+  editingId = null; currentImageFile = null; currentImageUrl = null
   document.getElementById('modal-title').textContent = 'Add component'
   document.getElementById('field-name').value = ''
   document.getElementById('field-desc').value = ''
@@ -606,15 +579,15 @@ function openAddModal(prefillCatId) {
   const prefill = prefillCatId || (view.type === 'cat' ? view.catId : null)
   populateCatSelect(prefill)
   hideNewCatRow()
-  renderTagChips()
   if (prefill) refreshRequiredAttrs(prefill)
   document.getElementById('modal-overlay').style.display = 'flex'
   setTimeout(() => document.getElementById('field-name').focus(), 80)
 }
 
 function openEditModal(id) {
+  document.querySelectorAll('.ai-suggested').forEach(el => el.classList.remove('ai-suggested'))
   const it = items.find(x => x.id === id); if (!it) return
-  editingId = id; editingTags = [...(it.tags || [])]; currentImageFile = null; currentImageUrl = it.image || null
+  editingId = id; currentImageFile = null; currentImageUrl = it.image || null
   document.getElementById('modal-title').textContent = 'Edit component'
   document.getElementById('field-name').value = it.name
   document.getElementById('field-desc').value = it.description || ''
@@ -632,7 +605,6 @@ function openEditModal(id) {
   }
   populateCatSelect(it.categoryId)
   hideNewCatRow()
-  renderTagChips()
 
   const al        = document.getElementById('attrs-list'); al.innerHTML = ''
   const cat        = catById(it.categoryId)
@@ -717,6 +689,10 @@ async function handleImageUpload(e) {
     document.getElementById('img-upload-inner').style.display = 'none'
   }
   reader.readAsDataURL(currentImageFile)
+
+  if (document.getElementById('field-image-analysis').checked) {
+    await runImageAnalysis()
+  }
 }
 
 function clearImage() {
@@ -725,26 +701,7 @@ function clearImage() {
   document.getElementById('btn-clear-img').style.display = 'none'
   document.getElementById('img-upload-inner').style.display = ''
   document.getElementById('field-img').value = ''
-}
-
-function handleTagKey(e) {
-  if (e.key === 'Enter' || e.key === ',') {
-    e.preventDefault()
-    const val = e.target.value.trim().replace(/,/g,'').toLowerCase()
-    if (val && !editingTags.includes(val)) { editingTags.push(val); renderTagChips() }
-    e.target.value = ''
-  } else if (e.key === 'Backspace' && !e.target.value && editingTags.length) {
-    editingTags.pop(); renderTagChips()
-  }
-}
-function removeTag(tag) { editingTags = editingTags.filter(t => t !== tag); renderTagChips() }
-function renderTagChips() {
-  document.getElementById('tag-chips').innerHTML = editingTags.map(t =>
-    `<span class="tag-chip">${t}<button type="button" data-remove-tag="${t}" aria-label="Remove ${t}">×</button></span>`
-  ).join('')
-  document.querySelectorAll('[data-remove-tag]').forEach(btn =>
-    btn.addEventListener('click', () => removeTag(btn.dataset.removeTag))
-  )
+  document.getElementById('field-image-analysis').checked = false
 }
 
 function addAttrRow(key = '', value = '') {
@@ -880,7 +837,6 @@ async function saveItem() {
       fallback:    { name, description: desc, image: imageUrl },
       name, description: desc, image: imageUrl, location: loc,
       quantity:    parseInt(qty, 10) || 0,
-      tags:        [...editingTags],
       actorId:     getCurrentMemberId(),
     }
 
@@ -922,7 +878,6 @@ function openDetail(id) {
       ${it.location ? `<div class="detail-meta-item"><i class="ti ti-map-pin" aria-hidden="true"></i>Location: <strong>${it.location}</strong></div>` : ''}
     </div>` : ''}
     ${it.description ? `<p style="font-size:13px;line-height:1.7">${it.description}</p>` : ''}
-    ${(it.tags || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${it.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
     ${(it.attributes || []).length ? `<div>
       <div style="font-size:11px;font-weight:500;color:var(--color-text-tertiary);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Characteristics</div>
       <table class="attrs-table">
@@ -1209,4 +1164,60 @@ async function handleLogin(id) {
   } catch (e) {
     showToast(e.message)
   }
+}
+
+async function runImageAnalysis() {
+  if (!(currentImageFile instanceof Blob)) { showToast('Upload an image first'); return }
+  const checkbox = document.getElementById('field-image-analysis')
+  checkbox.disabled = true
+  showToast('Analyzing image…')
+
+  try {
+    const result = await analyzeInventoryImage(currentImageFile)
+
+    applySuggestedValue(document.getElementById('field-name'), result.name)
+    if (result.quantity != null) applySuggestedValue(document.getElementById('field-qty'), String(result.quantity))
+
+    // Category select: only touch it if nothing is picked yet
+    const catSelect = document.getElementById('field-cat')
+    if (result.categoryId && !catSelect.value && categories.some(c => c.id === result.categoryId)) {
+      catSelect.value = result.categoryId
+      catSelect.classList.add('ai-suggested')
+      const clearCatSuggested = () => catSelect.classList.remove('ai-suggested')
+      catSelect.addEventListener('change', clearCatSuggested, { once: true })
+      refreshRequiredAttrs(result.categoryId)
+    }
+
+    // Required characteristic rows — only fill blanks
+    const cat = catById(catSelect.value)
+    ;(cat?.requiredKeysConfig || []).forEach(cfg => {
+      const val = result.attrs?.[cfg.key]
+      if (!val) return
+      const row = document.querySelector(`#attrs-list .attr-row[data-config-key="${CSS.escape(cfg.key)}"]`)
+      if (!row) return
+      const input = row.querySelector('input[data-num-input]') || row.querySelector('[data-val-input]')
+      applySuggestedValue(input, val)
+    })
+
+    showToast('Analysis complete — review suggested fields')
+  } catch (e) {
+    showToast(e.message || 'Could not analyze image')
+  } finally {
+    checkbox.disabled = false
+  }
+  /** Sets a field's value ONLY if it's currently blank, marking it as an
+ *  AI suggestion (dimmed/italic) rather than confirmed user input. The
+ *  suggestion styling is stripped the moment the user edits or leaves
+ *  the field with a real interaction — at that point it's real data,
+ *  not a suggestion, regardless of whether the value itself changed. */
+function applySuggestedValue(el, value) {
+  if (!el || value === undefined || value === null || value === '') return
+  const current = String(el.value ?? '').trim()
+  if (current) return   // never overwrite something the user already typed
+  el.value = value
+  el.classList.add('ai-suggested')
+  const clearSuggested = () => { el.classList.remove('ai-suggested'); el.removeEventListener('input', clearSuggested); el.removeEventListener('change', clearSuggested) }
+  el.addEventListener('input', clearSuggested)
+  el.addEventListener('change', clearSuggested)
+}
 }

@@ -62,7 +62,6 @@ components.post('/', async (c) => {
           image: body.image ?? null,
           location: body.location || '',
           quantity: body.quantity ?? 0,
-          tags: body.tags || [],
           notes: body.notes || '',
           actorId: body.actorId || null,
         })
@@ -79,7 +78,6 @@ components.post('/', async (c) => {
           image: body.image ?? null,
           location: body.location || '',
           quantity: body.quantity ?? 0,
-          tags: body.tags || [],
           notes: body.notes || '',
           actorId: body.actorId || null,
         })

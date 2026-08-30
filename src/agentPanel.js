@@ -353,7 +353,6 @@ async function confirmProposal(card, proposal, categories, proposalConversationI
       image: proposal.attachmentUrl || null,
       location: val('[data-proposal-field="location"]'),
       quantity: parseInt(val('[data-proposal-field="quantity"]'), 10) || 0,
-      tags: [],
       notes: val('[data-proposal-field="notes"]'),
       actorId: getCurrentMemberId(),
     })

@@ -11,6 +11,7 @@ import { cors } from "hono/cors";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import analyzeImage from "./routes/analyze-image.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Vite builds to <repo root>/dist — backend/ sits alongside it, so ../dist.
@@ -66,6 +67,7 @@ app.route("/api/change-log", changeLog);
 app.route("/api/harness-invoke", harnessInvoke);
 app.route("/api/pending-actions", pendingActions);
 app.route("/api/agent-chat", agentChat);
+app.route("/api/analyze-image", analyzeImage);
 
 // Static frontend (Vite's built dist/) + SPA fallback. Only mounted if a
 // build was found at boot — see the try/catch above.

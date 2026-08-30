@@ -25,7 +25,6 @@ function toLocal(row) {
     image:       row.image_url ?? null,
     location:    row.location ?? '',
     quantity:    row.quantity ?? 1,
-    tags:        row.tags ?? [],
     status:      row.status ?? 'available',
     notes:       row.notes ?? '',
     unlimited:   row.unlimited ?? false,       // NEW
@@ -185,7 +184,7 @@ export class InventoryInstanceRepository {
    *  same convention every other repository's insert() follows
    *  (AssemblyPartRepository.insert, ComponentRepository.insert). */
 // insert() gains one field:
-async insert({ id, componentId, name = '', description = '', image = null, location = '', quantity = 1, tags = [], status = 'available', notes = '', unlimited = false }) {
+async insert({ id, componentId, name = '', description = '', image = null, location = '', quantity = 1, status = 'available', notes = '', unlimited = false }) {
   const { data, error } = await this.db
     .from('inventory_instances')
     .insert({
@@ -196,7 +195,6 @@ async insert({ id, componentId, name = '', description = '', image = null, locat
       image_url:    image || null,
       location,
       quantity,
-      tags,
       status,
       notes,
       unlimited,   // NEW
@@ -217,7 +215,6 @@ async insert({ id, componentId, name = '', description = '', image = null, locat
     image:       'image_url',
     location:    'location',
     quantity:    'quantity',
-    tags:        'tags',
     status:      'status',
     notes:       'notes',
   }

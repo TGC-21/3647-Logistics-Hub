@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Partshelf – Inventory Manager</title>
+  <title>3647 Inventory Hub</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="/src/style.css">
 </head>
@@ -165,6 +165,15 @@
         </button>
       </div>
       <div class="field">
+        <label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer">
+          <span><i class="ti ti-sparkles" style="font-size:13px;color:var(--color-accent)" aria-hidden="true"></i> Image analysis</span>
+          <input type="checkbox" id="field-image-analysis" style="width:auto">
+        </label>
+        <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:2px">
+          When an image is attached, Clinker will guess the category, quantity, and characteristics automatically.
+        </p>
+      </div>
+      <div class="field">
         <label>Description</label>
         <textarea id="field-desc" placeholder="What is this component? What is it used for?"></textarea>
       </div>
@@ -176,13 +185,6 @@
         <div class="field">
           <label><i class="ti ti-map-pin" style="font-size:13px" aria-hidden="true"></i> Location</label>
           <input type="text" id="field-loc" placeholder="e.g. Bin A3, Shelf 2">
-        </div>
-      </div>
-      <div class="field">
-        <label>Tags <span style="font-weight:400;color:var(--color-text-tertiary)">(press Enter to add)</span></label>
-        <div class="tags-input-wrap" id="tags-wrap">
-          <div id="tag-chips"></div>
-          <input type="text" id="tag-input" placeholder="Add tag…">
         </div>
       </div>
       <div class="field">
