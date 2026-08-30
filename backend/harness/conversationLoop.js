@@ -435,6 +435,9 @@ async function continueLoop({ conversationId, memberId, isAgent, messages, progr
                 message: `This exact call failed ${failures} times. Use a different tool or arguments.`,
                 retryable: false,
               } : {}),
+              ...(failures < MAX_IDENTICAL_FAILURES && err.name === 'ValidationError' ? {
+                guidance: 'Correct the invalid argument before retrying. Do not repeat the identical tool name and arguments.',
+              } : {}),
             },
             meta: { tool: rawCall.function?.name, attempt: failures },
           })

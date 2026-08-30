@@ -37,6 +37,7 @@ window.reconcileInventory = reconcileOrphanedInstances
 
 // ── State ─────────────────────────────────────────────────────
 let items         = []
+let itemsById      = new Map()
 let categories    = []
 let editingId     = null
 let currentImageFile = null
@@ -47,6 +48,11 @@ let openCats      = new Set()
 let editingCatId  = null
 let editingReqKeysConfig = []   // [{ key, type: 'string'|'quantity'|'enum', options?, defaultUnit? }]
 let appMode = 'inventory' //'inventory' | 'designer' | 'fabricate'
+
+function replaceItems(nextItems) {
+  items = Array.isArray(nextItems) ? nextItems : []
+  itemsById = new Map(items.map(item => [item.id, item]))
+}
 
 // ── Boot ──────────────────────────────────────────────────────
 async function boot() {
@@ -66,7 +72,9 @@ async function boot() {
 
   
   try {
-    [categories, items] = await Promise.all([fetchCategories(), fetchInventoryInstances()])
+    const [loadedCategories, loadedItems] = await Promise.all([fetchCategories(), fetchInventoryInstances()])
+    categories = loadedCategories
+    replaceItems(loadedItems)
 
   } catch (e) {
     console.error(e)
@@ -298,6 +306,14 @@ function bindStaticEvents() {
     // should feel like leaving the agent, not stacking on top of it.
     closeClinkerView()
     setMode('inventory')
+    // On mobile, Components is also the entry point to the inventory
+    // navigation drawer so category filters are reachable without the
+    // small hamburger target.
+    if (window.innerWidth <= 640) {
+      sidebarEl.classList.add('open')
+      backdropEl.classList.add('visible')
+      document.body.style.overflow = 'hidden'
+    }
   })
   document.getElementById('tab-btn-categories').addEventListener('click', () => {
     closeClinkerView()
@@ -321,7 +337,11 @@ function bindStaticEvents() {
   document.getElementById('sidebar').addEventListener('click', e => {
     if (appMode !== 'inventory') return
     const toggle = e.target.closest('[data-cat-toggle]')
-    if (toggle) { toggleCat(toggle.dataset.catToggle); return }
+    if (toggle) {
+      toggleCat(toggle.dataset.catToggle)
+      if (window.innerWidth <= 640) setView('cat', toggle.dataset.catToggle)
+      return
+    }
     const viewCat = e.target.closest('[data-view-cat]')
     if (viewCat) { e.stopPropagation(); setView('cat', viewCat.dataset.viewCat); return }
   })
@@ -371,7 +391,7 @@ function bindStaticEvents() {
   document.getElementById('btn-confirm-new-cat').addEventListener('click', confirmNewCat)
   document.getElementById('btn-add-attr').addEventListener('click', () => addAttrRow())
   document.getElementById('btn-view-component').addEventListener('click', () => {
-    const it = editingId ? items.find(x => x.id === editingId) : null
+    const it = editingId ? itemsById.get(editingId) : null
     if (!it) { showToast('Save this instance once before editing its component defaults'); return }
     openComponentView(it.componentId)
   })
@@ -586,7 +606,7 @@ function openAddModal(prefillCatId) {
 
 function openEditModal(id) {
   document.querySelectorAll('.ai-suggested').forEach(el => el.classList.remove('ai-suggested'))
-  const it = items.find(x => x.id === id); if (!it) return
+  const it = itemsById.get(id); if (!it) return
   editingId = id; currentImageFile = null; currentImageUrl = it.image || null
   document.getElementById('modal-title').textContent = 'Edit component'
   document.getElementById('field-name').value = it.name
@@ -847,8 +867,10 @@ async function saveItem() {
     if (editingId) {
       const idx = items.findIndex(x => x.id === editingId)
       if (idx > -1) items[idx] = saved
+      itemsById.set(saved.id, saved)
     } else {
       items.unshift(saved)
+      itemsById.set(saved.id, saved)
     }
 
     closeModal(); render(); showToast(editingId ? 'Component updated' : 'Component added')
@@ -863,7 +885,7 @@ async function saveItem() {
 
 // ── Detail modal ──────────────────────────────────────────────
 function openDetail(id) {
-  const it = items.find(x => x.id === id); if (!it) return
+  const it = itemsById.get(id); if (!it) return
   detailId = id
   document.getElementById('detail-name').textContent = it.name
   const cat    = catById(it.categoryId)
@@ -894,7 +916,7 @@ function closeDetail() { document.getElementById('detail-overlay').style.display
 function openEditFromDetail() { const id = detailId; closeDetail(); openEditModal(id) }
 async function deleteFromDetail() {
   if (!detailId) return
-  const it = items.find(x => x.id === detailId)
+  const it = itemsById.get(detailId)
   if (!it || !confirm(`Delete "${it.name}"? This cannot be undone.`)) return
   try {
      // Unreserving from any assembly parts holding this instance,
@@ -903,7 +925,7 @@ async function deleteFromDetail() {
     // in that order — same order this handler used to do by hand.
     await deleteInventoryInstance({ instanceId: detailId, actorId: getCurrentMemberId() })
     if (it.image) await deleteImage(detailId)
-    items = items.filter(x => x.id !== detailId)
+    replaceItems(items.filter(x => x.id !== detailId))
     closeDetail(); render(); showToast('Component deleted')
   } catch (e) {
     console.error(e)
@@ -1111,7 +1133,7 @@ async function deleteCat() {
   if (!cat || !confirm(`Delete category "${cat.name}"? Components won't be deleted, just uncategorized.`)) return
   try {
     await deleteCategory({ categoryId: editingCatId, actorId: getCurrentMemberId() })
-    items = items.map(it => it.categoryId === editingCatId ? { ...it, categoryId: null } : it)
+    replaceItems(items.map(it => it.categoryId === editingCatId ? { ...it, categoryId: null } : it))
     categories = categories.filter(c => c.id !== editingCatId)
     closeEditCat(); renderCatModal(); render(); showToast('Category deleted')
   } catch (e) { showToast(e.message || 'Error deleting category') }
@@ -1138,7 +1160,7 @@ async function saveComponentFallback() {
   const image = document.getElementById('component-view-image-preview').src || null
   try {
     await updateComponentFallback({ componentId: viewingComponentId, name, description: desc, image, actorId: getCurrentMemberId() })
-    items = await fetchInventoryInstances()
+    replaceItems(await fetchInventoryInstances())
     document.getElementById('component-view-overlay').style.display = 'none'
     render()
     showToast('Component defaults updated')

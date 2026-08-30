@@ -1,7 +1,7 @@
 // repositories/__tests__/ChangeLogRepository.test.js
 
 import { describe, it, expect, vi } from 'vitest'
-import { ChangeLogRepository } from '../ChangeLogRepository.js'
+import { ChangeLogRepository } from '../../../src/repositories/ChangeLogRepository.js'
 import { createFakeSupabase } from './testUtils/fakeSupabase.js'
 
 describe('ChangeLogRepository', () => {

@@ -24,6 +24,7 @@ export function structuredToolError(error) {
   return {
     code: ERROR_CODES[error?.name] || 'TOOL_EXECUTION_FAILED',
     message: error?.message || 'Tool execution failed',
+    ...(error?.details ? { details: error.details } : {}),
     retryable: error?.name === 'DatabaseError',
   }
 }

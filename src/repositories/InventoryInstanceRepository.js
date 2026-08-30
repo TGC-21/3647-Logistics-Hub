@@ -16,6 +16,8 @@
 import { getSupabase } from './supabaseClient.js'
 import { DatabaseError } from './errors.js'
 
+const INSTANCE_COLUMNS = 'id, component_id, name, description, image_url, location, quantity, status, notes, unlimited, created_at'
+
 function toLocal(row) {
   return {
     id:          row.id,
@@ -39,7 +41,7 @@ export class InventoryInstanceRepository {
 
   async findById(id) {
     const { data, error } = await this.db
-      .from('inventory_instances').select('*').eq('id', id).maybeSingle()
+      .from('inventory_instances').select(INSTANCE_COLUMNS).eq('id', id).maybeSingle()
     if (error) throw new DatabaseError(`inventory_instances lookup failed: ${error.message}`, error)
     return data ? toLocal(data) : null
   }
@@ -55,7 +57,7 @@ export class InventoryInstanceRepository {
   async findByIds(ids) {
     if (!ids || !ids.length) return []
     const { data, error } = await this.db
-      .from('inventory_instances').select('*').in('id', ids)
+      .from('inventory_instances').select(INSTANCE_COLUMNS).in('id', ids)
     if (error) throw new DatabaseError(`inventory_instances lookup failed: ${error.message}`, error)
     return (data ?? []).map(toLocal)
   }
@@ -118,7 +120,7 @@ export class InventoryInstanceRepository {
    *  compose findAll() + ComponentRepository.findById() themselves. */
   async findAll() {
     const { data, error } = await this.db
-      .from('inventory_instances').select('*').order('created_at', { ascending: false })
+      .from('inventory_instances').select(INSTANCE_COLUMNS).order('created_at', { ascending: false })
     if (error) throw new DatabaseError(`inventory_instances lookup failed: ${error.message}`, error)
     return (data ?? []).map(toLocal)
   }
@@ -128,7 +130,7 @@ export class InventoryInstanceRepository {
    *  findAvailableForComponent's status-filtered version). */
   async findByComponent(componentId) {
     const { data, error } = await this.db
-      .from('inventory_instances').select('*').eq('component_id', componentId).order('created_at', { ascending: true })
+      .from('inventory_instances').select(INSTANCE_COLUMNS).eq('component_id', componentId).order('created_at', { ascending: true })
     if (error) throw new DatabaseError(`inventory_instances lookup failed: ${error.message}`, error)
     return (data ?? []).map(toLocal)
   }
@@ -142,7 +144,7 @@ export class InventoryInstanceRepository {
     const ids = [...new Set((componentIds ?? []).filter(Boolean))]
     if (!ids.length) return []
     const { data, error } = await this.db
-      .from('inventory_instances').select('*').in('component_id', ids).order('created_at', { ascending: true })
+      .from('inventory_instances').select(INSTANCE_COLUMNS).in('component_id', ids).order('created_at', { ascending: true })
     if (error) throw new DatabaseError(`inventory_instances lookup failed: ${error.message}`, error)
     return (data ?? []).map(toLocal)
   }
@@ -152,7 +154,7 @@ export class InventoryInstanceRepository {
   async findAvailableForComponent(componentId) {
     const { data, error } = await this.db
       .from('inventory_instances')
-      .select('*')
+      .select(INSTANCE_COLUMNS)
       .eq('component_id', componentId)
       .eq('status', 'available')
       .order('created_at', { ascending: true })

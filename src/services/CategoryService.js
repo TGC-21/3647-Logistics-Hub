@@ -138,9 +138,23 @@ export function reconcileAttrKeys(attrs, requiredKeysConfig) {
   const result = {}
   for (const [key, value] of Object.entries(attrs || {})) {
     const canonical = canonicalByNormalized.get(normalizeKeyForMatch(key))
-    result[canonical ?? key] = value
+    const config = requiredKeysConfig.find(cfg => cfg.key === canonical)
+    result[canonical ?? key] = config?.type === 'enum'
+      ? canonicalizeEnumArtifact(value, config.options)
+      : value
   }
   return result
+}
+
+// Models can double-encode a quote in an enum value, leaving a literal
+// backslash after the tool-call JSON has already been parsed. Remove only
+// backslashes immediately preceding quote characters, and only when the
+// cleaned value is an actual allowed option.
+export function canonicalizeEnumArtifact(value, options = []) {
+  if (typeof value !== 'string' || !Array.isArray(options)) return value
+  if (options.includes(value)) return value
+  const cleaned = value.replace(/\\(["'])/g, '$1')
+  return options.includes(cleaned) ? cleaned : value
 }
 
 

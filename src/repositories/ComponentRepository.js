@@ -12,6 +12,8 @@
 import { getSupabase } from './supabaseClient.js'
 import { DatabaseError, NotFoundError } from './errors.js'
 
+const COMPONENT_COLUMNS = 'id, category_id, attributes, fallback_name, fallback_description, fallback_image_url, created_at'
+
 function toLocal(row) {
   return {
     id:                   row.id,
@@ -31,7 +33,7 @@ export class ComponentRepository {
 
   async findById(id) {
     const { data, error } = await this.db
-      .from('components').select('*').eq('id', id).maybeSingle()
+      .from('components').select(COMPONENT_COLUMNS).eq('id', id).maybeSingle()
     if (error) throw new DatabaseError(`components lookup failed: ${error.message}`, error)
     if (!data) throw new NotFoundError(`Component ${id} not found`)
     return toLocal(data)
@@ -42,7 +44,7 @@ export class ComponentRepository {
    *  before creating a new row. */
   async findByCategory(categoryId) {
     const { data, error } = await this.db
-      .from('components').select('*').eq('category_id', categoryId)
+      .from('components').select(COMPONENT_COLUMNS).eq('category_id', categoryId)
     if (error) throw new DatabaseError(`components lookup failed: ${error.message}`, error)
     return (data ?? []).map(toLocal)
   }
@@ -86,7 +88,7 @@ export class ComponentRepository {
    *  harness needs for list_components. Mirrors
    *  InventoryInstanceRepository.findAll()'s shape/reasoning. */
   async findAll() {
-    const { data, error } = await this.db.from('components').select('*')
+    const { data, error } = await this.db.from('components').select(COMPONENT_COLUMNS)
     if (error) throw new DatabaseError(`components lookup failed: ${error.message}`, error)
     return (data ?? []).map(toLocal)
   }
@@ -108,7 +110,7 @@ export class ComponentRepository {
     const q = (query || '').trim().toLowerCase()
     if (!q) return []
 
-    const { data, error } = await this.db.from('components').select('*')
+    const { data, error } = await this.db.from('components').select(COMPONENT_COLUMNS)
     if (error) throw new DatabaseError(`components search failed: ${error.message}`, error)
 
     return (data ?? [])

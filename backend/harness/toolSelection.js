@@ -37,36 +37,13 @@ import { HARNESS_TOOLS } from '../../backend/_lib/harnessTools.js'
 
 const DOMAIN_PATTERNS = [
   {
-    domain: 'fabrication',
-    pattern: /\b(?:fabricat|machin|spacer|plate|shaft|cnc)/i,
-    services: ['FabricationJobService', 'FabricationDetectionService', 'AssemblyPartService', 'AssemblyService', 'ComponentService', 'DetectionService'],
-  },
-  {
-    domain: 'assemblies',
-    pattern: /\b(?:assembl|subassembl|bom|onshape|part|import)/i,
-    services: ['AssemblyService', 'AssemblyPartService', 'FabricationJobService', 'InventoryReservationService', 'OnshapeLookupService', 'OnshapeImportService', 'OnshapeReimportService'],
-  },
-  {
     domain: 'inventory',
     pattern: /\b(?:inventory|component|stock|bin|location|gear|sprocket|bearing|bolt|pulley|tooth|teeth|buy|purchas|have|available|need)/i,
-    services: ['ComponentService', 'InventoryInstanceService', 'CategoryService', 'AssemblyPartService', 'InventoryReservationService'],
-  },
-  {
-    domain: 'cart',
-    pattern: /\b(?:cart|order|vendor|purchas)/i,
-    services: ['CartService', 'AssemblyPartService'],
-  },
-  {
-    domain: 'agenda',
-    pattern: /\b(?:agenda|task|todo|to-do|deadline)/i,
-    services: ['AgendaService'],
+    services: ['ComponentService', 'InventoryInstanceService', 'CategoryService'],
   },
 ]
 
 const ALWAYS_INCLUDED_ACTIONS = new Set([
-  'AssemblyService.listAssemblies',
-  'AssemblyPartService.search',
-  'AssemblyPartService.checkAvailability',
   'ComponentService.search',
   'ComponentService.listForCategory',
   'CategoryService.list',

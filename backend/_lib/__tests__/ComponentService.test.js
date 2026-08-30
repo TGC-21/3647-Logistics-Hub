@@ -8,8 +8,8 @@
 // by its attributes and category, NOT by name").
 
 import { describe, it, expect, vi } from 'vitest'
-import { ComponentService } from '../../../services/ComponentService.js'
-import { ValidationError } from '../../../repositories/errors.js'
+import { ComponentService } from '../../../src/services/ComponentService.js'
+import { ValidationError } from '../../../src/repositories/errors.js'
 
 const CATEGORY = {
   id: 'cat1',

@@ -6,15 +6,9 @@
 // selection and context selection can never point at different domain
 // vocabularies.
 //
-// Deliberately narrow on this first pass (roadmap step 1: "ship narrow,
-// verify the mechanism, then backfill"). Only 'fabrication' and
-// 'assemblies' are authored — the two domains that were actually
-// causing tool-call mistakes per the product conversation. Every other
-// key in DOMAIN_PATTERNS (inventory, cart, agenda) intentionally has no
-// entry yet; domainSnippetsFor() below treats a missing key as "no
-// extra context for this domain" rather than an error, so partial
-// authoring never breaks anything — remaining domains get backfilled
-// once this mechanism is proven.
+// Partshelf currently has one authored domain: inventory. Keep this file
+// aligned with the live service registry; removed product areas must not
+// leak back into Clinker's instructions.
 //
 // Snippet budget: keep each entry roughly 150-300 tokens (a paragraph
 // or two). The entire point of this system is freeing up context
@@ -39,10 +33,10 @@ export const DOMAIN_CONTEXT = {
 - A chat attachment is inert until the user asks about it. If the user explicitly asks to attach/link the current image to an inventory instance, use InventoryInstanceService.linkImage with the exact attached image URL and target instance id; never replace an existing image implicitly.
 - InventoryInstanceService.listForComponent(s) gives location + quantity for a component id — always resolve the component first via listForCategory/search/listAll, then fetch instances; don't try to search instances directly by name.
 - Creating a new inventory instance (createInstance) resolves/creates its component from categoryId + attrs first — if categoryId is omitted it falls back to "Uncategorized," which is usually not what a user wants for a real part; ask for or infer a category when creating something new rather than defaulting silently.
+- When a category characteristic has type enum, attrs must use the exact option string returned in requiredKeysConfig.options, including punctuation and quote marks. A quote inside a JSON string must be JSON-escaped for transport, but the parsed value must not contain a backslash (for example, the parsed value is thickwall (1/8"), not thickwall (1/8\")). If an enum validation call fails, inspect and correct the value before retrying; do not repeat identical arguments.
 - Deleting an instance also unreserves it from every assembly part currently linking it and may delete its component if that was the last instance — this has knock-on effects on any assembly currently relying on that stock, worth flagging before doing it.
 - Quantity/location edits on an EXISTING instance may re-resolve (and change) its underlying component if the category or attributes changed — this can re-parent the instance onto a different component identity, not just edit a number.`,
 
-  
 }
 
 // Soft budget guard — logs, never throws. A canary for snippet creep,

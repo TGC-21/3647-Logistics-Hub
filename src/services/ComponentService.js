@@ -73,7 +73,9 @@ export class ComponentService {
       const { valid, errors } = validateRequiredAttributes(attributesArrayForValidation, fields)
       if (!valid) {
         const detail = Object.entries(errors).map(([key, msg]) => `"${key}": ${msg}`).join('; ')
-        throw new ValidationError(`Attributes do not satisfy category "${category.name}"'s required characteristics — ${detail}`)
+        const error = new ValidationError(`Attributes do not satisfy category "${category.name}"'s required characteristics — ${detail}`)
+        error.details = { categoryId, fields: errors, allowed: Object.fromEntries(fields.filter(f => f.type === 'enum').map(f => [f.key, f.options || []])) }
+        throw error
       }
     }
 

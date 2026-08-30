@@ -68,7 +68,7 @@ const HAND_WRITTEN = {
       type: 'object',
       properties: {
         categoryId: { type: 'string' },
-        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig (from CategoryService.getById/list), including any spaces — e.g. use "Chain size" exactly, never "Chain_size" or "chain-size". Do not rename, abbreviate, snake_case, or otherwise alter a required key.' },
+        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig (from CategoryService.getById/list), including any spaces — e.g. use "Chain size" exactly, never "Chain_size" or "chain-size". For enum characteristics, values MUST also be copied character-for-character from that characteristic\'s options array. Preserve punctuation such as inch marks exactly; do not add a backslash to the value itself (JSON escaping is syntax only). Do not rename, abbreviate, snake_case, or otherwise alter a required key.' },
         fallback: { type: 'object', description: 'Optional { name, description, image } used only if a new component is created.' },
       },
       required: ['categoryId', 'attrs'],
@@ -138,7 +138,7 @@ const HAND_WRITTEN = {
       properties: {
         componentId: { type: 'string', description: 'Existing component identity to attach this inventory instance to. Prefer this when a prior tool returned the component.' },
         categoryId: { type: 'string', description: 'Omit to fall back to the "Uncategorized" category.' },
-        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig (see CategoryService.getById), including any spaces — e.g. use "Chain size" exactly, never "Chain_size" or "chain-size". Do not rename, abbreviate, snake_case, or otherwise alter a required key.' },
+        attrs: { type: 'object', description: 'Flat { key: value } map. Keys MUST be copied character-for-character from the category\'s requiredKeysConfig (see CategoryService.getById), including any spaces — e.g. use "Chain size" exactly, never "Chain_size" or "chain-size". For enum characteristics, values MUST also be copied character-for-character from that characteristic\'s options array. Preserve punctuation such as inch marks exactly; do not add a backslash to the value itself (JSON escaping is syntax only). Do not rename, abbreviate, snake_case, or otherwise alter a required key.' },
         fallback: { type: 'object', description: 'Optional { name, description, image } used only if this creates a brand-new component.' },
         name: { type: 'string' },
         description: { type: 'string' },

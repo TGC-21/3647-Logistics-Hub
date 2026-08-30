@@ -9,6 +9,8 @@
 import { getSupabase } from './supabaseClient.js'
 import { DatabaseError, NotFoundError } from './errors.js'
 
+const CATEGORY_COLUMNS = 'id, name, required_keys_config'
+
 function toLocal(row) {
   return {
     id:                 row.id,
@@ -23,14 +25,14 @@ export class CategoryRepository {
   }
 
   async findAll() {
-    const { data, error } = await this.db.from('categories').select('*').order('name')
+    const { data, error } = await this.db.from('categories').select(CATEGORY_COLUMNS).order('name')
     if (error) throw new DatabaseError(`categories lookup failed: ${error.message}`, error)
   return (data ?? []).map(toLocal)
   }
 
   async findById(id) {
     const { data, error } = await this.db
-      .from('categories').select('*').eq('id', id).maybeSingle()
+      .from('categories').select(CATEGORY_COLUMNS).eq('id', id).maybeSingle()
     if (error) throw new DatabaseError(`categories lookup failed: ${error.message}`, error)
     if (!data) throw new NotFoundError(`Category ${id} not found`)
     return toLocal(data)
@@ -38,7 +40,7 @@ export class CategoryRepository {
 
   async findByName(name) {
     const { data, error } = await this.db
-      .from('categories').select('*').eq('name', name).maybeSingle()
+      .from('categories').select(CATEGORY_COLUMNS).eq('name', name).maybeSingle()
     if (error) throw new DatabaseError(`categories lookup failed: ${error.message}`, error)
     return data ? toLocal(data) : null
   }

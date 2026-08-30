@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { assertHarnessToken } from '../harnessAuth.js'
-import { UnauthorizedError } from '../../../repositories/errors.js'
+import { UnauthorizedError } from '../../../src/repositories/errors.js'
 
 const ORIGINAL_TOKEN = process.env.HARNESS_API_TOKEN
 
