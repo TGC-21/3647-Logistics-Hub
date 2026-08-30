@@ -105,6 +105,10 @@ function setMode(newMode) {
   document.getElementById('btn-mode-inventory').classList.toggle('active', appMode === 'inventory')
   document.getElementById('inventory-actions').style.display = appMode === 'inventory' ? '' : 'none'
 
+
+  const fab = document.getElementById('mobile-fab-add')
+  if (fab) fab.classList.toggle('fab-hidden', appMode !== 'inventory')
+
   // Mobile bottom tab bar + FAB mirror the same mode
   const tabComponents = document.getElementById('tab-btn-components')
   if (tabComponents){      
@@ -358,6 +362,11 @@ function bindStaticEvents() {
     if (appMode !== 'inventory') return
     const card = e.target.closest('[data-open-detail]')
     if (card) openDetail(card.dataset.openDetail)
+  })
+
+
+  document.getElementById('mobile-fab-add')?.addEventListener('click', () => {
+    if (appMode === 'inventory') openAddModal()
   })
 
   // Component modal

@@ -278,4 +278,67 @@
   /* ── BOM CSV drop zone: shorter ─────────────────────────── */
   .bom-drop-zone { padding: 16px; }
 
+    #modal-overlay {
+    align-items: stretch;
+    padding: 0;
+  }
+  #modal-overlay .modal {
+    max-width: 100% !important;
+    width: 100%;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    margin: 0 !important;
+    align-self: stretch;
+  }
+  #modal-overlay .modal-header {
+    padding: 14px 16px;
+    height: 54px;
+  }
+  #modal-overlay .modal-body {
+    padding: 16px;
+    gap: 16px;
+    flex: 1;
+  }
+  #modal-overlay .modal-footer {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+
+    /* ── Larger, easier form fields on mobile ───────────────────── */
+  .field input,
+  .field textarea,
+  .field select {
+    padding: 12px 13px;
+    min-height: 46px;
+    border-radius: 9px;
+  }
+  .field textarea { min-height: 90px; }
+  .field label { font-size: 14px; margin-bottom: 2px; }
+  .field { gap: 6px; }
+
+  .field-row { gap: 12px; }
+
+  .attr-row input,
+  .attr-row select {
+    padding: 10px 11px;
+    min-height: 42px;
+    font-size: 14px;
+  }
+
+  .tags-input-wrap { min-height: 44px; padding: 8px 9px; }
+  .tags-input-wrap input { font-size: 14px; min-width: 100px; }
+
+  .img-upload-inner { padding: 22px; }
+  .img-upload-inner i { font-size: 28px; }
+
+  .btn { min-height: 42px; padding: 9px 15px; }
+  .btn-sm { min-height: 38px; padding: 7px 13px; }
+  .btn-icon { min-width: 40px; min-height: 40px; }
+
+  .modal-body        { font-size: 14px; }
+  .attr-required-badge { font-size: 11px; padding: 3px 6px; }
+  .toast             { font-size: 14px; padding: 10px 18px; }
+  .autocomplete-option { font-size: 14px; padding: 9px 12px; }
+
 } /* end @media 640px */
+  /* ── Add/Edit Component modal: true full-screen on mobile ──── */
