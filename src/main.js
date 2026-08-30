@@ -110,8 +110,9 @@ function showToast(msg, onClick) {
 function setMode(newMode) {
   appMode = newMode // 'inventory' | 'designer' | 'fabricate'
 
-  document.getElementById('btn-mode-inventory').classList.toggle('active', appMode === 'inventory')
-  document.getElementById('inventory-actions').style.display = appMode === 'inventory' ? '' : 'none'
+  document.getElementById('btn-mode-inventory')?.classList.toggle('active', appMode === 'inventory')
+  const inventoryActions = document.getElementById('inventory-actions')
+  if (inventoryActions) inventoryActions.style.display = appMode === 'inventory' ? '' : 'none'
 
 
   const fab = document.getElementById('mobile-fab-add')
