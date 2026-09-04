@@ -20,11 +20,12 @@ const DEFAULT_TIMEOUT_MS = 240_000   // local 14B inference can be slow — gene
 
 function getConfig() {
   const baseUrl = process.env.LLM_BASE_URL
-  const model   = process.env.LLM_MODEL || 'qwen3-14b-instruct'
+  const model   = process.env.LLM_MODEL || 'gemma4-E4B-instruct'
+  const apiKey  = process.env.LLM_API_KEY || null
   if (!baseUrl) {
     throw new Error('LLM_BASE_URL must be set (e.g. http://<wireguard-tunnel-ip>:8080/v1) — the home PC inference server\'s OpenAI-compatible base URL.')
   }
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), model }
+  return { baseUrl: baseUrl.replace(/\/+$/, ''), model, apiKey }
 }
 
 // How many streamed content chunks to hold back before forwarding
@@ -210,7 +211,9 @@ export async function chatCompletion({ messages, tools = [], temperature = 0.3, 
     throw new Error('chatCompletion requires a non-empty messages array')
   }
 
-  const { baseUrl, model } = getConfig()
+  const { baseUrl, model, apiKey } = getConfig()
+  const headers = { 'Content-Type': 'application/json' }
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
   const modelMessages = await messagesForModel(messages)
   const streaming = typeof onToken === 'function'
   const body = {
@@ -234,7 +237,7 @@ export async function chatCompletion({ messages, tools = [], temperature = 0.3, 
     try {
       res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body),
         signal: controller.signal,
       })
